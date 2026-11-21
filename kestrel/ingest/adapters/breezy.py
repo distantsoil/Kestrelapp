@@ -37,13 +37,24 @@ import httpx
 from bs4 import BeautifulSoup
 
 from kestrel.errors import ROBOTS_SENTENCE
-from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
+from kestrel.ingest import failure_code
+from kestrel.ingest.base import (
+    AdapterError,
+    NoticeKind,
+    PostingBatch,
+    RawPosting,
+    ShapeError,
+    SourceConfigError,
+    Unread,
+    capped,
+    failure_kind,
+    rate_limited,
+)
 
 _RATE = 1.0  # requests/second; one detail request per role
 _DEFAULT_MAX_RESULTS = 100
 _SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,62}$")
 _FRIENDLY_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$")
-_RATE_LIMITED = object()
 
 
 class BreezyAdapter:
@@ -72,36 +83,31 @@ class BreezyAdapter:
             return batch
 
         pages_read = 0
-        without_body = 0
-        rate_limited = False
+        over_cap = 0  # roles beyond the pages Kestrel reads in one run
+        slowed = False
+        unread = Unread()  # role pages that failed, by the kind each failed with
         for row in rows:
             posting = _to_posting(row, config)
             if posting is None:
                 continue
-            if rate_limited or pages_read >= max_results:
-                without_body += 1
+            if pages_read >= max_results:
+                over_cap += 1
+            elif slowed:  # a page it would have read, held back by the 429
+                pages_read += 1
+                unread.add(NoticeKind.RATE_LIMITED)
             else:
                 pages_read += 1
                 body = await _read_page(slug, str(row["friendly_id"]), client)
-                if body is _RATE_LIMITED:
-                    rate_limited = True
-                    without_body += 1
+                if isinstance(body, NoticeKind):
+                    unread.add(body)
+                    slowed = body is NoticeKind.RATE_LIMITED
                 else:
                     posting.description_html = body
-                    if body is None:
-                        without_body += 1
             batch.append(posting)
-        if rate_limited:
-            batch.partial_error = (
-                f"Breezy HR is rate limiting requests for {slug}. {without_body} roles were "
-                "added without a description. Kestrel will try again next run."
-            )
-        elif pages_read >= max_results and len(batch) > max_results:
-            batch.partial_error = (
-                f"Breezy HR lists {len(batch)} roles at {slug}, and Kestrel reads at most "
-                f"{max_results} posting pages in one run. The rest were added without a "
-                "description. Raise max_results on the source to read more."
-            )
+        for notice in unread.notices("Breezy HR", slug, kept=True):
+            batch.add(notice)
+        if over_cap:
+            batch.add(capped("Breezy HR", slug, over_cap, max_results))
         return batch
 
     async def _list(self, slug: str, client: Any, batch: PostingBatch) -> list[dict] | None:
@@ -112,13 +118,12 @@ class BreezyAdapter:
         except httpx.HTTPStatusError as exc:
             code = exc.response.status_code
             if code == 429:
-                batch.partial_error = (
-                    f"Breezy HR is rate limiting requests for {slug}. Kestrel will try again "
-                    "next run."
-                )
+                batch.add(rate_limited("Breezy HR", slug))
                 return None
             if code == 404:
-                raise AdapterError(f"Breezy HR board not found: {slug}") from exc
+                raise AdapterError(
+                    f"Breezy HR board not found: {slug}", code=failure_code.NOT_FOUND
+                ) from exc
             raise AdapterError(f"Breezy HR fetch failed for {slug}: {exc}") from exc
         except httpx.HTTPError as exc:
             raise AdapterError(f"Breezy HR fetch failed for {slug}: {exc}") from exc
@@ -127,21 +132,19 @@ class BreezyAdapter:
         except ValueError as exc:
             raise AdapterError(f"Breezy HR reply for {slug} was not valid JSON") from exc
         if not isinstance(data, list):
-            raise AdapterError(f"Breezy HR reply for {slug} had an unexpected shape")
+            raise ShapeError(f"Breezy HR reply for {slug} had an unexpected shape")
         return [r for r in data if isinstance(r, dict)]
 
 
-async def _read_page(slug: str, friendly_id: str, client: Any) -> Any:
-    """The role's description HTML, None when the page has none or cannot be read, or
-    _RATE_LIMITED on a 429."""
+async def _read_page(slug: str, friendly_id: str, client: Any) -> str | None | NoticeKind:
+    """The role's description HTML, None when the page has none, or the kind of failure when it
+    could not be read (a 429, robots.txt, anything else)."""
     try:
         html = await client.get_text(
             f"https://{slug}.breezy.hr/p/{friendly_id}", rate_per_sec=_RATE, check_robots=True
         )
-    except httpx.HTTPStatusError as exc:
-        return _RATE_LIMITED if exc.response.status_code == 429 else None
-    except (httpx.HTTPError, PermissionError):
-        return None
+    except (httpx.HTTPError, PermissionError) as exc:
+        return failure_kind(exc)
     return _description(html)
 
 

@@ -16,19 +16,20 @@ import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from sqlalchemy import and_, func, not_, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from kestrel.config import HostedMode, Settings
+from kestrel.config import RUN_CARD_KEYS, HostedMode, Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Opportunity, ScrapeRun, Setting, Source, Task
 from kestrel.errors import failure_record
 from kestrel.llm import credit
 from kestrel.llm.client import LLMClient, tier_credit_hold
+from kestrel.llm.engine_cycle import engine_unreachable
 from kestrel.pipeline import lane, recheck, runlog
 from kestrel.pipeline._shared import (
     HandlerOutcome,
@@ -117,6 +118,12 @@ ProgressCb = Callable[[str], None]
 # Score again (`rescore`) override applies to Tier 1 (D-UI-50); a run's one-run model rides on a
 # t1 task as T2_ONLY_KEY instead and reaches Tier 2 alone (D-UI-72).
 _OVERRIDE_TIER = {"t1": "tier1", "t2": "tier2"}
+# The task types the engine preflight judges, by tier (D-WORKER-6). The embed tier runs on
+# Ollama unless it is the in-process model (SPEC.md 8.1.1); it takes no per-task model.
+_ENGINE_TIER = {**_OVERRIDE_TIER, "embed": "embed"}
+# Every tier a drain may send to Ollama (the scoring and embed tiers, and tier3 for letters,
+# follow-ups and research): a cycle probes once when any of them is on Ollama.
+_PROBED_TIERS = ("tier1", "tier2", "tier3", "embed")
 
 
 def _tier_external(settings: Settings, tier: str) -> bool:
@@ -124,6 +131,150 @@ def _tier_external(settings: Settings, tier: str) -> bool:
     tcfg = settings.llm.tiers.get(tier)
     backend = settings.llm.backends.get(tcfg.backend) if tcfg else None
     return bool(backend and backend.external)
+
+
+# Why scoring waits on the local AI engine, per tier ("tier1", "tier2"), while a drain finds it
+# not ready (D-WORKER-6): ENGINE_DOWN when nothing answers at Ollama's address, MODEL_MISSING when
+# the tier's model is not among its installed models. Set and cleared by Worker.drain_tier at the
+# start of each Tier 1 and Tier 2 drain; web.unscored reads it so a waiting role says why. One
+# process holds the worker and the pages, so a module-level record is the shared state.
+ENGINE_DOWN = "engine_down"
+MODEL_MISSING = "model_missing"
+_ENGINE_WAIT: dict[str, str] = {}
+
+
+def engine_wait() -> dict[str, str]:
+    """{tier: reason} for every tier whose scoring is waiting on the local engine now."""
+    return dict(_ENGINE_WAIT)
+
+
+def engine_waiting_types() -> tuple[str, ...]:
+    """The scoring task types whose tier the preflight is waiting on, by the last record. The
+    cycle's work check uses Worker.engine_skip_types, which probes again first."""
+    waiting = set(_ENGINE_WAIT)
+    return tuple(t for t, tier in _ENGINE_TIER.items() if tier in waiting)
+
+
+def _ollama_model(settings: Settings, tier: str) -> str | None:
+    """The model `tier` would ask Ollama for, or None when the tier does not run on Ollama (an
+    online backend, the in-process engine, or another local server at another address, which
+    the Ollama probe cannot speak for)."""
+    tcfg = settings.llm.tiers.get(tier)
+    backend = settings.llm.backends.get(tcfg.backend) if tcfg else None
+    if tcfg is None or backend is None or backend.engine != "http":
+        return None
+    from kestrel.llm.engine_cycle import same_engine
+
+    if not same_engine(backend.base_url, settings.llm.ollama_native_url):
+        return None  # localhost, 127.0.0.1 and ::1 are one host (round 6)
+    return str(tcfg.model)
+
+
+def probe_engine(
+    settings: Settings, *, fresh: bool = False
+) -> tuple[str | None, list[str]] | None:
+    """The Ollama probe the preflight judges by: setup_state.probe_ollama, the one Setup and
+    Models use (short connect timeout; cached a few seconds unless `fresh`). Sync: called via
+    to_thread. A module-level seam so the test suite, which has no Ollama, can stand it down."""
+    from kestrel.services.setup_state import probe_ollama
+
+    return probe_ollama(settings, fresh=fresh)
+
+
+async def begin_engine_cycle(settings: Settings) -> None:
+    """Take this cycle's one engine answer (llm.engine_cycle, D-WORKER-6 amended, rounds 4 and
+    5): a fresh probe when any engine tier or drain tier runs on Ollama, none otherwise (an
+    all-online setup never touches Ollama). The work check and every drain read it; a call that
+    cannot connect turns it to "down" for the rest of the cycle."""
+    from kestrel.llm import engine_cycle
+
+    if not any(_ollama_model(settings, t) for t in _PROBED_TIERS):
+        engine_cycle.start(None)
+        return
+    probe = await asyncio.to_thread(probe_engine, settings, fresh=True)
+    engine_cycle.start(settings.llm.ollama_native_url, probe)
+
+
+def end_engine_cycle() -> None:
+    """Forget the cycle's answer and any loss, so nothing outside a cycle reads a stale one."""
+    from kestrel.llm import engine_cycle
+
+    engine_cycle.stop()
+
+
+async def _engine_probe_for(settings: Settings) -> tuple[str | None, list[str]] | None:
+    """The cycle's answer for this Ollama address when a cycle holds one, else a probe now."""
+    from kestrel.llm import engine_cycle
+
+    held, probe = engine_cycle.answer(settings.llm.ollama_native_url)
+    if held:
+        return probe
+    return await asyncio.to_thread(probe_engine, settings)
+
+
+def engine_problem(
+    settings: Settings, tier: str, probe: tuple[str | None, list[str]] | None
+) -> str | None:
+    """Why `tier` cannot run on Ollama now, from a setup_state.probe_ollama result, or None
+    (ready, not an Ollama tier, or not probed)."""
+    model = _ollama_model(settings, tier)
+    if model is None or probe is None:
+        return None
+    version, tags = probe
+    if version is None:
+        return ENGINE_DOWN
+    from kestrel.setup import _tag_present
+
+    return None if _tag_present(model, tags) else MODEL_MISSING
+
+
+def _note_engine(tier: str, problem: str | None, model: str | None) -> None:
+    """Record why `tier` waits on the local engine (or that it no longer does) and log a change
+    once: the one place the record changes, for the scoring drains and every other drain."""
+    before = _ENGINE_WAIT.get(tier)
+    if problem is None:
+        _ENGINE_WAIT.pop(tier, None)
+        if before is not None:
+            log.info("engine_ready", tier=tier)
+        return
+    _ENGINE_WAIT[tier] = problem
+    if before != problem:
+        log.warning("engine_wait", tier=tier, reason=problem, model=model)
+
+
+async def local_engine_ready(settings: Settings, tier: str) -> bool:
+    """The engine check every drain that sends to Ollama makes before its first lease
+    (D-WORKER-6 amended, siblings): story builds, likely questions, title suggestions, company
+    summaries, follow-up drafts and letter drafts. False while `tier` runs on Ollama and Ollama
+    is not answering or lacks the tier's model: the drain leases nothing, so no task spends a
+    try, and the next cycle asks again. True for a tier that does not run on Ollama (an online
+    model, the in-process engine, another local server). Same probe and record as the scoring
+    preflight."""
+    model = _ollama_model(settings, tier)
+    if model is None:
+        _note_engine(tier, None, None)  # moved off Ollama: an old wait no longer applies
+        return True
+    probe = await _engine_probe_for(settings)
+    problem = engine_problem(settings, tier, probe)
+    _note_engine(tier, problem, model)
+    return problem is None
+
+
+def engine_lost_for(settings: Settings, tier: str) -> bool:
+    """Checked before every lease by each drain on Ollama (round 6): once a call in this cycle
+    could not reach Ollama, a drain whose tier runs on it leases nothing more this cycle. A tier
+    that does not run on Ollama (the online lane) is never stopped by it."""
+    from kestrel.llm import engine_cycle
+
+    return engine_cycle.lost() and _ollama_model(settings, tier) is not None
+
+
+async def ollama_answering(settings: Settings) -> bool:
+    """Whether Ollama answers at all, by the cycle's one answer (or a probe now outside a cycle).
+    For a drain whose model is chosen per task (the model check), where only "nothing answers"
+    is certain before the task runs. True when the suite stood the probe down."""
+    probe = await _engine_probe_for(settings)
+    return probe is None or probe[0] is not None
 
 
 def held_types(settings: Settings, types: tuple[str, ...] = ("t1", "t2")) -> tuple[str, ...]:
@@ -182,6 +333,8 @@ class Worker:
         self._stop = stop or asyncio.Event()
         self._progress = progress or (lambda _m: None)
         self._profiles = {t: load_profile(t) for t in ("employment", "consulting")}
+        # The Ollama probe this drain judges against (engine_problem); None: not probed.
+        self._engine_probe: tuple[str | None, list[str]] | None = None
 
     def request_stop(self) -> None:
         self._stop.set()
@@ -227,11 +380,46 @@ class Worker:
             return await load_settings_with_db(s, mode=mode)
 
     async def reclaim(self) -> int:
-        """Return any crashed (expired) leases to the queue before draining, then re-enqueue
-        orphans once (requeue_orphans). Called once per worker startup."""
+        """Return any crashed (expired) leases to the queue before draining, quarantine the dead
+        scoring tasks (pipeline.deadletter), then re-enqueue orphans once (requeue_orphans).
+        Called once per worker startup; `sweep` repeats the scoring part every cycle."""
         n = await self._queue.reclaim_expired()
+        await self.quarantine_dead()
         await self.requeue_orphans()
         return n
+
+    async def sweep(self) -> int:
+        """Each cycle, before anything is leased (D-WORKER-7): a Tier 1 or Tier 2 task whose
+        lease expired was claimed by a worker that is gone (a killed process, a crashed drain),
+        so it goes back to the queue, or to dead-letter when out of tries; dead scoring tasks are
+        quarantined; orphans get their one re-queue. Only expired leases are touched: a live
+        drain renews its lease (_renew_lease), so nothing running is taken from under it, and
+        every step is idempotent. Never fatal to the cycle."""
+        from kestrel.pipeline.deadletter import SCORING_TYPES
+
+        try:
+            n = await self._queue.reclaim_expired(types=SCORING_TYPES)
+        except SQLAlchemyError as exc:
+            log.warning("cycle_reclaim_failed", error=str(exc))
+            n = 0
+        if n:
+            log.info("cycle_reclaimed", count=n)
+        await self.quarantine_dead()
+        await self.requeue_orphans()
+        return n
+
+    async def quarantine_dead(self, task_ids: list[int] | None = None) -> list[int]:
+        """A dead scoring task puts its role in Needs another try (pipeline.deadletter,
+        D-WORKER-5). Never fatal: a failure is logged and the next cycle's sweep retries it."""
+        from kestrel.pipeline.deadletter import quarantine_dead, tier_model_for
+
+        try:
+            return await quarantine_dead(
+                self._sm, task_ids=task_ids, model_for=tier_model_for(self._settings)
+            )
+        except SQLAlchemyError as exc:
+            log.warning("dead_scoring_quarantine_failed", error=str(exc))
+            return []
 
     async def requeue_orphans(self) -> dict[str, int]:
         """A role waiting on a scoring step with nothing queued gets its task back, once
@@ -331,6 +519,11 @@ class Worker:
         grouped by the model they will run on (the configured Tier 2 model, or a task's
         `model_override`), the configured model's group first, then the largest, and each group
         is drained to empty before the next starts. A mixed queue never alternates models."""
+        # Preflight (D-WORKER-6): with the engine down or the model missing, the lease filter
+        # below leaves out every task that would reach it, so none spends a try.
+        await self._engine_wait(task_type)
+        if task_type == "embed" and "embed" in _ENGINE_WAIT:
+            return  # every embed task would reach the missing engine: none spends a try
         await self._unload_previous_tier(task_type)
         total_at_start = await self._pending_count(task_type)
         started = time.perf_counter()
@@ -349,6 +542,17 @@ class Worker:
                 # (D-LLM-8 amended): the hold is judged per task from the model it will resolve
                 # to, so a held override cannot loop lease/defer and a held configured backend
                 # cannot starve an override that resolves to a local model.
+                from kestrel.llm import engine_cycle
+
+                if engine_cycle.lost():
+                    # A call this cycle could not reach Ollama (round 7): from now on the lease
+                    # filter judges each task by the model it will run on, its Score again
+                    # model included, so nothing more reaches Ollama and an online one still runs.
+                    if task_type not in _OVERRIDE_TIER:
+                        if engine_lost_for(self._settings, _ENGINE_TIER.get(task_type, "")):
+                            return  # embed on Ollama takes no per-task model: no more
+                    else:
+                        self._engine_probe = (None, [])
                 excl = await self._hold_exclusion(task_type)
                 where = group[0] if excl is None else (
                     excl if group[0] is None else and_(group[0], excl)
@@ -507,7 +711,12 @@ class Worker:
                 )
             except Exception as exc:  # unexpected handler crash: retry the task, keep draining
                 log.error("handler_crash", task=task.id, type=task_type, error=str(exc))
-                await self._queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True)
+                status = await self._queue.fail(
+                    task.id, failure_record(exc), worker_id=wid, retry=True,
+                    engine_wait=engine_unreachable(exc),
+                )
+                if status == "dead":  # out of tries: Needs another try, never dropped
+                    await self.quarantine_dead([task.id])
                 async with done_lock:
                     stats.errors += 1
                 return
@@ -532,9 +741,12 @@ class Worker:
                 return
 
             if outcome.action == "error":
-                await self._queue.fail(
-                    task.id, outcome.error or "", worker_id=wid, retry=True
+                status = await self._queue.fail(
+                    task.id, outcome.error or "", worker_id=wid, retry=True,
+                    engine_wait=outcome.engine_unreachable,
                 )
+                if status == "dead":  # out of tries: Needs another try, never dropped
+                    await self.quarantine_dead([task.id])
                 async with done_lock:
                     stats.errors += 1
                 return
@@ -616,6 +828,65 @@ class Worker:
                 tier_stats.errors += len(crashed)
         return len(crashed)
 
+    async def _engine_wait(self, task_type: str) -> None:
+        """Preflight before a Tier 1 or Tier 2 drain (D-WORKER-6). When the tier runs on Ollama,
+        probe it (probe_engine: the probe Setup and Models use, cached a few seconds). Engine
+        down or the tier's model missing: record why (engine_wait, read by the Pipeline and the
+        role page), log it once, and keep the probe so the lease filter (_group_held,
+        _hold_exclusion) leaves out every task that would reach the engine: nothing is leased
+        and no try is spent. A Score again on a model that runs elsewhere still drains. The
+        embed tier is judged the same way when it runs on Ollama; it has no per-task model, so
+        while it waits its drain leases nothing (drain_tier)."""
+        tier = _ENGINE_TIER.get(task_type)
+        if tier is None:
+            return
+        self._engine_probe = None
+        problem = None
+        if _ollama_model(self._settings, tier) is not None:
+            probe = await _engine_probe_for(self._settings)
+            problem = engine_problem(self._settings, tier, probe)
+            # Kept only while something is wrong, so a healthy drain's lease filter stays the
+            # plain one (no extra query per lease).
+            self._engine_probe = probe if problem is not None else None
+        _note_engine(tier, problem, _ollama_model(self._settings, tier))
+
+    async def engine_skip_types(self) -> tuple[str, ...]:
+        """The scoring task types a cycle must not open a Run row for (D-WORKER-6 amended twice),
+        decided fresh before the cycle's work check: each tier the last drain left waiting is
+        probed again (the probe is cached a few seconds), so the cycle in which Ollama comes back,
+        or a pulled model is chosen, opens its Run and holds its settings before anything is
+        leased. A type still waiting is skipped only when the lease filter would let none of its
+        claimable tasks through, so a Score again on a model that runs elsewhere opens the Run
+        too. Leaves no probe behind: the drain probes for itself."""
+        skip: list[str] = []
+        for task_type in engine_waiting_types():
+            # Probe again; once the engine is back the lease filter is the plain one, so any
+            # claimable task means the cycle has work for this type.
+            await self._engine_wait(task_type)
+            if task_type == "embed":
+                if "embed" in _ENGINE_WAIT:  # no per-task model: nothing can run elsewhere
+                    skip.append(task_type)
+            elif not await self._claimable_where(
+                task_type, await self._hold_exclusion(task_type)
+            ):
+                skip.append(task_type)
+        self._engine_probe = None
+        return tuple(skip)
+
+    async def _claimable_where(self, task_type: str, where: Any) -> bool:
+        async with self._sm() as s:
+            stmt = select(Task.id).where(Task.type == task_type, claimable(utcnow_iso()))
+            if where is not None:
+                stmt = stmt.where(where)
+            return (await s.execute(stmt.limit(1))).first() is not None
+
+    def _resolved_blocked(self, resolved: Settings, tier: str) -> bool:
+        """Whether `resolved` sends `tier` to a backend that cannot take it now: held as out of
+        credit, or the local engine down or missing the model (D-WORKER-6)."""
+        if credit.any_held() and tier_credit_hold(resolved, tier) is not None:
+            return True
+        return engine_problem(resolved, tier, self._engine_probe) is not None
+
     async def _model_groups(
         self, task_type: str, *, exclude_ids: set[int] | None = None
     ) -> list[Any]:
@@ -659,7 +930,7 @@ class Worker:
         """Whether the model group `key` (None: the configured model) would be sent to a backend
         on hold as out of credit. An override that cannot run falls back to the configured model,
         so it is judged there, exactly as `_task_settings` resolves it."""
-        if not credit.any_held():
+        if not credit.any_held() and self._engine_probe is None:
             return False
         if key is not None:
             try:
@@ -668,14 +939,14 @@ class Worker:
                 )
             except ModelOverrideError:
                 resolved = self._settings
-            return tier_credit_hold(resolved, tier) is not None
-        return tier_credit_hold(self._settings, tier) is not None
+            return self._resolved_blocked(resolved, tier)
+        return self._resolved_blocked(self._settings, tier)
 
     async def _hold_exclusion(self, task_type: str) -> Any:
         """A lease filter that leaves out the tasks which would run on a held backend, or None
         when no backend is held (the common case: no query is made)."""
         tier = _OVERRIDE_TIER.get(task_type)
-        if tier is None or not credit.any_held():
+        if tier is None or not (credit.any_held() or self._engine_probe is not None):
             return None
         tcfg = self._settings.llm.tiers.get(tier)
         cfg = (str(tcfg.backend), str(tcfg.model)) if tcfg is not None else ("", "")
@@ -719,8 +990,10 @@ class Worker:
         runs on the configured model instead: the role still gets scored (hard rule 4).
 
         `self._settings` is refreshed only between cycles, so a task that would reach an external
-        backend first re-reads Hosted mode from the setting rows (_hosted_now, one small read).
-        Turned off, or its disclosure no longer acknowledged, since the cycle began: an override
+        backend first re-reads Hosted mode and the run card from the setting rows (_hosted_now,
+        one small read) and asks the one gate for online sends (setup_state.online_send_held,
+        D-PRIV-798). Turned off, its disclosure no longer acknowledged, or On this computer
+        chosen since the cycle began: an override
         falls back to the configured model, and a configured hosted tier gets the live Hosted
         mode so the client refuses the send exactly as when it is off (Privacy: nothing leaves
         the machine after the operator turned that off). Local tasks pay no extra read."""
@@ -737,12 +1010,18 @@ class Worker:
             except ModelOverrideError as exc:
                 log.warning("model_override_unavailable", type=task_type, reason=str(exc))
         if _tier_external(settings, tier):
-            live = await self._hosted_now()
-            if not live.active:
+            from kestrel.services.setup_state import online_send_held
+
+            now = await self._settings_now(settings)
+            live = now.llm.hosted_mode
+            if online_send_held(now) is not None:
                 if settings is not self._settings:
                     log.warning(
                         "model_override_unavailable", type=task_type,
-                        reason="Hosted mode was turned off since this run began",
+                        reason=(
+                            "Hosted mode was turned off since this run began" if not live.active
+                            else "On this computer was chosen since this run began"
+                        ),
                     )
                     settings = self._settings
                 if _tier_external(settings, tier):
@@ -755,10 +1034,20 @@ class Worker:
             return self._settings, self._client
         return settings, client_for(self._client, settings)
 
+    async def _settings_now(self, settings: Settings) -> Settings:
+        """`settings` as a shallow copy whose Hosted mode and run card are what the setting rows
+        hold NOW (_hosted_now), for asking the one gate for online sends mid-cycle."""
+        live = await self._hosted_now()
+        return settings.model_copy(
+            update={"llm": settings.llm.model_copy(update={"hosted_mode": live})}
+        )
+
     async def _hosted_now(self) -> HostedMode:
         """Hosted mode as the setting rows say it is NOW: the cycle's copy with every
         `llm.hosted_mode.<field>` row laid over it (the Settings > Hosted switch and the
-        disclosure acknowledgement are written there). A row that no longer validates reads as
+        disclosure acknowledgement are written there), carrying the run card's rows as they are
+        now (D-PRIV-798: On this computer chosen mid-cycle holds the send like the switch does).
+        A row that no longer validates reads as
         off: when unsure, nothing is sent. Limitation: a row DELETED mid-cycle keeps the cycle's
         value until the next cycle (the switch writes False, it does not delete)."""
         prefix = "llm.hosted_mode."
@@ -766,22 +1055,19 @@ class Worker:
             async with self._sm() as s:
                 rows = (
                     await s.execute(
-                        select(Setting.key, Setting.value).where(Setting.key.like(prefix + "%"))
+                        select(Setting.key, Setting.value).where(
+                            or_(Setting.key.like(prefix + "%"), Setting.key.in_(RUN_CARD_KEYS))
+                        )
                     )
                 ).all()
         except SQLAlchemyError as exc:
             log.warning("hosted_mode_read_failed", error=str(exc))
             return HostedMode(enabled=False)
-        data = self._settings.llm.hosted_mode.model_dump()
-        for key, value in rows:
-            field_name = key[len(prefix):]
-            if "." not in field_name:
-                data[field_name] = value
-        try:
-            return HostedMode.model_validate(data)
-        except ValueError as exc:
-            log.warning("hosted_mode_row_invalid", error=str(exc))
-            return HostedMode(enabled=False)
+        from kestrel.services.setup_state import hosted_mode_from_rows
+
+        return hosted_mode_from_rows(
+            self._settings.llm.hosted_mode, {k: v for k, v in rows}
+        )
 
     def _emit_progress(self, task_type: str, done: int, total: int, window: deque[float]) -> None:
         eta = ""
@@ -853,9 +1139,19 @@ class Worker:
                     if kind in SIGNAL_SOURCE_KINDS:
                         from kestrel.services.online_consent import held_for_approval
 
+                        # The cycle's settings are from its start: a classifier on an online
+                        # model is judged, and run, with Hosted mode and the run card as they
+                        # are now (D-PRIV-798), like a Tier 1 or Tier 2 task.
+                        run_settings, run_client = self._settings, self._client
                         client_settings = getattr(self._client, "settings", self._settings)
+                        if _tier_external(self._settings, "trigger") or _tier_external(
+                            client_settings, "trigger"
+                        ):
+                            run_settings = await self._settings_now(self._settings)
+                            client_settings = await self._settings_now(client_settings)
+                            run_client = client_for(self._client, client_settings)
                         if (
-                            held_for_approval(self._settings, ("trigger",), payload)
+                            held_for_approval(run_settings, ("trigger",), payload)
                             or held_for_approval(client_settings, ("trigger",), payload)
                         ):
                             held_scrapes.add(task.id)
@@ -868,8 +1164,8 @@ class Worker:
                             stats.held += 1
                             continue
                         outcome = await run_signal_source(
-                            self._sm, source_id, http=http, client=self._client,
-                            settings=self._settings,
+                            self._sm, cast(int, source_id), http=http, client=run_client,
+                            settings=run_settings,
                         )
                     else:
                         outcome = await run_source(
@@ -933,6 +1229,7 @@ class Worker:
         run_id = await runlog.open_run(
             self._sm, name="pipeline", track=track, mode=self._settings.llm.mode
         )
+        await begin_engine_cycle(self._settings)  # one engine answer for this run (round 4)
         try:
             return await self._run_tiers(stats, run_id, track=track, limit=limit)
         except Exception as exc:
@@ -942,6 +1239,8 @@ class Worker:
                 notes=self._mid_run_switch_note,
             )
             raise
+        finally:
+            end_engine_cycle()
 
     async def _notify_run_finished(self, stats: RunStats, run_id: int | None = None) -> None:
         """Raise the run's notifications (kestrel.services.run_notify): ONE outcome (the "Run
@@ -1005,4 +1304,12 @@ class Worker:
         # run says nothing. Building the notice never fails a finished run.
         if not self._stop.is_set():
             await self._notify_run_finished(stats, run_id)
+            # The first run's one automatic story build (D-STORY-700), the CLI path of the same
+            # rule the serve loop applies after its tiers. Never fails a finished run.
+            try:
+                from kestrel.interview.first_run import queue_first_run_stories
+
+                await queue_first_run_stories(self._sm, produced_tier2=stats.tier2.completed > 0)
+            except Exception as exc:  # noqa: BLE001 - the next run asks again
+                log.warning("first_run_stories_error", error_type=type(exc).__name__)
         return stats

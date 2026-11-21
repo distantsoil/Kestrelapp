@@ -58,6 +58,10 @@ LOCAL_ONLY_EXACT = frozenset({
     # holder's and never a backup's.
     "notify.webhook_url", "notify.ntfy_topic", "research.searx_url", "updates.feed_url",
     "ingest.user_agent", "ingest.respect_robots",
+    # Which scoring instructions run decides what the full rating sends to an online model
+    # (evaluate/v4 adds resume lines, D-SCORE-30): this computer's choice, never a key
+    # holder's or a backup's (D-SCORE-31).
+    "scoring.evaluate_version",
 })
 LOCAL_ONLY_PREFIX = ("llm.", "mcp.", "server.", "hosted", "models.", "profile.")
 
@@ -113,6 +117,8 @@ def plausible(key: str, value: Any) -> bool:
     (a weight in 0 to 1), because a bad one would break every later settings load."""
     if value is ABSENT:
         return True
+    if key == "scoring.evaluate_version":
+        return value in ("v3", "v4")
     if key.startswith(_NUMERIC) or key in _NUMERIC_EXACT:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return False

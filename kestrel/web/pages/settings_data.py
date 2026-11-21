@@ -141,6 +141,10 @@ async def backup_download():
     logs never do (kestrel.services.backup). The stamp is recorded for "Last backup"."""
     try:
         archive = await asyncio.to_thread(backup_service.create_backup_to_temp)
+    except backup_service.DatabaseRefused as exc:
+        return Response(
+            f"Could not build the backup: {backup_service.database_refused_reason(exc)}.",
+            status_code=409, media_type="text/plain")
     except OSError as exc:
         log.warning("backup_build_failed", error_type=type(exc).__name__, error=str(exc))
         return Response(f"Could not build the backup: {fixed_reason(exc)}", status_code=500,
@@ -800,4 +804,8 @@ async def contacts_remove(request: Request):
 async def data_pane_ctx(request: Request) -> dict:
     ctx = {**await backup_ctx(), **_imp_base(), **_ct_base(), **await contacts_state(request)}
     ctx["how_steps"] = HOW_STEPS
+    # The install ID beside the backups (D-INST-1); None off this computer (D-INST-2).
+    from kestrel.web import install_id_view
+
+    ctx["install_id"] = await install_id_view.for_request(request)
     return ctx

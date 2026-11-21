@@ -19,7 +19,7 @@
     {% if p.eta_minutes is not none %}<span class="quiet" data-testid="progress-eta">about {{ p.eta_minutes }} {{ 'minute' if p.eta_minutes == 1 else 'minutes' }} left at the current pace</span>{% endif %}
   </div>
   <div class="meter progress-meter" role="img" aria-label="{{ p.scored }} scored, {{ p.failed }} failed, {{ p.running }} scoring now, {{ p.waiting }} waiting">
-    <i class="seg-scored" style="width:{{ p.widths.scored }}%"></i><i class="seg-failed" style="width:{{ p.widths.failed }}%"></i><i class="seg-running" style="width:{{ p.widths.running }}%"></i>
+    <i class="seg-scored" data-k-style="width:{{ p.widths.scored }}%"></i><i class="seg-failed" data-k-style="width:{{ p.widths.failed }}%"></i><i class="seg-running" data-k-style="width:{{ p.widths.running }}%"></i>
   </div>
   <div class="progress-legend">
     <span><b>{{ p.scored }}</b> scored</span>

@@ -30,7 +30,7 @@ FLASH_MESSAGES: dict[str, str] = {
     ),
     "mode_hosted": "Kestrel runs on hosted models.",
     "mode_hosted_pending": (
-        "Hosted mode will apply once step 6 is complete under Settings > Hosted."
+        "Hosted mode will apply once step 6 is complete under Settings > This computer."
     ),
     "profile_recorded": "Hardware profile recorded.",
     "description_saved": (

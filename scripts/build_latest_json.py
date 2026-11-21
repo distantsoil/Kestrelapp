@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from changelog_section import extract_section, list_sections  # noqa: E402
+from changelog_section import date_problem, extract_section, list_sections  # noqa: E402
 
 from kestrel.services.updater import (  # noqa: E402
     FEED_SCHEMA,
@@ -139,6 +139,11 @@ def main(argv: list[str] | None = None) -> int:
     except (FeedError, ValueError) as exc:
         print(f"latest.json not built: {exc}", file=sys.stderr)
         return 1
+    # A note only: this runs after the release is published (the check is in preflight), so a
+    # date mismatch can no longer be fixed by failing the job.
+    note = date_problem(Path(args.changelog).read_text(encoding="utf-8"), args.version, published)
+    if note:
+        print(f"note: {note}", file=sys.stderr)
     Path(args.out).write_text(
         feed.model_dump_json(by_alias=True, indent=2) + "\n", encoding="utf-8"
     )

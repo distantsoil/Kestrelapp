@@ -90,3 +90,11 @@ def test_the_shipped_interface_font_and_its_license_are_in_the_notices():
     assert (fonts / "manrope-latin-wght-normal.woff2").stat().st_size > 10_000
     text = notices.build_notices()
     assert "Manrope (the interface font)" in text and "SIL Open Font License" in text
+
+
+def test_phonenumbers_is_in_the_notices_with_its_apache_license():
+    """#207, D-PHONE-1: the phone formatter's package is a runtime dependency under Apache 2.0."""
+    names = {d.metadata["Name"].lower() for d in notices.runtime_closure()}
+    assert "phonenumbers" in names
+    section = notices.build_notices().split("phonenumbers ", 1)[1].split("=" * 78, 1)[0]
+    assert "License: Apache-2.0" in section

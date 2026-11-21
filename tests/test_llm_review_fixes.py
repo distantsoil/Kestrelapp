@@ -35,6 +35,7 @@ from kestrel.llm.guard import (
 )
 from kestrel.llm.schemas import P1Triage, P2Legitimacy
 from kestrel.pipeline import _shared
+from tests.page_source import inline_static
 
 OR_URL = "https://openrouter.ai/api/v1/chat/completions"
 _MSGS = [{"role": "system", "content": "sys"}, {"role": "user", "content": "triage this"}]
@@ -403,7 +404,8 @@ def test_plain_toasts_stack_under_the_scan_toast_and_dismissal_is_shared(tmp_pat
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
-    html = (Path(paths.web_templates_dir()) / "partials" / "toast.html").read_text("utf-8")
+    html = inline_static(
+        (Path(paths.web_templates_dir()) / "partials" / "toast.html").read_text("utf-8"))
     # One toast system (the locked mockups): the second box is gone; plain toasts use the shared
     # region (KUI.toast), where the scan toast also sits.
     assert 'id="kestrel-toast-note"' not in html and "localStorage" in html

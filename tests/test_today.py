@@ -61,7 +61,10 @@ def _today() -> date:
     # LOCAL, matching what the operator's date input produces: `next_action_at` values here are
     # calendar dates with no timezone, so they are compared against the local day. The UTC
     # timestamps seeded through `_ago` are converted to a local date by the app before counting.
-    return date.today()
+    # Read from the same clock as `_now()`: `date.today()` is a second clock, so a run that
+    # crosses midnight between seeding and counting (or a frozen clock, D-CI-26) saw 31 days
+    # quiet for a row seeded 30 days back.
+    return _now().astimezone().date()
 
 
 def _ago(**kw) -> str:
@@ -321,8 +324,25 @@ def _settings(**hosted):
     return s
 
 
+def _pin_host(monkeypatch, *, ollama_up: bool, key: str | None) -> None:
+    """Every host input system_asks reads, set by the test (D-TEST-573, #205): the machine's
+    hardware, whether a local Ollama answers (and with which models), and the hosted key."""
+    from kestrel.llm.profiles import Hardware
+    from kestrel.services import setup_state
+
+    monkeypatch.setattr(setup_state, "detected_hardware",
+                        lambda: Hardware(os="linux", ram_gb=16.0))
+    monkeypatch.setattr(setup_state, "probe_ollama",
+                        lambda settings, **kw: ("0.9.0", []) if ollama_up else (None, []))
+    if key is None:
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("OPENROUTER_API_KEY", key)
+
+
 def test_system_asks_contents_and_order(monkeypatch):
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    # The cloud's host: no local Ollama answers and no hosted key is saved.
+    _pin_host(monkeypatch, ollama_up=False, key=None)
     asyncio.run(_seed(confidential=True))
     # D-PRIV-1: until the operator confirms the employer Kestrel hides, Today asks; once
     # confirmed (the stored flag), the ask goes.
@@ -350,6 +370,25 @@ def test_system_asks_contents_and_order(monkeypatch):
     assert "Retry them, or pick another model on Models" in quarantine["line"]
     for a in asks:
         assert a["title"] and a["line"] and a["href"] and a["button"]
+
+
+def test_system_asks_on_a_host_with_ollama_running_and_a_key_saved(monkeypatch):
+    """#205: the same seed on the host that failed (a local Ollama answers with none of Kestrel's
+    models built, a hosted key saved) gives that host's own answer: the models ask, no key ask."""
+    _pin_host(monkeypatch, ollama_up=True, key="invented-key-not-real")
+    asyncio.run(_seed(confidential=True))
+
+    async def _confirm(s):
+        from kestrel.docs.current_employer import set_confirmed
+
+        await set_confirmed(s)
+        await s.commit()
+
+    asyncio.run(_with_session(_confirm))
+    asks = asyncio.run(_with_session(lambda s: system_asks(s, _settings(hosted=True), None)))
+    assert [a["key"] for a in asks] == ["profile", "models", "quarantine"]
+    models = next(a for a in asks if a["key"] == "models")
+    assert models["href"] == "/models" and models["line"].startswith("Missing: ")
 
 
 def test_system_asks_redaction_map_and_track_scope(tmp_path, monkeypatch):

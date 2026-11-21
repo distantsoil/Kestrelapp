@@ -1,0 +1,40 @@
+{# Connect it (issue #186): the connection key, masked. The key itself is never written into the
+   page: Copy key asks for it (POST /settings/extension/key, this computer only), puts it on the
+   clipboard and says Copied. Copy key makes a key only when there is none and never turns on
+   access from other devices. Make a new key replaces it and asks first. #}
+{% import "partials/local_only.html" as lo with context %}
+<section class="k-card st-card" id="st-xt-key" data-testid="xt-key">
+  <header class="k-sec-head st-head"><span class="st-xnum" aria-hidden="true">2</span><div class="k-grow"><h3>Connect it</h3></div></header>
+  <div class="st-xkey">
+    <label class="st-xkey__f" for="st-xt-keyfield"><span class="st-xkey__l">Connection key</span>
+      <input class="k-input st-xkey__in" id="st-xt-keyfield" type="text" readonly tabindex="-1" value="{{ '••••••••••••••••••••' if xt_has_key else '' }}" placeholder="Made the first time you copy it" aria-describedby="st-xt-keyhelp" data-testid="xt-keyfield"></label>
+    <div class="st-xkey__go">
+      <button type="button" class="k-btn k-btn--primary" data-st-xkey-copy data-testid="xt-copy"{{ lo.dis(request) }}>Copy key</button>
+      <span class="st-xcopied" role="status" aria-live="polite" data-testid="xt-copied"></span>
+    </div>
+  </div>
+  <p class="st-dsm" id="st-xt-keyhelp">Paste it into the extension once. Kestrel refuses changes from any other extension without it.</p>
+  {% if xt_note %}<p class="st-note st-note--{{ 'good' if xt_ok else 'bad' }}" role="status" data-testid="xt-note">{{ xt_note }}</p>{% endif %}
+  {{ lo.note(request) }}
+  <details class="st-det" data-testid="xt-details"><summary>Show details</summary>
+    <div class="st-xdet__body">
+      <p class="st-dsm" data-testid="xt-port">Kestrel is on port {{ xt_port }} on this computer.</p>
+      <div class="st-kind st-kind--gap">Load it by hand (for developers)</div>
+      <ol class="st-xsteps-list" data-testid="xt-unpacked">
+        <li>Open <span class="st-code">chrome://extensions</span> in Chrome.</li>
+        <li>Turn on Developer mode.</li>
+        <li>Press Load unpacked.</li>
+        <li>Choose the extension folder.</li>
+      </ol>
+      <div class="st-kind st-kind--gap">A new key</div>
+      <p class="st-dsm">The extension and any devices you joined will need the new key.</p>
+      <div class="st-btns"><button type="button" class="k-btn k-btn--sm" data-k-modal="#st-xt-rotate-dialog" data-testid="xt-rotate-open"{{ lo.dis(request) }}>Make a new key</button></div>
+    </div>
+  </details>
+  <div class="k-modal" id="st-xt-rotate-dialog" role="dialog" aria-modal="true" aria-labelledby="st-xt-rotate-dialog-t" aria-hidden="true" data-k-static>
+    <div class="k-modal__head"><h2 id="st-xt-rotate-dialog-t">Make a new key?</h2></div>
+    <div class="k-modal__body"><p>The extension and any devices you joined will need the new key.</p></div>
+    <div class="k-modal__foot"><button type="button" class="k-btn" data-k-close>Cancel</button>
+      <button type="button" class="k-btn k-btn--primary" hx-post="/settings/extension/key/new" hx-vals='{"ack": "on"}' hx-target="#st-xt-key" hx-swap="outerHTML" data-k-close data-testid="xt-rotate"{{ lo.dis(request) }}>Make a new key</button></div>
+  </div>
+</section>

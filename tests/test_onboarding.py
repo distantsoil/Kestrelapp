@@ -413,7 +413,7 @@ def test_about_you_asks_for_a_first_name_and_what_you_are_looking_for():
     for name in ("first_name", "last_name", "email", "location", "headline", "phone"):
         assert f'name="{name}"' in body, name
     assert "Required" in body and "Add more details" in body
-    assert "Kestrel does not keep a LinkedIn link yet" in body  # no back end: shown disabled
+    assert "data-linkedin-input" in body  # a real field since D-REL-26 (was a disabled mockup)
     # A new install is jobs only (release concern 10): consulting is an opt-in.
     assert re.search(r'value="employment"\s+data-ob-track="jobs"[^>]*checked', body)
     assert not re.search(r'value="consulting"[^>]*checked', body)
@@ -1042,3 +1042,175 @@ def test_a_pasted_sentence_as_the_key_is_refused_in_plain_words(monkeypatch, bad
     assert "UnicodeEncodeError" not in body and "Traceback" not in body
     assert "half a paragraph" not in body and "left" not in repr(logs)
     assert bad not in repr(logs)
+
+
+def test_about_you_phone_is_stored_formatted_with_the_canonical_form_beside_it():
+    """#207, D-PHONE-2: ten digits save as 555-555-0123; the typed text and +15555550123 sit
+    beside it; the Add more details field and the country selector are on the page."""
+    c = _app()
+    _jump("about", visited=["welcome", "models"])
+    page = c.get("/onboarding").text
+    assert 'name="phone_country"' in page and "data-phone-input" in page
+    r = c.post("/onboarding/save/about",
+               data={"first_name": "Pat", "phone": "5555550123", "phone_country": "US",
+                     "track": ["employment"]}, headers=HX)
+    assert _step(r.text) == "resume"
+    from kestrel.services import profile_edit as pe
+
+    block = pe.load_state().tracks["employment"]
+    assert block["phone"] == "555-555-0123" and block["phone_entered"] == "5555550123"
+    assert block["phone_e164"] == "+15555550123" and block["phone_country"] == "US"
+
+
+def test_about_you_unreadable_phone_is_kept_as_typed_and_never_blocks_the_save():
+    c = _app()
+    _jump("about", visited=["welcome", "models"])
+    r = c.post("/onboarding/save/about",
+               data={"first_name": "Pat", "phone": "ask for Dana", "track": ["employment"]},
+               headers=HX)
+    assert _step(r.text) == "resume"  # saving was not blocked
+    from kestrel.services import profile_edit as pe
+
+    block = pe.load_state().tracks["employment"]
+    assert block["phone"] == "ask for Dana" and block["phone_e164"] == ""
+
+
+def test_a_failed_about_save_keeps_the_new_phone_and_never_pins_the_old_number_to_it():
+    """Round 4 (1), onboarding: the re-render merged the old E.164 next to the newly typed text,
+    and the resubmit then saved the old number."""
+    from kestrel.services import profile_edit as pe
+
+    c = _app()
+    _jump("about", visited=["welcome", "models"])
+    c.post("/onboarding/save/about",
+           data={"first_name": "Pat", "phone": "5555550123", "phone_country": "US",
+                 "track": ["employment"]}, headers=HX)
+    assert pe.load_state().tracks["employment"]["phone_e164"] == "+15555550123"
+    _jump("about", visited=["welcome", "models"])
+    failed = c.post("/onboarding/save/about",
+                    data={"first_name": "", "phone": "020 7946 0000", "phone_country": "GB",
+                          "track": ["employment"]}, headers=HX)
+    assert "Add your first name" in failed.text and 'value="020 7946 0000"' in failed.text
+    shown = re.search(r'name="phone_e164" value="([^"]*)"', failed.text).group(1)
+    assert shown == "+442079460000"  # the number the new text reads as, not the stored one
+    again = c.post("/onboarding/save/about",
+                   data={"first_name": "Pat", "phone": "020 7946 0000", "phone_country": "GB",
+                         "phone_e164": shown, "track": ["employment"]}, headers=HX)
+    assert _step(again.text) == "resume"
+    block = pe.load_state().tracks["employment"]
+    assert block["phone_e164"] == "+442079460000" and block["phone"] == "020 7946 0000"
+
+
+def test_a_new_number_with_no_extension_is_not_pinned_to_the_stored_extension():
+    """Round 5 (3): the re-render joined the page's E.164 to the stored extension, so a new
+    number with none no longer matched its own text and its pin was lost on resubmit."""
+    from kestrel.services import profile_edit as pe
+
+    c = _app()
+    _jump("about", visited=["welcome", "models"])
+    c.post("/onboarding/save/about",
+           data={"first_name": "Pat", "phone": "555-555-0123 x42", "phone_country": "US",
+                 "track": ["employment"]}, headers=HX)
+    assert pe.load_state().tracks["employment"]["phone_ext"] == "42"
+    _jump("about", visited=["welcome", "models"])
+    failed = c.post("/onboarding/save/about",
+                    data={"first_name": "", "phone": "020 7946 0000", "phone_country": "GB",
+                          "phone_e164": "+442079460000", "track": ["employment"]}, headers=HX)
+    shown = re.search(r'name="phone_e164" value="([^"]*)"', failed.text).group(1)
+    assert shown == "+442079460000"  # no ;ext=42: the extension is the text's own
+    again = c.post("/onboarding/save/about",
+                   data={"first_name": "Pat", "phone": "020 7946 0000", "phone_country": "GB",
+                         "phone_e164": shown, "track": ["employment"]}, headers=HX)
+    assert _step(again.text) == "resume"
+    block = pe.load_state().tracks["employment"]
+    assert block["phone_e164"] == "+442079460000" and block["phone_ext"] == ""
+
+
+def test_a_failed_save_takes_the_region_from_the_servers_record_not_the_posted_selector():
+    """Round 6 (1): stored 555-555-0123 on a US home; the person picks GB and the save fails.
+    The page must come back pinned to the number under the stored home, not to a UK number."""
+    from kestrel.services import profile_edit as pe
+
+    c = _app()
+    _jump("about", visited=["welcome", "models"])
+    c.post("/onboarding/save/about",
+           data={"first_name": "Pat", "phone": "555-555-0123", "phone_country": "US",
+                 "track": ["employment"]}, headers=HX)
+    assert pe.load_state().tracks["employment"]["phone_e164"] == "+15555550123"
+    _jump("about", visited=["welcome", "models"])
+    failed = c.post("/onboarding/save/about",
+                    data={"first_name": "", "phone": "555-555-0123", "phone_country": "GB",
+                          "track": ["employment"]}, headers=HX)
+    assert "Add your first name" in failed.text
+    pinned = re.search(r'name="phone_e164" value="([^"]*)"', failed.text).group(1)
+    under = re.search(r'value="([^"]*)" data-phone-shown-under', failed.text).group(1)
+    assert (pinned, under) == ("+15555550123", "US")
+    again = c.post("/onboarding/save/about",
+                   data={"first_name": "Pat", "phone": "555-555-0123", "phone_country": "GB",
+                         "phone_e164": pinned, "track": ["employment"]}, headers=HX)
+    assert _step(again.text) == "resume"
+    block = pe.load_state().tracks["employment"]
+    assert block["phone_e164"] == "+15555550123" and block["phone_country"] == "GB"
+def test_first_run_break_shows_once_after_the_first_start_searching_and_never_after_a_restart():
+    """D-UI-249: the "grab a drink" notice belongs to the first completion only. It shows on the
+    Today the wizard opens, before the tour; dismissing it (or Escape) is remembered for good, and
+    restarting onboarding and pressing Start searching again does not bring it back."""
+    c = _app()
+    _ready_to_search(c)
+    # Nothing is queued until the wizard is finished.
+    assert not _db(ob.first_run_break_pending)
+    assert c.post("/onboarding/searches/start", headers=HX).headers["HX-Redirect"] == "/?tour=1"
+    assert _db(ob.first_run_break_pending)
+    today = c.get("/?tour=1").text
+    assert 'data-testid="first-run-break"' in today and "Good time to grab a drink" in today
+    assert "Got it, show me around" in today
+    assert "—" not in today.split('id="td-break"')[1].split("</dialog>")[0]
+    # Reloading before dismissing shows it again; nothing was lost.
+    assert 'data-testid="first-run-break"' in c.get("/").text
+    r = c.post("/onboarding/first-run-break/dismiss", headers=HX)
+    assert r.status_code == 200 and r.text == ""
+    assert not _db(ob.first_run_break_pending)
+    assert 'data-testid="first-run-break"' not in c.get("/?tour=1").text
+
+    # A restart that keeps the details, then a second Start searching: no second notice.
+    _db(ob.restart)
+    _ready_to_search(c)
+    c.post("/onboarding/searches/start", headers=HX)
+    assert _state().completed
+    assert not _db(ob.first_run_break_pending)
+    assert 'data-testid="first-run-break"' not in c.get("/?tour=1").text
+
+
+def test_first_run_break_is_queued_once_per_install():
+    async def go(s):
+        first = await ob.mark_first_run_break(s)
+        await s.commit()
+        second = await ob.mark_first_run_break(s)
+        await ob.dismiss_first_run_break(s)
+        await s.commit()
+        third = await ob.mark_first_run_break(s)
+        return first, second, third, await ob.first_run_break_pending(s)
+
+    _app()
+    assert _db(go) == (True, False, False, False)
+
+
+def test_first_run_break_never_shows_on_an_install_that_restarts_onboarding():
+    """An install onboarded before the notice existed has no row. Restarting onboarding (keep, or
+    clear, which runs restart after the reset) records the first run as had, so Start searching
+    afterwards queues nothing (D-UI-249)."""
+    c = _app()
+    _db(ob.restart)
+    _ready_to_search(c)
+    c.post("/onboarding/searches/start", headers=HX)
+    assert _state().completed
+    assert not _db(ob.first_run_break_pending)
+    assert 'data-testid="first-run-break"' not in c.get("/?tour=1").text
+
+
+def test_onboarding_loads_the_phone_assets_exactly_once():
+    c = _app()
+    _jump("about", visited=["welcome", "models"])
+    body = c.get("/onboarding").text
+    assert body.count("js/phone.js") == 1 and body.count("css/pages/phone.css") == 1
+    assert "data-linkedin-input" in body and "data-phone-input" in body

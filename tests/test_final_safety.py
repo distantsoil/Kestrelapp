@@ -239,7 +239,9 @@ def test_hx_values_preserve_untrusted_text_without_extra_parameters(surface):
     hostile = 'value","confirmed":"1'
     contexts = {
         "pp_delete": {"story": {"id": 1, "title": "Story"}, "from": "bank", "opp": hostile},
-        "update_details": {"version": hostile},
+        "update_details": {"version": hostile, "download": {
+            "url": "https://kestrelapp.co/download", "label": "Get it from kestrelapp.co",
+            "direct": False, "page": "https://kestrelapp.co/download"}},
         "st_rules": {"track": "employment", "rule_rows": [{
             "def": {"key": hostile, "name": "Rule"}, "of_n": 0, "on": True, "n": 0,
         }]},

@@ -33,6 +33,7 @@ from kestrel.db.models import (
 from kestrel.web import tailor_view as tv
 from kestrel.web.pages import renders as page_mod
 from tests import tailor_seed
+from tests.page_source import as_written
 
 pytestmark = pytest.mark.usefixtures("_isolate_data_home")
 
@@ -186,7 +187,7 @@ async def test_every_printed_line_is_the_operators_own_text_and_links_to_its_car
     assert doc.select_one("p.summary")["data-slot"] == "summary"
     assert doc.select_one(".skills")["data-slot"] == "skills"
     # The frame is one true-size page: the preview sheet gives it its margin and highlight.
-    assert "body{padding:.5in" in _soup(page).select_one("iframe#tl-frame")["srcdoc"]
+    assert "body{padding:.5in" in as_written(_soup(page).select_one("iframe#tl-frame")["srcdoc"])
 
 
 async def test_other_wordings_are_radio_rows_and_only_an_optional_line_can_be_left_out():

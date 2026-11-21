@@ -1,0 +1,96 @@
+{# Settings > This computer: Ollama's speed settings (issue #181, D-SETUP-650). Read only until a button
+   is pressed: Set these opens the confirm (a GET), and only its Set them button, Undo and
+   Restart Ollama post. The raw commands are under Show details. #}
+{% import "partials/local_only.html" as lo with context %}
+{% import "partials/st_macros.html" as st with context %}
+<div id="ollama-env">
+<section class="k-card st-card oe" data-testid="ollama-env">
+{% if oe.shown %}
+  {{ st.head('Ollama speed settings', 'tune') }}
+  <p class="st-dsm oe-lead">Ollama reads two settings from its own environment. Kestrel sends up to
+    {{ oe.need }} requests at once, and moves between models for each step.</p>
+  {% if message %}<p class="st-note st-note--{{ 'good' if good else 'bad' }} oe-msg" role="status" data-testid="oe-message">{{ message }}</p>{% endif %}
+  <ul class="oe-rows">
+    {% for r in oe.rows %}
+    <li class="oe-row" data-testid="oe-row" data-name="{{ r.name }}" data-verdict="{{ r.verdict }}">
+      <span class="st-bub oe-ic {{ 'ok' if r.verdict == 'ok' else 'warn' }}" aria-hidden="true">{% if r.verdict == 'ok' %}&#10003;{% else %}!{% endif %}</span>
+      <span class="oe-body"><code>{{ r.name }}</code> <span class="st-dim oe-val">{{ r.value if r.value is not none else 'not set' }}</span>
+        <span class="st-dsm">{{ r.sentence }}</span></span>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="st-dsm oe-where">Read from {{ be.where }}. Kestrel cannot see the environment of a
+    running Ollama, so this is what Ollama gets the next time it starts.</p>
+
+  {% if oe.blocked and (oe.plan or oe.undo) %}
+  <p class="st-note st-note--bad oe-why" data-testid="oe-why-not">{{ oe.blocked }}</p>
+  {% elif review %}
+  <div class="oe-confirm" role="group" aria-labelledby="oe-confirm-title" data-testid="oe-confirm">
+    <b id="oe-confirm-title">Kestrel will set these in {{ be.where }}:</b>
+    <ul class="oe-plan">
+      {% for c in oe.plan.changes %}
+      <li data-testid="oe-plan-change"><code>{{ c.name }}</code> to <b>{{ c.new }}</b> <span class="st-dim">(now {{ c.old if c.old is not none else 'not set' }})</span></li>
+      {% endfor %}
+    </ul>
+    <p class="st-dsm">Nothing else changes. Ollama must restart to read them. {{ be.persistence }}</p>
+    <p class="st-dsm">To undo it: {{ be.undo_text }}.</p>
+    {% call lo.fence(request) %}
+    <div class="oe-actions">
+      <form hx-post="/setup/ollama-env/apply" hx-target="#ollama-env" hx-swap="outerHTML" method="post" action="/setup/ollama-env/apply" hx-disabled-elt="find button">
+        <input type="hidden" name="plan" value="{{ oe.plan.digest }}">
+        <button class="k-btn k-btn--sm k-btn--primary" type="submit" data-testid="oe-apply">Set them</button>
+      </form>
+      <button class="k-btn k-btn--sm" type="button" hx-get="/setup/ollama-env" hx-target="#ollama-env" hx-swap="outerHTML" data-testid="oe-cancel">Cancel</button>
+    </div>
+    {% endcall %}
+  </div>
+  {% elif oe.plan %}
+  {% call lo.fence(request) %}
+  <div class="oe-actions">
+    <button class="k-btn k-btn--sm k-btn--primary" type="button" hx-get="/setup/ollama-env?review=1" hx-target="#ollama-env" hx-swap="outerHTML" data-testid="oe-review">Set these for Ollama</button>
+  </div>
+  {% endcall %}
+  {% endif %}
+
+  {% if oe.undo or restart_offer %}
+  <div class="oe-after" data-testid="oe-after">
+    {% if restart_offer or oe.undo %}<p class="st-dsm">{{ be.restart_text }}</p>{% endif %}
+    {% call lo.fence(request) %}
+    <div class="oe-actions">
+      {% if be.can_restart %}
+      <form hx-post="/setup/ollama-env/restart" hx-target="#ollama-env" hx-swap="outerHTML" method="post" action="/setup/ollama-env/restart" hx-disabled-elt="find button">
+        <input type="hidden" name="restart" value="{{ restart_word }}">
+        <button class="k-btn k-btn--sm" type="submit" data-testid="oe-restart">Restart Ollama</button>
+      </form>
+      {% endif %}
+      {% if oe.undo and not oe.blocked %}
+      <form hx-post="/setup/ollama-env/undo" hx-target="#ollama-env" hx-swap="outerHTML" method="post" action="/setup/ollama-env/undo" hx-disabled-elt="find button">
+        <input type="hidden" name="undo" value="{{ oe.undo.digest }}">
+        <button class="k-btn k-btn--sm" type="submit" data-testid="oe-undo">Undo</button>
+      </form>
+      <span class="st-dsm oe-undo-note">Undo {% for n, v in oe.undo.previous.items() %}{% if v is not none %}sets <code>{{ n }}</code> back to {{ v }}{% else %}removes <code>{{ n }}</code> from {{ be.cleared }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}, unless you changed it since.</span>
+      {% endif %}
+    </div>
+    {% endcall %}
+  </div>
+  {% endif %}
+
+  <details class="st-det oe-details" data-testid="oe-details">
+    <summary>Show details</summary>
+    {% if oe.apply_commands %}<p class="st-dsm">The same change from a terminal:</p>
+    <pre class="oe-cmd" data-testid="oe-cmd-apply">{% for c in oe.apply_commands %}{{ c }}
+{% endfor %}</pre>{% endif %}
+    {% if oe.undo_commands %}<p class="st-dsm">Undo from a terminal:</p>
+    <pre class="oe-cmd" data-testid="oe-cmd-undo">{% for c in oe.undo_commands %}{{ c }}
+{% endfor %}</pre>{% endif %}
+    {% if restart_cmds %}<p class="st-dsm">Restart Ollama from a terminal:</p>
+    <pre class="oe-cmd">{% for c in restart_cmds %}{{ c }}
+{% endfor %}</pre>{% endif %}
+    <p class="st-dsm">Sources (read {{ docs_read }}):
+      {% for label, href in docs %}<a class="k-link" href="{{ href }}" target="_blank" rel="noopener">{{ label }}</a>{{ ', ' if not loop.last }}{% endfor %}.</p>
+  </details>
+{% else %}
+  <p class="st-dsm oe-hidden" data-testid="oe-hidden">Ollama speed settings: {{ oe.hidden_reason }}</p>
+{% endif %}
+</section>
+</div>

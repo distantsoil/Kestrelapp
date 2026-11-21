@@ -8,9 +8,12 @@ class ModelTransportError(RuntimeError):
     reply to validate and nothing to quarantine. Raised to the task queue so its retry budget
     applies (D-UI-167); distinct from a validated empty result and from a schema quarantine."""
 
-    def __init__(self, message: str, *, retryable: bool = True) -> None:
+    def __init__(self, message: str, *, retryable: bool = True,
+                 engine_unreachable: bool = False) -> None:
         super().__init__(message)
         self.retryable = retryable
+        # The call could not reach the local engine: the task waits, its try given back.
+        self.engine_unreachable = engine_unreachable
 
 
 def raise_if_transport_failure(result: object) -> None:
@@ -21,4 +24,5 @@ def raise_if_transport_failure(result: object) -> None:
     raise ModelTransportError(
         str(getattr(result, "error", None) or "The model could not be reached."),
         retryable=not out_of_credit,
+        engine_unreachable=bool(getattr(result, "engine_unreachable", False)),
     )

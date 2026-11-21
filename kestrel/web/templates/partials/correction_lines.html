@@ -1,0 +1,15 @@
+{# The correction lines an online scoring send carries (issue #178, D-PRIV-670): the exact lines
+   `learning.correction_lines.lines_for` returns for the roles the panel sends, which are the
+   lines Tier 2 states (`operator_correction_lines(scoring_corrections(...))`). A panel that
+   lists them also posts `corrections_digest`, so a change while it is open is refused. Nothing
+   renders when there are no lines, so such a panel looks as it did before. #}
+{% macro correction_lines(lines, tid) %}
+{%- if lines %}
+<link rel="stylesheet" href="{{ static_url('css/pages/consent_lines.css') }}">
+<div class="cl-lines" data-testid="{{ tid }}-corrections">
+  <b>Also sent, because you stated them:</b>
+  <ul class="cl-lines__list" data-correction-lines data-testid="{{ tid }}-correction-lines">{% for line in lines %}<li>{{ line }}</li>{% endfor %}</ul>
+  <span class="cl-lines__note">Change or remove them in Profile before you send.</span>
+</div>
+{%- endif %}
+{% endmacro %}

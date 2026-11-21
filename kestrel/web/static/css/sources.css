@@ -128,6 +128,16 @@
   text-overflow: ellipsis; }
 .src-ty.is-issue.is-w { color: var(--warn-ink); }
 .src-ty.is-issue.is-b { color: var(--bad-ink); }
+/* A problem line with its code: the sentence gives way first, the code never clips. */
+.src-ty.is-issue:has(.src-code) { display: flex; gap: 8px; align-items: baseline; }
+.src-ty__t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.src-code { flex: none; font-size: 12.5px; font-weight: 700; white-space: nowrap; }
+.src-msg .src-code { margin-top: 2px; }
+@media (max-width: 700px) {
+  /* Narrow: the code drops under the sentence, which then reads whole. */
+  .src-ty.is-issue:has(.src-code) { flex-wrap: wrap; row-gap: 0; }
+  .src-ty.is-issue:has(.src-code) .src-ty__t { flex: 1 1 100%; white-space: normal; }
+}
 .src-row .k-pill { justify-self: start; white-space: nowrap; }
 .src-rl, .src-rc { font-size: var(--fs-sm); color: var(--muted); white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; }

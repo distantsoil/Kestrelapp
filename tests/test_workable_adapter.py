@@ -226,6 +226,9 @@ async def test_workable_detail_error_skips_only_that_posting():
     postings = await _fetch()
     assert "B2C3D4E5F6" not in [p.external_id for p in postings]
     assert len(postings) == len(_CODES) - 1
+    # the skipped role is said, so the run is partial (D-ERR-24 round 8)
+    assert postings.partial_error.startswith("Workable did not return the details of 1 of its ")
+    assert [n.kind for n in postings.notices] == ["body_unread"]
 
 
 @respx.mock
@@ -305,3 +308,17 @@ def test_board_discovery_recognizes_workable_board_and_posting_links():
     assert bd.board_from_url("https://apply.workable.com.evil.example/northwind/") is None
     # The API path on the same host is not a board.
     assert bd.board_from_url("https://apply.workable.com/api/v3/accounts/x/jobs") is None
+
+
+@respx.mock
+async def test_workable_a_detail_robots_refuses_is_the_robots_sentence():
+    """A detail the site's robots.txt disallows is said with the shared robots sentence (its own
+    code), not dropped in silence (D-ERR-24 round 8)."""
+    from kestrel.errors import ROBOTS_SENTENCE, RobotsDisallowed
+
+    respx.post(_LIST_URL).mock(return_value=Response(200, json=_LIST))
+    _mock_details()
+    respx.get(f"{_DETAIL_URL}/B2C3D4E5F6").mock(side_effect=RobotsDisallowed())
+    postings = await _fetch()
+    assert "B2C3D4E5F6" not in [p.external_id for p in postings]
+    assert postings.partial_error == ROBOTS_SENTENCE

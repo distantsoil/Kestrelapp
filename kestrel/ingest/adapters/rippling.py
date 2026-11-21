@@ -26,7 +26,15 @@ from typing import Any
 
 import httpx
 
-from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError
+from kestrel.ingest.base import (
+    AdapterError,
+    PostingBatch,
+    RawPosting,
+    ShapeError,
+    SourceConfigError,
+    details_not_read,
+    rate_limited_problem,
+)
 
 _BASE = "https://api.rippling.com/platform/api/ats/v1/board"
 _DEFAULT_MAX_RESULTS = 200
@@ -56,12 +64,16 @@ class RipplingAdapter:
         max_results = config.get("max_results") or _DEFAULT_MAX_RESULTS
         rows = await self._fetch_list(slug, client)
 
-        postings: list[RawPosting] = []
+        postings = PostingBatch()
+        skipped = 0  # roles whose detail could not be read
         for uuid, row in list(rows.items())[:max_results]:
             detail = await self._fetch_detail(slug, uuid, client)
             if detail is None:
-                continue  # a single failing DETAIL skips only this posting
+                skipped += 1  # a single failing DETAIL skips only this posting, and is said
+                continue
             postings.append(self._to_posting(row, detail, config))
+        if skipped:
+            postings.add(details_not_read("Rippling", skipped, slug))
         return postings
 
     async def _fetch_list(self, slug: str, client: Any) -> dict[str, dict]:
@@ -73,7 +85,7 @@ class RipplingAdapter:
         except ValueError as exc:
             raise AdapterError(f"Rippling list for {slug} was not valid JSON") from exc
         if not isinstance(data, list):
-            raise AdapterError(f"Rippling list for {slug} had an unexpected shape")
+            raise ShapeError(f"Rippling list for {slug} had an unexpected shape")
         merged: dict[str, dict] = {}
         for row in data:
             if not isinstance(row, dict) or not _str(row.get("uuid")):
@@ -131,7 +143,7 @@ def _is_429(exc: httpx.HTTPError) -> bool:
 
 def _failure(part: str, slug: str, exc: httpx.HTTPError) -> AdapterError:
     if _is_429(exc):
-        return AdapterError(f"Rippling rate limit reached while reading {part} for {slug}")
+        return AdapterError(rate_limited_problem("Rippling", 429, where=slug))
     return AdapterError(f"Rippling {part} fetch failed for {slug}: {exc}")
 
 

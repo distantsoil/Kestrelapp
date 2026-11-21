@@ -78,6 +78,75 @@ def _page(live, theme: str, width: int):
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
+def test_the_title_row_clears_the_art_of_every_scene_of_the_day(live, monkeypatch, theme):
+    """The scene of the day rotates through every scene (ui_settings.scene_for_day), so the check
+    in the test below passed or failed with the date it ran on. This one draws each scene on a
+    fixed day of its own and asks the same question, at the width where this page's title row
+    (the title, the count and the How it works button) is closest to the art: no scene draws under
+    it. It reads a module's own day alias, never the real clock."""
+    from datetime import date
+
+    import kestrel.web.deps as deps
+    from kestrel import ui_settings as u
+
+    first = date(2026, 1, 1).toordinal()
+    seen: set[str] = set()
+    for k in range(len(u.SCENES)):
+        monkeypatch.setattr(deps, "_today", lambda k=k: date.fromordinal(first + k))
+        ctx, page, _errors = _page(live, theme, 1280)
+        try:
+            scene = page.evaluate("document.querySelector('.k-scene').dataset.scene")
+            seen.add(scene)
+            drawn = art_visible_left(page)
+            right = page.evaluate(TITLE_RIGHT_JS)
+            assert drawn is None or right <= drawn, (scene, theme, right, drawn)
+        finally:
+            ctx.close()
+    assert seen == set(u.SCENES), "a scene was never drawn, so it was never checked"
+
+
+# Paints a solid block into the scene art, inside the art's own box and right under the title
+# row's last child (the How it works button), so the drawing sits under the button and nowhere
+# to its right. Returns that child's box.
+_ART_UNDER_BUTTON_JS = """() => {
+    const art = document.querySelector('.k-scene__art:not(.k-scene__touch)');
+    const kids = Array.from(document.querySelector('.k-scene__title').children)
+      .filter(c => c.getClientRects().length);
+    const btn = kids[kids.length - 1].getBoundingClientRect();
+    const box = art.getBoundingClientRect();
+    const left = Math.max(btn.left, box.left), right = btn.right - 2;
+    const top = Math.max(btn.top, box.top), bottom = Math.min(btn.bottom, box.bottom);
+    const inv = art.getScreenCTM().inverse();
+    const at = (x, y) => new DOMPoint(x, y).matrixTransform(inv);
+    const p = at(left, top), q = at(right, bottom);
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', p.x); rect.setAttribute('y', p.y);
+    rect.setAttribute('width', q.x - p.x); rect.setAttribute('height', q.y - p.y);
+    rect.setAttribute('fill', getComputedStyle(document.body).color);
+    rect.setAttribute('data-synthetic', '1');
+    art.appendChild(rect);
+    return {l: btn.left, r: btn.right, left, right}; }"""
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_art_drawn_under_the_title_button_fails_the_title_row_check(live, theme):
+    """The invariant behind the measure (D-TEST-796): art drawn under the title row, including
+    under the How it works button, is still found, so the title-row check above (right <= drawn)
+    fails on it. The block sits only under the button, inside the art's box."""
+    ctx, page, _errors = _page(live, theme, 1280)
+    try:
+        btn = page.evaluate(_ART_UNDER_BUTTON_JS)
+        assert btn["right"] - btn["left"] >= 8, ("no room under the button inside the art", btn)
+        drawn = art_visible_left(page)
+        right = page.evaluate(TITLE_RIGHT_JS)
+        assert drawn is not None, "the art under the button was not seen"
+        assert drawn < right, (theme, btn, right, drawn)
+        assert drawn <= btn["left"] + 2, (theme, btn, drawn)
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
 @pytest.mark.parametrize("width", [1280, 1680])
 def test_no_overlap_no_wrapping_no_sideways_scroll(live, theme, width):
     ctx, page, errors = _page(live, theme, width)
@@ -136,6 +205,93 @@ def test_no_overlap_no_wrapping_no_sideways_scroll(live, theme, width):
         if drawn is not None:
             assert page.evaluate(TITLE_RIGHT_JS) <= drawn, (title, drawn)
         assert not errors, errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [480, 390, 720, 770])
+def test_narrow_row_stacks_and_nothing_runs_past_the_edge(live, theme, width):
+    """A browser tab at phone width: title and company, then the reason, then step, time and
+    tries, then the buttons; every text reads in full and nothing sits past the right edge."""
+    ctx, page, errors = _page(live, theme, width)
+    try:
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
+        # Nothing visible in the page content ends past the viewport's right edge.
+        past = page.evaluate(
+            """w => Array.from(document.querySelectorAll('.rt-page *'))
+              .filter(e => e.offsetParent !== null && !e.closest('.k-scene__art, .rt-mono, '
+                + '[hidden], .k-flyout'))
+              .filter(e => e.getBoundingClientRect().right > w + 1)
+              .map(e => e.className || e.tagName).slice(0, 5)""", width)
+        assert not past, (theme, width, past)
+        # The header and bar wrap inside the column.
+        for sel in (".rt-crumb", ".k-scene__title h1", ".rt-lede", ".rt-bar", ".rt-chips"):
+            box = page.evaluate(_BOXES, sel)[0]
+            assert box["r"] <= width + 1, (sel, box)
+        for row in page.query_selector_all('[data-testid="rt-row"]'):
+            boxes = page.evaluate(
+                """r => { const q = s => r.querySelector(s).getBoundingClientRect();
+                  const f = b => ({l: b.left, r: b.right, tp: b.top, bt: b.bottom});
+                  return {role: f(q('.rt-role')), why: f(q('.rt-why')), step: f(q('.rt-step')),
+                          when: f(q('.rt-when')), tries: f(q('.rt-tries')),
+                          acts: f(q('.rt-acts'))}; }""",
+                row)
+            role, why, step, acts = boxes["role"], boxes["why"], boxes["step"], boxes["acts"]
+            assert role["bt"] <= why["tp"] + 1 and why["bt"] <= step["tp"] + 1, boxes
+            assert step["bt"] <= acts["tp"] + 1, boxes
+            # Step, time and tries share one line, in that order, without overlap.
+            assert abs(step["tp"] - boxes["when"]["tp"]) < 12, boxes
+            assert step["r"] <= boxes["when"]["l"] + 1 <= boxes["tries"]["l"] + 1, boxes
+            # The title, company and reason read as words: wide enough to hold a few letters
+            # per line, never one character per line.
+            for key in ("role", "why"):
+                assert boxes[key]["r"] - boxes[key]["l"] > 150, (key, boxes)
+            for sel in (".rt-step", ".rt-when", ".rt-tries"):
+                assert page.evaluate(_LINES, row.query_selector(sel)) <= 1, (sel, theme, width)
+            kids = page.evaluate(
+                """r => Array.from(r.querySelectorAll('.rt-top > *, .rt-acts > *'))
+                  .filter(e => e.offsetParent !== null).map(e => {
+                    const b = e.getBoundingClientRect();
+                    return {t: (e.textContent || '').trim().slice(0, 30), l: b.left, r: b.right,
+                            tp: b.top, bt: b.bottom}; })""", row)
+            for i, a in enumerate(kids):
+                for b in kids[i + 1:]:
+                    assert not _overlaps(a, b), (a, b, theme, width)
+        # Buttons keep their words on one line each, and their text is not cut.
+        buttons = [el for el in page.query_selector_all(".rt-card .k-btn") if el.is_visible()]
+        assert buttons, (theme, width)
+        cut = [el.inner_text() for el in buttons if page.evaluate(_LINES, el) > 1]
+        assert not cut, cut
+        for sel in (".rt-why", ".rt-role b", ".rt-role span"):
+            shown = [el for el in page.query_selector_all(sel) if el.is_visible()]
+            assert shown, (sel, theme, width)
+            clipped = [el.inner_text() for el in shown
+                       if not page.evaluate("e => e.scrollWidth <= e.clientWidth + 1", el)]
+            assert not clipped, (sel, clipped)
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1280, 1440])
+def test_sidebar_status_line_shows_in_full_or_wraps(live, theme, width):
+    """The status readout ("Problem · 7 items need another try") is never cut: its text wraps
+    inside the sidebar (a narrower window collapses it to icons, so those widths have no text)."""
+    ctx, page, _ = _page(live, theme, width)
+    try:
+        page.wait_for_function(
+            "document.querySelector('#rail').innerText.includes('need another try')")
+        spans = [el for el in page.query_selector_all("#rail .k-sstat__l > span:last-child")
+                 if el.is_visible()]
+        assert spans, (theme, width)
+        text = " ".join(el.inner_text() for el in spans)
+        assert "Problem" in text and "need another try" in text, text
+        for el in spans:
+            assert page.evaluate("e => e.scrollWidth <= e.clientWidth + 1", el), (
+                el.inner_text(), theme, width)
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
     finally:
         ctx.close()
 

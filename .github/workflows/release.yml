@@ -4,14 +4,20 @@ name: Release
 # notes are the matching CHANGELOG.md section (scripts/changelog_section.py), then a `website` job
 # publishes latest.json to the website repo (scripts/build_latest_json.py). `workflow_dispatch` is the dry run: the same builds, uploaded as workflow
 # artifacts only, no release; its `platform` choice builds all three or just one. Signing runs
-# only when the matching secrets exist; without them the build scripts say so and produce unsigned installers (docs/RELEASING.md). Every build job writes
+# only when the matching secrets exist; without them the build scripts say so and produce unsigned installers (docs/RELEASING.md). Windows has two signing routes: Microsoft Artifact
+# Signing through a federated (OIDC) credential, in its own windows-sign job for main and v* tags
+# once the AZURE_* secrets and ARTIFACT_SIGNING_* variables are all set, or the older certificate
+# file route (WINDOWS_CERT_*). macOS signs and notarizes in its own macos-sign job for v* tags once
+# the APPLE_* variables and release-environment secrets are set; a manual run from main signs with
+# a test certificate in macos-sign-test; a stable release then updates the Homebrew tap
+# (homebrew-tap). Every build job writes
 # a SIGNING-<platform>.txt marker ("signed" or "unsigned: add <secrets> to sign") next to its
 # installer; the release step attaches them as SIGNING.txt and puts the lines in the release body,
 # so an unsigned download is never published without saying so.
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]*"]
   workflow_dispatch:
     # A dry run can build one platform, so testing one installer does not pay for the other two
     # (macOS minutes cost 10x, Windows 2x). A tag push ignores this and always builds all three,
@@ -37,11 +43,22 @@ jobs:
     # Releases build only in the public repo; every later job needs this one (D-CI-11).
     if: github.repository == 'distantsoil/Kestrelapp'
     runs-on: ubuntu-latest
+    outputs:
+      # "production" (a version tag push), "test" (a manual dispatch from main) or "none". The
+      # mode only picks which signing job runs; each signing job reads its own certificate
+      # profile, credential and environment, and no other job names the production ones (D-REL-18q).
+      sign_mode: ${{ steps.signcfg.outputs.sign_mode }}
+      is_version_tag: ${{ steps.signcfg.outputs.is_version_tag }}
+      # The macOS twin of sign_mode: production, test or none (D-REL-610).
+      mac_sign_mode: ${{ steps.macsigncfg.outputs.mac_sign_mode }}
+      # The tag's own date in UTC (tagger date, else this run's start), the one source of truth
+      # for the release date: the website job stamps latest.json with it (D-UPD-12).
+      released_at: ${{ steps.reldate.outputs.released_at }}
     env:
       # A boolean, never the secret itself, so the token value cannot reach this job's environment.
       HAS_WEBSITE_TOKEN: ${{ secrets.WEBSITE_TOKEN != '' }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Changelog section exists
         # Tag push: the version is the tag. Dry run: kestrel.__version__. A prerelease may fall
         # back to [Unreleased] (scripts/changelog_section.py --allow-unreleased); a stable
@@ -61,6 +78,152 @@ jobs:
           ALLOW=""
           case "$VERSION" in *-*) ALLOW="--allow-unreleased" ;; esac
           python3 scripts/changelog_section.py "$VERSION" $ALLOW > /dev/null
+      - name: Changelog date matches the tag date
+        id: reldate
+        # Before anything builds, so a wrong heading date stops the run while nothing is public.
+        # Only a stable tag push is checked (a prerelease and a dry run publish no feed). The
+        # release date is the annotated tag's tagger date in UTC. checkout can leave a tag as a
+        # lightweight ref (actions/checkout#290, unverified), so the tag is fetched again first;
+        # a lightweight tag has no tagger date and stops the run. The run's own clock is never
+        # used, so a re-run or a late start cannot move the date (D-UPD-12).
+        run: |
+          case "$GITHUB_EVENT_NAME:$GITHUB_REF_NAME" in
+            push:v*-*) echo "Prerelease $GITHUB_REF_NAME: the CHANGELOG date is not checked."; exit 0 ;;
+            push:v*) ;;
+            *) echo "Not a version tag push: the CHANGELOG date is not checked."; exit 0 ;;
+          esac
+          VERSION="${GITHUB_REF_NAME#v}"
+          git fetch --force --no-tags origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          STAMP="$(git for-each-ref --format='%(taggerdate:iso-strict)' "refs/tags/${GITHUB_REF_NAME}")"
+          if [ -z "$STAMP" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME is not an annotated tag, so it has no tagger date to date the release by. Delete it and create it with: git tag -a $GITHUB_REF_NAME -m \"Kestrel $VERSION\""
+            exit 1
+          fi
+          RELEASED_AT="$(date -u -d "$STAMP" +%Y-%m-%dT%H:%M:%SZ)"
+          echo "released_at=$RELEASED_AT" >> "$GITHUB_OUTPUT"
+          if ! python3 scripts/changelog_section.py "$VERSION" --check-date "$RELEASED_AT"; then
+            echo "::error::The CHANGELOG heading for $VERSION must carry the tag's UTC date (${RELEASED_AT%%T*}). Fix the date in CHANGELOG.md and tag again."
+            exit 1
+          fi
+      - name: Windows signing is configured
+        id: signcfg
+        # Named, so the flags are the ones the tests run it with: bash --noprofile --norc -eo pipefail.
+        shell: bash
+        env:
+          # Booleans only, except the two certificate profile names below, which are plain variable
+          # values. Each signing job still reads its own profile and stops before the login if it
+          # is missing.
+          HAS_CLIENT: ${{ secrets.AZURE_CLIENT_ID != '' }}
+          HAS_TEST_CLIENT: ${{ secrets.AZURE_TEST_CLIENT_ID != '' }}
+          HAS_TENANT: ${{ secrets.AZURE_TENANT_ID != '' }}
+          HAS_SUBSCRIPTION: ${{ secrets.AZURE_SUBSCRIPTION_ID != '' }}
+          HAS_ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT != '' }}
+          HAS_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT != '' }}
+          HAS_PUBLISHER: ${{ vars.ARTIFACT_SIGNING_PUBLISHER != '' }}
+          HAS_TEST_PROFILE: ${{ vars.ARTIFACT_SIGNING_TEST_PROFILE != '' }}
+          # Plain variable values, read only to refuse a dry run that could use the public profile.
+          PROD_PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          TEST_PROFILE: ${{ vars.ARTIFACT_SIGNING_TEST_PROFILE }}
+        run: |
+          MODE=none
+          TAG=false
+          case "$GITHUB_REF" in refs/tags/v[0-9]*) TAG=true ;; esac
+          # Compared trimmed and lowercased: a case variant or padded copy of the public profile
+          # name is still the public profile (D-REL-18y).
+          norm() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
+          TEST_NAME="$(norm "$TEST_PROFILE")"
+          PROD_NAME="$(norm "$PROD_PROFILE")"
+          if [ -n "$TEST_NAME" ] && [ "$TEST_NAME" = "$PROD_NAME" ]; then
+            echo "::error::ARTIFACT_SIGNING_TEST_PROFILE and ARTIFACT_SIGNING_PROFILE name the same certificate profile, so a dry run could sign with the public profile. Give the test profile its own name."
+            exit 1
+          fi
+          if [ "$TAG" = "true" ] && [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            if [ "$HAS_CLIENT" = "true" ] && [ "$HAS_TENANT" = "true" ] && [ "$HAS_SUBSCRIPTION" = "true" ] && [ "$HAS_ENDPOINT" = "true" ] && [ "$HAS_ACCOUNT" = "true" ] && [ "$HAS_PUBLISHER" = "true" ]; then
+              if [ -z "$PROD_NAME" ]; then
+                echo "::error::ARTIFACT_SIGNING_PROFILE is empty, so this release cannot be signed. Set it to the Public Trust profile name, or remove the production signing values (docs/RELEASING.md)."
+                exit 1
+              fi
+              MODE=production
+            elif [ "$HAS_CLIENT" != "true" ] && [ "$HAS_TEST_CLIENT" = "true" ]; then
+              # Only the dry run is set up so far: the production app registration does not exist yet.
+              echo "::notice::Production Windows signing is not set up yet (only the test credential is), so this release is unsigned."
+            elif [ "$HAS_CLIENT" = "true" ] || [ "$HAS_TENANT" = "true" ] || [ "$HAS_SUBSCRIPTION" = "true" ] || [ "$HAS_ENDPOINT" = "true" ] || [ "$HAS_ACCOUNT" = "true" ] || [ "$HAS_PUBLISHER" = "true" ]; then
+              echo "::error::Windows signing is partly configured, so this release stops instead of publishing an unsigned installer. Set all of AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, ARTIFACT_SIGNING_ENDPOINT, ARTIFACT_SIGNING_ACCOUNT and ARTIFACT_SIGNING_PUBLISHER, or remove them all (docs/RELEASING.md)."
+              exit 1
+            fi
+          elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$HAS_TEST_CLIENT" = "true" ] && [ "$HAS_TENANT" = "true" ] && [ "$HAS_SUBSCRIPTION" = "true" ] && [ "$HAS_ENDPOINT" = "true" ] && [ "$HAS_ACCOUNT" = "true" ] && [ "$HAS_PUBLISHER" = "true" ] && [ "$HAS_TEST_PROFILE" = "true" ] && [ -n "$TEST_NAME" ]; then
+              # A test profile name that is only whitespace counts as unset (D-REL-18zb).
+              MODE=test
+            fi
+          fi
+          echo "sign_mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "is_version_tag=$TAG" >> "$GITHUB_OUTPUT"
+      - name: macOS signing is configured
+        id: macsigncfg
+        # The macOS twin of the step above (#202, D-REL-610). Only repository variables are read:
+        # the certificate, its password and the notary key are secrets of the `release`
+        # environment, which this job cannot see, so macos-sign checks those itself. The names
+        # and IDs here are not secret (every signed app carries the certificate name and team).
+        shell: bash
+        env:
+          DEVELOPER_ID_NAME: ${{ vars.APPLE_DEVELOPER_ID_NAME }}
+          TEST_SIGNING_NAME: ${{ vars.APPLE_TEST_SIGNING_NAME }}
+          HAS_TEAM_ID: ${{ vars.APPLE_TEAM_ID != '' }}
+          HAS_NOTARY_KEY_ID: ${{ vars.APPLE_NOTARY_KEY_ID != '' }}
+          HAS_NOTARY_ISSUER: ${{ vars.APPLE_NOTARY_ISSUER_ID != '' }}
+        run: |
+          MODE=none
+          norm() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
+          PROD="$(norm "$DEVELOPER_ID_NAME")"
+          TEST="$(norm "$TEST_SIGNING_NAME")"
+          # A test run must never hold a certificate macOS trusts for distribution (D-REL-612).
+          if [ -n "$TEST" ] && [ "$TEST" = "$PROD" ]; then
+            echo "::error::APPLE_TEST_SIGNING_NAME and APPLE_DEVELOPER_ID_NAME name the same certificate, so a dry run could sign with the Developer ID certificate. Use an Apple Development certificate for the test."
+            exit 1
+          fi
+          case "$TEST" in
+            "developer id"*)
+              echo "::error::APPLE_TEST_SIGNING_NAME names a Developer ID certificate, which macOS trusts. Use an Apple Development certificate for the test (docs/RELEASING.md)."
+              exit 1 ;;
+          esac
+          TAG=false
+          case "$GITHUB_REF" in refs/tags/v[0-9]*) TAG=true ;; esac
+          if [ "$TAG" = "true" ] && [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            # Only vX.Y.Z or vX.Y.Z-suffix, before anything is built: the Homebrew cask and the
+            # update feed take only that shape, so another tag would fail after publishing.
+            if ! [[ "${GITHUB_REF#refs/tags/}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+              echo "::error::The tag ${GITHUB_REF#refs/tags/} is not vX.Y.Z or vX.Y.Z-suffix (such as v1.2.3 or v1.2.3-rc.1). Delete it and tag again (docs/RELEASING.md)."
+              exit 1
+            fi
+            MISSING=""
+            [ -n "$PROD" ] || MISSING="$MISSING APPLE_DEVELOPER_ID_NAME"
+            [ "$HAS_TEAM_ID" = "true" ] || MISSING="$MISSING APPLE_TEAM_ID"
+            [ "$HAS_NOTARY_KEY_ID" = "true" ] || MISSING="$MISSING APPLE_NOTARY_KEY_ID"
+            [ "$HAS_NOTARY_ISSUER" = "true" ] || MISSING="$MISSING APPLE_NOTARY_ISSUER_ID"
+            if [ -z "$MISSING" ]; then
+              case "$PROD" in
+                "developer id application:"*) MODE=production ;;
+                *)
+                  echo "::error::APPLE_DEVELOPER_ID_NAME must be the full name of a Developer ID Application certificate, such as \"Developer ID Application: Jane Doe (ABCDE12345)\"."
+                  exit 1 ;;
+              esac
+            elif [ -z "$PROD" ] && [ "$HAS_NOTARY_KEY_ID" != "true" ] && [ "$HAS_NOTARY_ISSUER" != "true" ]; then
+              # Nothing production is set (a team ID alone may be there for the test): unsigned.
+              echo "::notice::macOS Developer ID signing is not set up, so this release's disk image is unsigned and says so."
+            else
+              echo "::error::macOS signing is partly configured, so this release stops instead of publishing an unsigned disk image. Missing:$MISSING (docs/RELEASING.md)."
+              exit 1
+            fi
+          elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ -n "$TEST" ] && [ "$HAS_TEAM_ID" = "true" ]; then
+              MODE=test
+            elif [ -n "$TEST" ]; then
+              echo "::error::The macOS dry run is partly configured: APPLE_TEST_SIGNING_NAME is set without its team. Missing: APPLE_TEAM_ID (docs/RELEASING.md)."
+              exit 1
+            fi
+          fi
+          echo "mac_sign_mode=$MODE" >> "$GITHUB_OUTPUT"
       - name: Website token is set
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
         run: |
@@ -88,8 +251,8 @@ jobs:
     if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'linux'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
       - name: Install
         run: |
           uv python install 3.12
@@ -111,7 +274,7 @@ jobs:
         run: |
           echo "linux: unsigned: the AppImage is not signed (no Linux signing secrets are defined); verify it against SHA256SUMS.txt" > dist/SIGNING-linux.txt
           cat dist/SIGNING-linux.txt
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: Kestrel-linux-x86_64
           path: |
@@ -124,54 +287,47 @@ jobs:
     needs: [preflight]
     if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'macos'
     runs-on: macos-latest
-    env:
-      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-      APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
-      APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+    # No secret or credential reaches this job (D-REL-611). With macOS signing set up it builds the
+    # read-write layout image and hands it to macos-sign (a version tag) or macos-sign-test (a
+    # dispatch from main); otherwise it builds the same unsigned disk image as always, and says so.
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
       - name: Install
+        # dmgbuild writes the disk image window (#198); pinned by version and wheel hash.
         run: |
           uv python install 3.12
           uv sync --extra dev
+          uv pip install --only-binary :all: --require-hashes -r packaging/macos/dmg-requirements.txt
       - name: Fetch the embedding model
         # The in-process embedding model (D-EMBED-2): pinned by SHA-256, never committed; the
         # spec refuses to build without it.
         run: uv run python scripts/fetch_embed_model.py
-      - name: Import the signing certificate
-        if: env.APPLE_CERT_P12_BASE64 != ''
-        run: |
-          KEYCHAIN="$RUNNER_TEMP/kestrel-signing.keychain-db"
-          KEYCHAIN_PASSWORD="$(uuidgen)"
-          echo "$APPLE_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERT_PASSWORD" -A \
-            -t cert -f pkcs12 -k "$KEYCHAIN"
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
-          rm -f "$RUNNER_TEMP/cert.p12"
       - name: Build dmg
+        if: needs.preflight.outputs.mac_sign_mode == 'none'
         run: PYTHON="$(uv python find)" packaging/build_dmg.sh
+      - name: Build the layout image (to be signed)
+        if: needs.preflight.outputs.mac_sign_mode != 'none'
+        run: PYTHON="$(uv python find)" packaging/build_dmg.sh --rw
+      # Kept before the smoke test runs the app, so nothing it writes can reach the signed image.
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: needs.preflight.outputs.mac_sign_mode != 'none'
+        with:
+          name: macos-layout
+          path: dist/Kestrel-layout.dmg
+          if-no-files-found: error
       - name: Smoke test the bundle
         run: |
           export KESTREL_DATA_HOME="$RUNNER_TEMP/kestrel-home"
           ./dist/Kestrel.app/Contents/MacOS/Kestrel version
           ./dist/Kestrel.app/Contents/MacOS/Kestrel doctor --quick || true
       - name: Signing marker
+        if: needs.preflight.outputs.mac_sign_mode == 'none'
         run: |
-          if [ -n "$APPLE_SIGNING_IDENTITY" ] && [ -n "$APPLE_CERT_P12_BASE64" ]; then
-            echo "macos: signed" > dist/SIGNING-macos.txt
-          else
-            echo "macos: unsigned: add APPLE_SIGNING_IDENTITY, APPLE_CERT_P12_BASE64, APPLE_CERT_PASSWORD, APPLE_ID, APPLE_TEAM_ID and APPLE_APP_PASSWORD to sign and notarize" > dist/SIGNING-macos.txt
-          fi
+          echo "macos: unsigned: Developer ID signing and notarization are not set up for this release (set APPLE_DEVELOPER_ID_NAME, APPLE_TEAM_ID, APPLE_NOTARY_KEY_ID and APPLE_NOTARY_ISSUER_ID, and the release environment's certificate and notary key); macOS asks the user to confirm the first open" > dist/SIGNING-macos.txt
           cat dist/SIGNING-macos.txt
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: needs.preflight.outputs.mac_sign_mode == 'none'
         with:
           name: Kestrel-macos
           path: |
@@ -179,17 +335,240 @@ jobs:
             dist/SIGNING-macos.txt
           if-no-files-found: error
 
+  macos-sign:
+    name: Sign and notarize the macOS dmg
+    needs: [preflight, macos]
+    # The only job that can read the Developer ID certificate and the notary key: a pushed
+    # version tag in production mode, repeated here so a wrong mode still cannot sign from
+    # another ref (D-REL-611). It runs Apple's tools on our own scripts, no package manager.
+    if: needs.preflight.outputs.mac_sign_mode == 'production' && github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v0') || startsWith(github.ref, 'refs/tags/v1') || startsWith(github.ref, 'refs/tags/v2') || startsWith(github.ref, 'refs/tags/v3') || startsWith(github.ref, 'refs/tags/v4') || startsWith(github.ref, 'refs/tags/v5') || startsWith(github.ref, 'refs/tags/v6') || startsWith(github.ref, 'refs/tags/v7') || startsWith(github.ref, 'refs/tags/v8') || startsWith(github.ref, 'refs/tags/v9'))
+    runs-on: macos-latest
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: The signing secrets are set
+        # Booleans only. A missing secret stops the release by name; nothing is signed half way.
+        env:
+          HAS_CERT: ${{ secrets.APPLE_CERT_P12_BASE64 != '' }}
+          HAS_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD != '' }}
+          HAS_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY_P8 != '' }}
+          # A stable release then updates the Homebrew tap, after the release is public; a
+          # missing tap token is caught here, before anything is published (D-REL-623).
+          HAS_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        run: |
+          MISSING=""
+          [ "$HAS_CERT" = "true" ] || MISSING="$MISSING APPLE_CERT_P12_BASE64"
+          [ "$HAS_CERT_PASSWORD" = "true" ] || MISSING="$MISSING APPLE_CERT_PASSWORD"
+          [ "$HAS_NOTARY_KEY" = "true" ] || MISSING="$MISSING APPLE_NOTARY_KEY_P8"
+          case "${GITHUB_REF#refs/tags/}" in
+            *-*) ;;  # a prerelease never updates the tap
+            *) [ "$HAS_TAP_TOKEN" = "true" ] || MISSING="$MISSING HOMEBREW_TAP_TOKEN" ;;
+          esac
+          if [ -n "$MISSING" ]; then
+            echo "::error::macOS signing is partly configured: the release environment is missing$MISSING (docs/RELEASING.md)."
+            exit 1
+          fi
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: macos-layout
+          path: build/mac
+      - name: Import the signing certificate
+        # A temporary keychain with a random password that is never printed; the .p12 is removed
+        # as soon as the import ends, whether it worked or not (D-REL-614).
+        env:
+          CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          umask 077
+          KEYCHAIN="$RUNNER_TEMP/kestrel-signing.keychain-db"
+          P12="$RUNNER_TEMP/kestrel-cert.p12"
+          trap 'rm -f "$P12"' EXIT
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          printf '%s' "$CERT_P12_BASE64" | base64 --decode > "$P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" -f pkcs12 -T /usr/bin/codesign > /dev/null
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+      - name: Sign the app and the disk image
+        env:
+          SIGN_NAME: ${{ vars.APPLE_DEVELOPER_ID_NAME }}
+          TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          VERSION="$(sed -nE 's/^__version__ = "([^"]+)"$/\1/p' kestrel/__init__.py)"
+          mkdir -p dist
+          packaging/macos/sign_dmg.sh sign build/mac/Kestrel-layout.dmg "dist/Kestrel-${VERSION}.dmg"
+      - name: Notarize and staple
+        # The App Store Connect API key exists only as a file in this step and is removed when
+        # it ends, whether notarization worked or not (D-REL-613).
+        env:
+          NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ vars.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ vars.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          umask 077
+          mkdir -p "$RUNNER_TEMP/notary"
+          trap 'rm -rf "$RUNNER_TEMP/notary"' EXIT
+          export NOTARY_KEY_FILE="$RUNNER_TEMP/notary/AuthKey.p8"
+          printf '%s\n' "$NOTARY_KEY_P8" > "$NOTARY_KEY_FILE"
+          packaging/macos/sign_dmg.sh notarize dist/Kestrel-*.dmg
+      - name: Remove the keychain and the notary key
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN:-}" ] && [ -f "$KEYCHAIN" ]; then security delete-keychain "$KEYCHAIN"; fi
+          rm -rf "$RUNNER_TEMP/notary" "$RUNNER_TEMP/kestrel-cert.p12" "$RUNNER_TEMP/kestrel-signing.keychain-db"
+      - name: Smoke test the signed app
+        # The first time the app runs in this job, after the keychain and the key are gone.
+        run: packaging/macos/sign_dmg.sh smoke dist/Kestrel-*.dmg
+      - name: Verify the signature, ticket and Gatekeeper
+        # After the app ran, so the image that is uploaded is the image that was checked.
+        env:
+          SIGN_NAME: ${{ vars.APPLE_DEVELOPER_ID_NAME }}
+          TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: packaging/macos/sign_dmg.sh verify production dist/Kestrel-*.dmg
+      - name: Signing marker
+        run: |
+          echo "macos: signed" > dist/SIGNING-macos.txt
+          cat dist/SIGNING-macos.txt
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: Kestrel-macos
+          path: |
+            dist/Kestrel-*.dmg
+            dist/SIGNING-macos.txt
+          if-no-files-found: error
+
+  macos-sign-test:
+    name: Sign the macOS dmg (test certificate)
+    needs: [preflight, macos]
+    # The dry run: a dispatch from main signs with an Apple Development certificate, which macOS
+    # does not trust for downloads, and never notarizes. It cannot read the Developer ID
+    # certificate or the notary key: those are secrets of the release environment (D-REL-612).
+    if: needs.preflight.outputs.mac_sign_mode == 'test' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    environment: release-test
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: The signing secrets are set
+        # Booleans only. A missing secret stops the release by name; nothing is signed half way.
+        env:
+          HAS_CERT: ${{ secrets.APPLE_TEST_CERT_P12_BASE64 != '' }}
+          HAS_CERT_PASSWORD: ${{ secrets.APPLE_TEST_CERT_PASSWORD != '' }}
+        run: |
+          MISSING=""
+          [ "$HAS_CERT" = "true" ] || MISSING="$MISSING APPLE_TEST_CERT_P12_BASE64"
+          [ "$HAS_CERT_PASSWORD" = "true" ] || MISSING="$MISSING APPLE_TEST_CERT_PASSWORD"
+          if [ -n "$MISSING" ]; then
+            echo "::error::macOS signing is partly configured: the release-test environment is missing$MISSING (docs/RELEASING.md)."
+            exit 1
+          fi
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: macos-layout
+          path: build/mac
+      - name: Import the signing certificate
+        # A temporary keychain with a random password that is never printed; the .p12 is removed
+        # as soon as the import ends, whether it worked or not (D-REL-614).
+        env:
+          CERT_P12_BASE64: ${{ secrets.APPLE_TEST_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_TEST_CERT_PASSWORD }}
+        run: |
+          umask 077
+          KEYCHAIN="$RUNNER_TEMP/kestrel-signing.keychain-db"
+          P12="$RUNNER_TEMP/kestrel-cert.p12"
+          trap 'rm -f "$P12"' EXIT
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          printf '%s' "$CERT_P12_BASE64" | base64 --decode > "$P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" -f pkcs12 -T /usr/bin/codesign > /dev/null
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+      - name: Sign the app and the disk image
+        env:
+          SIGN_NAME: ${{ vars.APPLE_TEST_SIGNING_NAME }}
+          TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          VERSION="$(sed -nE 's/^__version__ = "([^"]+)"$/\1/p' kestrel/__init__.py)"
+          mkdir -p dist
+          packaging/macos/sign_dmg.sh sign build/mac/Kestrel-layout.dmg "dist/Kestrel-${VERSION}.dmg"
+      - name: Remove the keychain and the notary key
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN:-}" ] && [ -f "$KEYCHAIN" ]; then security delete-keychain "$KEYCHAIN"; fi
+          rm -rf "$RUNNER_TEMP/notary" "$RUNNER_TEMP/kestrel-cert.p12" "$RUNNER_TEMP/kestrel-signing.keychain-db"
+      - name: Smoke test the signed app
+        # The first time the app runs in this job, after the keychain and the key are gone.
+        run: packaging/macos/sign_dmg.sh smoke dist/Kestrel-*.dmg
+      - name: Verify the signature, ticket and Gatekeeper
+        # After the app ran, so the image that is uploaded is the image that was checked.
+        env:
+          SIGN_NAME: ${{ vars.APPLE_TEST_SIGNING_NAME }}
+          TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: packaging/macos/sign_dmg.sh verify test dist/Kestrel-*.dmg
+      - name: Signing marker
+        run: |
+          echo "macos: unsigned: built with the Apple Development test certificate, which macOS does not trust for downloads, and not notarized; a version tag signs and notarizes with the Developer ID certificate" > dist/SIGNING-macos.txt
+          cat dist/SIGNING-macos.txt
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: Kestrel-macos
+          path: |
+            dist/Kestrel-*.dmg
+            dist/SIGNING-macos.txt
+          if-no-files-found: error
+
+  macos-sign-check:
+    name: macOS signing secrets without their variables
+    needs: [preflight]
+    # Preflight cannot see the release environment's secrets, so a tag release whose variables
+    # are missing would build unsigned even though the certificate and key are there. This job
+    # reads only whether they exist (booleans) and stops the release if any does (D-REL-621).
+    if: needs.preflight.outputs.mac_sign_mode == 'none' && github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v0') || startsWith(github.ref, 'refs/tags/v1') || startsWith(github.ref, 'refs/tags/v2') || startsWith(github.ref, 'refs/tags/v3') || startsWith(github.ref, 'refs/tags/v4') || startsWith(github.ref, 'refs/tags/v5') || startsWith(github.ref, 'refs/tags/v6') || startsWith(github.ref, 'refs/tags/v7') || startsWith(github.ref, 'refs/tags/v8') || startsWith(github.ref, 'refs/tags/v9'))
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: No signing secret is set without the variables
+        env:
+          HAS_CERT: ${{ secrets.APPLE_CERT_P12_BASE64 != '' }}
+          HAS_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD != '' }}
+          HAS_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY_P8 != '' }}
+        run: |
+          SET=""
+          [ "$HAS_CERT" != "true" ] || SET="$SET APPLE_CERT_P12_BASE64"
+          [ "$HAS_CERT_PASSWORD" != "true" ] || SET="$SET APPLE_CERT_PASSWORD"
+          [ "$HAS_NOTARY_KEY" != "true" ] || SET="$SET APPLE_NOTARY_KEY_P8"
+          if [ -n "$SET" ]; then
+            echo "::error::macOS signing is partly configured: the release environment has$SET but the repository variables APPLE_DEVELOPER_ID_NAME, APPLE_TEAM_ID, APPLE_NOTARY_KEY_ID and APPLE_NOTARY_ISSUER_ID are not all set, so this release stops instead of publishing an unsigned disk image (docs/RELEASING.md)."
+            exit 1
+          fi
+          echo "No macOS signing secret is set; the disk image is unsigned and says so."
+
   windows:
     name: Windows installer
     needs: [preflight]
     if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'windows'
     runs-on: windows-latest
-    env:
-      WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
-      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+    # This job never holds an Azure credential and has no id-token permission. When signing is
+    # configured it only builds the app folder; windows-sign and windows-verify finish the work.
+    # Otherwise it builds the same unsigned installer as always.
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
       - name: Install
         run: |
           uv python install 3.12
@@ -199,16 +578,43 @@ jobs:
         # spec refuses to build without it.
         run: uv run python scripts/fetch_embed_model.py
       - name: Inno Setup
+        # Version 6.7.1 exactly: a runner image that ships another version is replaced. Only the
+        # unsigned path packs here; with signing configured the compiler comes from the pinned kit.
+        if: needs.preflight.outputs.sign_mode == 'none'
         shell: pwsh
         run: |
-          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
-            choco install innosetup --version 6.7.1 --no-progress -y
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          $have = if (Test-Path $iscc) { (Get-Item $iscc).VersionInfo.ProductVersion } else { "" }
+          if (-not $have.StartsWith("6.7.1")) {
+            choco install innosetup --version 6.7.1 --no-progress -y --force
           }
       - name: Build installer
+        if: needs.preflight.outputs.sign_mode == 'none'
         shell: pwsh
+        env:
+          # Read by build_windows.ps1 only; no other step of this job sees them.
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
           $env:PYTHON = (uv python find)
           packaging\build_windows.ps1
+      - name: Build the app folder (to be signed)
+        # The executables must be signed before Inno Setup packs them, so the build stops after
+        # PyInstaller here; windows-sign packs and signs the installer.
+        if: needs.preflight.outputs.sign_mode != 'none'
+        shell: pwsh
+        run: |
+          $env:PYTHON = (uv python find)
+          packaging\build_windows.ps1 -BuildOnly
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        # Before the smoke test: starting the app must not leave anything in the folder that gets
+        # signed.
+        if: needs.preflight.outputs.sign_mode != 'none'
+        with:
+          name: windows-app
+          path: dist/Kestrel
+          retention-days: 1
+          if-no-files-found: error
       - name: Smoke test the frozen CLI
         shell: pwsh
         run: |
@@ -216,15 +622,550 @@ jobs:
           .\dist\Kestrel\kestrel-cli.exe version
           .\dist\Kestrel\kestrel-cli.exe doctor --quick; if ($LASTEXITCODE -ne 0) { exit 0 }
       - name: Signing marker
+        if: needs.preflight.outputs.sign_mode == 'none'
         shell: pwsh
+        env:
+          # A boolean, never the secret itself.
+          HAS_WINDOWS_CERT: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
         run: |
-          if ($env:WINDOWS_CERT_PFX_BASE64) {
+          if ($env:HAS_WINDOWS_CERT -eq 'true') {
             Set-Content -Path dist\SIGNING-windows.txt -Value "windows: signed"
           } else {
-            Set-Content -Path dist\SIGNING-windows.txt -Value "windows: unsigned: add WINDOWS_CERT_PFX_BASE64 and WINDOWS_CERT_PASSWORD to sign"
+            Set-Content -Path dist\SIGNING-windows.txt -Value "windows: unsigned: Windows signing is not configured for this build (docs/RELEASING.md)"
           }
           Get-Content dist\SIGNING-windows.txt
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: needs.preflight.outputs.sign_mode == 'none'
+        with:
+          name: Kestrel-windows
+          path: |
+            dist/Kestrel-Setup-*.exe
+            dist/SIGNING-windows.txt
+          if-no-files-found: error
+
+  windows-tools:
+    name: Fetch the Windows signing tools
+    # Every download and every third-party installer the signing needs runs here, in a job with
+    # no Azure credential and no id-token permission. Each download is pinned by SHA-256: the two
+    # NuGet packages by their own hash (so every file inside them is fixed), and the Inno Setup
+    # package and the installer inside it. windows-sign checks every binary again by signature.
+    needs: [preflight]
+    if: needs.preflight.outputs.sign_mode != 'none'
+    runs-on: windows-latest
+    steps:
+      - name: Fetch SignTool, the Artifact Signing dlib and Inno Setup
+        shell: pwsh
+        run: |
+          function Get-Pinned([string] $uri, [string] $path, [string] $sha256) {
+            Invoke-WebRequest -Uri $uri -OutFile $path
+            $actual = (Get-FileHash -Algorithm SHA256 -Path $path).Hash
+            if ($actual -ne $sha256) { throw "$uri does not match its pinned SHA-256 (got $actual)" }
+          }
+          $kit = Join-Path $env:RUNNER_TEMP "kit"
+          $work = Join-Path $env:RUNNER_TEMP "work"
+          New-Item -ItemType Directory -Force -Path $kit, $work | Out-Null
+          # The NuGet packages are fetched as .nupkg (a zip) and pinned by hash, so no package
+          # manager runs and every file inside them is byte-for-byte fixed.
+          $sdk = Join-Path $work "sdk.zip"
+          Get-Pinned "https://api.nuget.org/v3-flatcontainer/microsoft.windows.sdk.buildtools/10.0.28000.2957/microsoft.windows.sdk.buildtools.10.0.28000.2957.nupkg" $sdk "B7163FC6F636172726D0985963E4F7F11C41AFE1C7FDFE78F8051877360ED696"
+          $client = Join-Path $work "client.zip"
+          Get-Pinned "https://api.nuget.org/v3-flatcontainer/microsoft.artifactsigning.client/1.0.151/microsoft.artifactsigning.client.1.0.151.nupkg" $client "35375A4BC4E1102DA729FC3D8D9925F774C3BAAE6B8B7FF6398D948CA9AB0D8A"
+          Expand-Archive -Path $sdk -DestinationPath (Join-Path $work "sdk") -Force
+          Expand-Archive -Path $client -DestinationPath (Join-Path $work "client") -Force
+          $signtool = Get-ChildItem -Path (Join-Path $work "sdk") -Recurse -Filter signtool.exe | Where-Object { $_.FullName -like "*\x64\*" } | Select-Object -First 1
+          $dlib = Get-ChildItem -Path (Join-Path $work "client") -Recurse -Filter Azure.CodeSigning.Dlib.dll | Where-Object { $_.FullName -like "*\x64\*" } | Select-Object -First 1
+          if (-not $signtool -or -not $dlib) { throw "signtool.exe or Azure.CodeSigning.Dlib.dll not found in the NuGet packages" }
+          Copy-Item -Recurse -Path $signtool.DirectoryName -Destination (Join-Path $kit "signtool")
+          Copy-Item -Recurse -Path $dlib.DirectoryName -Destination (Join-Path $kit "dlib")
+          # Inno Setup 6.7.1: the package and the installer inside it are both pinned by hash, and
+          # the installer runs into the kit, never into the system. No package manager is used.
+          $pkg = Join-Path $work "innosetup.zip"
+          Get-Pinned "https://community.chocolatey.org/api/v2/package/innosetup/6.7.1" $pkg "A0DAD33DB33099D9CD2B89AC2D08B5D70C589B15118CED3B95F469F044F99950"
+          Expand-Archive -Path $pkg -DestinationPath (Join-Path $work "innosetup") -Force
+          $installer = Join-Path $work "innosetup\tools\innosetup-6.7.1.exe"
+          $actual = (Get-FileHash -Algorithm SHA256 -Path $installer).Hash
+          if ($actual -ne "4D11E8050B6185E0D49BD9E8CC661A7A59F44959A621D31D11033124C4E8A7B0") { throw "the Inno Setup installer does not match its pinned SHA-256 (got $actual)" }
+          $run = Start-Process -FilePath $installer -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/CURRENTUSER", "/DIR=$(Join-Path $kit 'inno')" -Wait -PassThru
+          if ($run.ExitCode -ne 0) { throw "the Inno Setup install exited with code $($run.ExitCode)" }
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: signing-kit
+          path: ${{ runner.temp }}/kit
+          retention-days: 1
+          if-no-files-found: error
+
+  windows-sign:
+    name: Sign the Windows build (production)
+    # The only job that can use the production certificate profile. It runs for a pushed version
+    # tag only, in the release environment (which allows version tags only), with the production
+    # app registration, which holds the Signer role on the Public Trust profile alone. Before the
+    # login it runs first-party steps and verifies every binary it was handed; after it, only the
+    # two commit-pinned Azure actions and the compiler. No installer, package manager or download
+    # runs here.
+    needs: [preflight, windows, windows-tools]
+    if: needs.preflight.outputs.sign_mode == 'production' && github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v0') || startsWith(github.ref, 'refs/tags/v1') || startsWith(github.ref, 'refs/tags/v2') || startsWith(github.ref, 'refs/tags/v3') || startsWith(github.ref, 'refs/tags/v4') || startsWith(github.ref, 'refs/tags/v5') || startsWith(github.ref, 'refs/tags/v6') || startsWith(github.ref, 'refs/tags/v7') || startsWith(github.ref, 'refs/tags/v8') || startsWith(github.ref, 'refs/tags/v9'))
+    runs-on: windows-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: windows-app
+          path: dist/Kestrel
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: signing-kit
+          path: ${{ runner.temp }}/kit
+      - name: Check the signing inputs and warn about a re-run
+        shell: pwsh
+        env:
+          SIGN_ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          SIGN_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          SIGN_PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          foreach ($name in @("SIGN_ENDPOINT", "SIGN_ACCOUNT", "SIGN_PROFILE")) {
+            if (-not (Get-Item -Path "Env:$name").Value) { throw "$name is empty: set the matching repository variable" }
+          }
+          if ($env:RUN_ATTEMPT -ne "1") {
+            Write-Host "::warning::This is attempt $($env:RUN_ATTEMPT). A re-run of this job signs again and spends about 4 more signatures (D-REL-18t)."
+          }
+      - name: Verify every binary in the signing kit before the login
+        # Fails closed: every executable file in the kit must carry a valid Authenticode
+        # signature from the publisher expected for its folder, and the compiler must be the
+        # pinned Inno Setup version. The hashes behind these files are pinned in windows-tools.
+        shell: pwsh
+        run: |
+          $kit = Join-Path $env:RUNNER_TEMP "kit"
+          $publishers = @{
+            "signtool" = @("Microsoft Corporation", "Microsoft 3rd Party Application Component")
+            "dlib"     = @("Microsoft Corporation", "Microsoft 3rd Party Application Component")
+            "inno"     = @("Pyrsys B.V.")
+          }
+          $binaries = @(Get-ChildItem -Path $kit -Recurse -File | Where-Object { @(".exe", ".dll", ".e32", ".pyd", ".sys", ".ocx") -contains $_.Extension.ToLower() })
+          if ($binaries.Count -lt 4) { throw "the signing kit holds $($binaries.Count) executable files; it is not the kit windows-tools built" }
+          $bad = @()
+          foreach ($file in $binaries) {
+            $folder = $file.FullName.Substring($kit.Length + 1).Split("\")[0]
+            $expected = $publishers[$folder]
+            if (-not $expected) { $bad += "$($file.Name): unexpected folder $folder"; continue }
+            $sig = Get-AuthenticodeSignature -FilePath $file.FullName
+            if ($sig.Status -ne "Valid") { $bad += "$($file.Name): $($sig.Status)"; continue }
+            $cn = [regex]::Match($sig.SignerCertificate.Subject, 'CN=(?<cn>[^,]+)').Groups["cn"].Value.Trim('" ')
+            if ($expected -notcontains $cn) { $bad += "$($file.Name): signed by $cn"; continue }
+          }
+          Write-Host "signing kit binaries checked: $($binaries.Count)"
+          if ($bad.Count -gt 0) { $bad | ForEach-Object { Write-Host $_ }; throw "$($bad.Count) file(s) in the signing kit are not signed by an expected publisher" }
+          $iscc = Get-Item (Join-Path $kit "inno\ISCC.exe")
+          if (-not $iscc.VersionInfo.ProductVersion.StartsWith("6.7.1")) { throw "ISCC.exe is not Inno Setup 6.7.1" }
+      - name: Write the signing metadata
+        shell: pwsh
+        env:
+          SIGN_ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          SIGN_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          SIGN_PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+        run: |
+          if (-not $env:SIGN_PROFILE) { throw "no certificate profile was chosen" }
+          $dir = Join-Path $env:RUNNER_TEMP "signing-meta"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          [ordered]@{
+            Endpoint               = $env:SIGN_ENDPOINT
+            CodeSigningAccountName = $env:SIGN_ACCOUNT
+            CertificateProfileName = $env:SIGN_PROFILE
+            ExcludeCredentials     = @("EnvironmentCredential", "WorkloadIdentityCredential", "ManagedIdentityCredential", "SharedTokenCacheCredential", "VisualStudioCredential", "VisualStudioCodeCredential", "AzurePowerShellCredential", "AzureDeveloperCliCredential", "InteractiveBrowserCredential")
+          } | ConvertTo-Json | Set-Content -Path (Join-Path $dir "metadata.json") -Encoding utf8
+      - name: List the files to sign
+        # The signature budget: Basic includes 5,000 signatures a month, one per file. Only
+        # Kestrel's own executables, the two at the top of the app folder, are signed here (the
+        # installer and uninstaller are signed by Inno Setup). Everything under the folder that
+        # other companies made is verified later, never signed: a file that already carries a valid
+        # signature keeps it, and an unsigned third-party file is left as it is (D-REL-18o).
+        shell: pwsh
+        run: |
+          $maxToSign = 2
+          $app = Join-Path (Get-Location) "dist\Kestrel"
+          $found = @(Get-ChildItem -Path $app -Recurse -File | Where-Object { @(".exe", ".dll", ".pyd") -contains $_.Extension.ToLower() })
+          $mine = @(Get-ChildItem -Path $app -File -Filter "*.exe")
+          $todo = @($mine | Where-Object { (Get-AuthenticodeSignature -FilePath $_.FullName).Status -eq "NotSigned" })
+          $lines = @($todo | ForEach-Object { "./Kestrel/" + $_.Name })
+          if ($lines -notcontains "./Kestrel/Kestrel.exe" -or $lines -notcontains "./Kestrel/kestrel-cli.exe") { throw "the app executables are not in the list to sign" }
+          if ($todo.Count -gt $maxToSign) { throw "$($todo.Count) files selected for signing; the limit is $maxToSign" }
+          Set-Content -Path (Join-Path (Get-Location) "dist\sign-catalog.txt") -Value $lines -Encoding utf8
+          $others = @($found | Where-Object { $todo.FullName -notcontains $_.FullName })
+          $valid = @($others | Where-Object { (Get-AuthenticodeSignature -FilePath $_.FullName).Status -eq "Valid" }).Count
+          Write-Host "PE files found: $($found.Count); signing calls by the signing action: $($todo.Count) (limit $maxToSign); already validly signed by their makers: $valid; unsigned third-party files left alone: $($others.Count - $valid)"
+      - name: Azure login (federated credential)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign the app files
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files-catalog: ${{ github.workspace }}\dist\sign-catalog.txt
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          timeout: 3600
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+      - name: Pack and sign the installer
+        # Inno Setup signs the installer and the uninstaller itself (its SignTool directive), each
+        # through packaging/sign_call.ps1, which counts the calls.
+        shell: pwsh
+        run: |
+          $expectedInnoCalls = 2
+          $kit = Join-Path $env:RUNNER_TEMP "kit"
+          $env:KESTREL_SIGNTOOL = Join-Path $kit "signtool\signtool.exe"
+          $env:KESTREL_SIGN_DLIB = Join-Path $kit "dlib\Azure.CodeSigning.Dlib.dll"
+          $env:KESTREL_SIGN_META = Join-Path $env:RUNNER_TEMP "signing-meta\metadata.json"
+          $env:KESTREL_SIGN_COUNTER = Join-Path $env:RUNNER_TEMP "inno-signing-calls.txt"
+          $env:Path = (Join-Path $kit "inno") + ";" + $env:Path
+          # $q is Inno's quote and $f its file name; single quotes keep PowerShell from expanding them.
+          $env:KESTREL_INNO_SIGNTOOL = ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File $q{0}$q $f' -f (Join-Path (Get-Location) "packaging\sign_call.ps1"))
+          packaging\build_windows.ps1 -SkipBuild
+          $calls = @(Get-Content -Path $env:KESTREL_SIGN_COUNTER -ErrorAction SilentlyContinue).Count
+          Write-Host "signing attempts by Inno Setup: $calls (expected $expectedInnoCalls: the installer and the uninstaller)"
+          if ($calls -ne $expectedInnoCalls) { throw "Inno Setup made $calls signing attempts; expected exactly $expectedInnoCalls" }
+      - name: Sign out of Azure
+        if: always()
+        shell: pwsh
+        run: |
+          az logout 2>$null
+          Remove-Item -Recurse -Force (Join-Path $HOME ".azure") -ErrorAction SilentlyContinue
+          exit 0
+      - name: Check the signatures before the upload
+        # Every file this job signed is checked before anything is uploaded, so a test signature
+        # that Windows trusts can never be downloaded. The rule is packaging/signature_check.ps1,
+        # the same one windows-verify uses after the install (D-REL-18z, D-REL-18zc).
+        shell: pwsh
+        env:
+          SIGN_MODE: ${{ needs.preflight.outputs.sign_mode }}
+          EXPECTED_PUBLISHER: ${{ vars.ARTIFACT_SIGNING_PUBLISHER }}
+        run: |
+          . (Join-Path (Get-Location) "packaging\signature_check.ps1")
+          if (-not $env:EXPECTED_PUBLISHER) { throw "ARTIFACT_SIGNING_PUBLISHER is not set" }
+          # The files the signing action signed (its catalog), the installer, and every file Inno
+          # Setup asked to sign that is still on disk.
+          $dist = Join-Path (Get-Location) "dist"
+          $catalog = @(Get-Content -Path (Join-Path $dist "sign-catalog.txt") | Where-Object { $_.Trim() })
+          if ($catalog.Count -lt 2) { throw "the signing catalog lists $($catalog.Count) files; expected the app executables" }
+          $signed = @($catalog | ForEach-Object { Join-Path $dist ($_.Trim().Substring(2).Replace("/", "\")) })
+          $installers = @(Get-ChildItem -Path $dist -File -Filter "Kestrel-Setup-*.exe")
+          if ($installers.Count -ne 1) { throw "found $($installers.Count) installers; expected one" }
+          $signed += $installers[0].FullName
+          $innoCalls = @(Get-Content -Path (Join-Path $env:RUNNER_TEMP "inno-signing-calls.txt") -ErrorAction SilentlyContinue | Where-Object { $_.Trim() })
+          foreach ($p in $innoCalls) {
+            if (Test-Path -LiteralPath $p.Trim()) { $signed += (Resolve-Path -LiteralPath $p.Trim()).Path }
+            else { Write-Host "signed by Inno Setup and no longer on disk (it is inside the installer): $p" }
+          }
+          $signed = @($signed | Select-Object -Unique)
+          $bad = @()
+          foreach ($f in $signed) {
+            if (-not (Test-Path -LiteralPath $f)) { $bad += "${f}: missing"; continue }
+            $problem = Get-KestrelSignatureProblem -Path $f -Mode $env:SIGN_MODE -Publisher $env:EXPECTED_PUBLISHER
+            if ($problem) { $bad += $problem }
+          }
+          Write-Host "signed files checked before the upload: $($signed.Count) (mode $($env:SIGN_MODE))"
+          if ($bad.Count -gt 0) { $bad | ForEach-Object { Write-Host $_ }; throw "$($bad.Count) signed file(s) failed the check; nothing was uploaded" }
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: windows-signed
+          path: dist/Kestrel-Setup-*.exe
+          retention-days: 1
+          if-no-files-found: error
+
+
+  windows-sign-test:
+    name: Sign the Windows build (test profile)
+    # The dry run: a manual dispatch from main, in the release-test environment, with the test
+    # app registration, which holds the Signer role on the Public Trust Test profile alone. It
+    # cannot obtain a credential that works on the production profile (D-REL-18q).
+    needs: [preflight, windows, windows-tools]
+    if: needs.preflight.outputs.sign_mode == 'test' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    environment: release-test
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: windows-app
+          path: dist/Kestrel
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: signing-kit
+          path: ${{ runner.temp }}/kit
+      - name: Check the signing inputs and warn about a re-run
+        shell: pwsh
+        env:
+          SIGN_ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          SIGN_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          SIGN_PROFILE: ${{ vars.ARTIFACT_SIGNING_TEST_PROFILE }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          foreach ($name in @("SIGN_ENDPOINT", "SIGN_ACCOUNT", "SIGN_PROFILE")) {
+            if (-not (Get-Item -Path "Env:$name").Value) { throw "$name is empty: set the matching repository variable" }
+          }
+          if ($env:RUN_ATTEMPT -ne "1") {
+            Write-Host "::warning::This is attempt $($env:RUN_ATTEMPT). A re-run of this job signs again and spends about 4 more signatures (D-REL-18t)."
+          }
+      - name: Verify every binary in the signing kit before the login
+        # Fails closed: every executable file in the kit must carry a valid Authenticode
+        # signature from the publisher expected for its folder, and the compiler must be the
+        # pinned Inno Setup version. The hashes behind these files are pinned in windows-tools.
+        shell: pwsh
+        run: |
+          $kit = Join-Path $env:RUNNER_TEMP "kit"
+          $publishers = @{
+            "signtool" = @("Microsoft Corporation", "Microsoft 3rd Party Application Component")
+            "dlib"     = @("Microsoft Corporation", "Microsoft 3rd Party Application Component")
+            "inno"     = @("Pyrsys B.V.")
+          }
+          $binaries = @(Get-ChildItem -Path $kit -Recurse -File | Where-Object { @(".exe", ".dll", ".e32", ".pyd", ".sys", ".ocx") -contains $_.Extension.ToLower() })
+          if ($binaries.Count -lt 4) { throw "the signing kit holds $($binaries.Count) executable files; it is not the kit windows-tools built" }
+          $bad = @()
+          foreach ($file in $binaries) {
+            $folder = $file.FullName.Substring($kit.Length + 1).Split("\")[0]
+            $expected = $publishers[$folder]
+            if (-not $expected) { $bad += "$($file.Name): unexpected folder $folder"; continue }
+            $sig = Get-AuthenticodeSignature -FilePath $file.FullName
+            if ($sig.Status -ne "Valid") { $bad += "$($file.Name): $($sig.Status)"; continue }
+            $cn = [regex]::Match($sig.SignerCertificate.Subject, 'CN=(?<cn>[^,]+)').Groups["cn"].Value.Trim('" ')
+            if ($expected -notcontains $cn) { $bad += "$($file.Name): signed by $cn"; continue }
+          }
+          Write-Host "signing kit binaries checked: $($binaries.Count)"
+          if ($bad.Count -gt 0) { $bad | ForEach-Object { Write-Host $_ }; throw "$($bad.Count) file(s) in the signing kit are not signed by an expected publisher" }
+          $iscc = Get-Item (Join-Path $kit "inno\ISCC.exe")
+          if (-not $iscc.VersionInfo.ProductVersion.StartsWith("6.7.1")) { throw "ISCC.exe is not Inno Setup 6.7.1" }
+      - name: Write the signing metadata
+        shell: pwsh
+        env:
+          SIGN_ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          SIGN_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          SIGN_PROFILE: ${{ vars.ARTIFACT_SIGNING_TEST_PROFILE }}
+        run: |
+          if (-not $env:SIGN_PROFILE) { throw "no certificate profile was chosen" }
+          $dir = Join-Path $env:RUNNER_TEMP "signing-meta"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          [ordered]@{
+            Endpoint               = $env:SIGN_ENDPOINT
+            CodeSigningAccountName = $env:SIGN_ACCOUNT
+            CertificateProfileName = $env:SIGN_PROFILE
+            ExcludeCredentials     = @("EnvironmentCredential", "WorkloadIdentityCredential", "ManagedIdentityCredential", "SharedTokenCacheCredential", "VisualStudioCredential", "VisualStudioCodeCredential", "AzurePowerShellCredential", "AzureDeveloperCliCredential", "InteractiveBrowserCredential")
+          } | ConvertTo-Json | Set-Content -Path (Join-Path $dir "metadata.json") -Encoding utf8
+      - name: List the files to sign
+        # The signature budget: Basic includes 5,000 signatures a month, one per file. Only
+        # Kestrel's own executables, the two at the top of the app folder, are signed here (the
+        # installer and uninstaller are signed by Inno Setup). Everything under the folder that
+        # other companies made is verified later, never signed: a file that already carries a valid
+        # signature keeps it, and an unsigned third-party file is left as it is (D-REL-18o).
+        shell: pwsh
+        run: |
+          $maxToSign = 2
+          $app = Join-Path (Get-Location) "dist\Kestrel"
+          $found = @(Get-ChildItem -Path $app -Recurse -File | Where-Object { @(".exe", ".dll", ".pyd") -contains $_.Extension.ToLower() })
+          $mine = @(Get-ChildItem -Path $app -File -Filter "*.exe")
+          $todo = @($mine | Where-Object { (Get-AuthenticodeSignature -FilePath $_.FullName).Status -eq "NotSigned" })
+          $lines = @($todo | ForEach-Object { "./Kestrel/" + $_.Name })
+          if ($lines -notcontains "./Kestrel/Kestrel.exe" -or $lines -notcontains "./Kestrel/kestrel-cli.exe") { throw "the app executables are not in the list to sign" }
+          if ($todo.Count -gt $maxToSign) { throw "$($todo.Count) files selected for signing; the limit is $maxToSign" }
+          Set-Content -Path (Join-Path (Get-Location) "dist\sign-catalog.txt") -Value $lines -Encoding utf8
+          $others = @($found | Where-Object { $todo.FullName -notcontains $_.FullName })
+          $valid = @($others | Where-Object { (Get-AuthenticodeSignature -FilePath $_.FullName).Status -eq "Valid" }).Count
+          Write-Host "PE files found: $($found.Count); signing calls by the signing action: $($todo.Count) (limit $maxToSign); already validly signed by their makers: $valid; unsigned third-party files left alone: $($others.Count - $valid)"
+      - name: Azure login (federated credential)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_TEST_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign the app files
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_TEST_PROFILE }}
+          files-catalog: ${{ github.workspace }}\dist\sign-catalog.txt
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          timeout: 3600
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+      - name: Pack and sign the installer
+        # Inno Setup signs the installer and the uninstaller itself (its SignTool directive), each
+        # through packaging/sign_call.ps1, which counts the calls.
+        shell: pwsh
+        run: |
+          $expectedInnoCalls = 2
+          $kit = Join-Path $env:RUNNER_TEMP "kit"
+          $env:KESTREL_SIGNTOOL = Join-Path $kit "signtool\signtool.exe"
+          $env:KESTREL_SIGN_DLIB = Join-Path $kit "dlib\Azure.CodeSigning.Dlib.dll"
+          $env:KESTREL_SIGN_META = Join-Path $env:RUNNER_TEMP "signing-meta\metadata.json"
+          $env:KESTREL_SIGN_COUNTER = Join-Path $env:RUNNER_TEMP "inno-signing-calls.txt"
+          $env:Path = (Join-Path $kit "inno") + ";" + $env:Path
+          # $q is Inno's quote and $f its file name; single quotes keep PowerShell from expanding them.
+          $env:KESTREL_INNO_SIGNTOOL = ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File $q{0}$q $f' -f (Join-Path (Get-Location) "packaging\sign_call.ps1"))
+          packaging\build_windows.ps1 -SkipBuild
+          $calls = @(Get-Content -Path $env:KESTREL_SIGN_COUNTER -ErrorAction SilentlyContinue).Count
+          Write-Host "signing attempts by Inno Setup: $calls (expected $expectedInnoCalls: the installer and the uninstaller)"
+          if ($calls -ne $expectedInnoCalls) { throw "Inno Setup made $calls signing attempts; expected exactly $expectedInnoCalls" }
+      - name: Sign out of Azure
+        if: always()
+        shell: pwsh
+        run: |
+          az logout 2>$null
+          Remove-Item -Recurse -Force (Join-Path $HOME ".azure") -ErrorAction SilentlyContinue
+          exit 0
+      - name: Check the signatures before the upload
+        # Every file this job signed is checked before anything is uploaded, so a test signature
+        # that Windows trusts can never be downloaded. The rule is packaging/signature_check.ps1,
+        # the same one windows-verify uses after the install (D-REL-18z, D-REL-18zc).
+        shell: pwsh
+        env:
+          SIGN_MODE: ${{ needs.preflight.outputs.sign_mode }}
+          EXPECTED_PUBLISHER: ${{ vars.ARTIFACT_SIGNING_PUBLISHER }}
+        run: |
+          . (Join-Path (Get-Location) "packaging\signature_check.ps1")
+          if (-not $env:EXPECTED_PUBLISHER) { throw "ARTIFACT_SIGNING_PUBLISHER is not set" }
+          # The files the signing action signed (its catalog), the installer, and every file Inno
+          # Setup asked to sign that is still on disk.
+          $dist = Join-Path (Get-Location) "dist"
+          $catalog = @(Get-Content -Path (Join-Path $dist "sign-catalog.txt") | Where-Object { $_.Trim() })
+          if ($catalog.Count -lt 2) { throw "the signing catalog lists $($catalog.Count) files; expected the app executables" }
+          $signed = @($catalog | ForEach-Object { Join-Path $dist ($_.Trim().Substring(2).Replace("/", "\")) })
+          $installers = @(Get-ChildItem -Path $dist -File -Filter "Kestrel-Setup-*.exe")
+          if ($installers.Count -ne 1) { throw "found $($installers.Count) installers; expected one" }
+          $signed += $installers[0].FullName
+          $innoCalls = @(Get-Content -Path (Join-Path $env:RUNNER_TEMP "inno-signing-calls.txt") -ErrorAction SilentlyContinue | Where-Object { $_.Trim() })
+          foreach ($p in $innoCalls) {
+            if (Test-Path -LiteralPath $p.Trim()) { $signed += (Resolve-Path -LiteralPath $p.Trim()).Path }
+            else { Write-Host "signed by Inno Setup and no longer on disk (it is inside the installer): $p" }
+          }
+          $signed = @($signed | Select-Object -Unique)
+          $bad = @()
+          foreach ($f in $signed) {
+            if (-not (Test-Path -LiteralPath $f)) { $bad += "${f}: missing"; continue }
+            $problem = Get-KestrelSignatureProblem -Path $f -Mode $env:SIGN_MODE -Publisher $env:EXPECTED_PUBLISHER
+            if ($problem) { $bad += $problem }
+          }
+          Write-Host "signed files checked before the upload: $($signed.Count) (mode $($env:SIGN_MODE))"
+          if ($bad.Count -gt 0) { $bad | ForEach-Object { Write-Host $_ }; throw "$($bad.Count) signed file(s) failed the check; nothing was uploaded" }
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: windows-signed
+          path: dist/Kestrel-Setup-*.exe
+          retention-days: 1
+          if-no-files-found: error
+
+
+  windows-verify:
+    name: Verify the signed Windows build
+    # No Azure credential and no id-token here: the signed installer is installed, every PE file
+    # is checked and the app is started. Each file of ours goes through
+    # packaging/signature_check.ps1, the rule the signing jobs use before their upload: Valid in
+    # production; in test mode UnknownError or NotTrusted with a timestamp, Valid fails the run,
+    # and the signer and chain are printed (D-REL-18zc). The marker says the build is not
+    # publicly trusted.
+    needs: [preflight, windows-sign, windows-sign-test]
+    # One of the two signing jobs is skipped by design, so a status function is needed to run
+    # after a skipped need; a failed signing job still stops this one.
+    if: ${{ !cancelled() && !failure() && needs.preflight.outputs.sign_mode != 'none' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: windows-signed
+          path: dist
+      # Only for packaging/signature_check.ps1; into its own folder so it never touches dist.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          path: kestrel-src
+      - name: Install, check every signature and start the app
+        shell: pwsh
+        env:
+          SIGN_MODE: ${{ needs.preflight.outputs.sign_mode }}
+          EXPECTED_PUBLISHER: ${{ vars.ARTIFACT_SIGNING_PUBLISHER }}
+        run: |
+          . (Join-Path $env:GITHUB_WORKSPACE "kestrel-src\packaging\signature_check.ps1")
+          if (-not $env:EXPECTED_PUBLISHER) { throw "ARTIFACT_SIGNING_PUBLISHER is not set" }
+          $installer = (Get-ChildItem dist\Kestrel-Setup-*.exe | Select-Object -First 1).FullName
+          $target = Join-Path $env:RUNNER_TEMP "kestrel-signed-install"
+          $install = Start-Process -FilePath $installer -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$target" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "the silent install exited with code $($install.ExitCode)" }
+          # What is ours: the installer and the executables Kestrel and Inno Setup put at the top of
+          # the install folder. Each goes through the signing rule (a timestamp in both modes, our
+          # publisher name in production).
+          $ours = @(Get-Item $installer) + @(Get-ChildItem -Path $target -File -Filter "*.exe")
+          $bad = @()
+          # Four files must exist and be among the ones checked below, so an install that left
+          # one out cannot pass by having nothing to check.
+          $required = @($installer, (Join-Path $target "Kestrel.exe"), (Join-Path $target "kestrel-cli.exe"), (Join-Path $target "unins000.exe"))
+          foreach ($r in $required) {
+            if (-not (Test-Path $r)) { $bad += "${r}: missing" }
+            elseif ($ours.FullName -notcontains (Resolve-Path $r).Path) { $bad += "${r}: not among the files checked" }
+          }
+          foreach ($f in $ours) {
+            $problem = Get-KestrelSignatureProblem -Path $f.FullName -Mode $env:SIGN_MODE -Publisher $env:EXPECTED_PUBLISHER
+            if ($problem) { $bad += $problem }
+          }
+          # Everyone else's files are verified, not signed: a valid signature must still be valid,
+          # and a file its maker never signed is reported but is not ours to fix.
+          $theirs = @(Get-ChildItem -Path $target -Recurse -File | Where-Object { @(".exe", ".dll", ".pyd") -contains $_.Extension.ToLower() } | Where-Object { $ours.FullName -notcontains $_.FullName })
+          $theirValid = 0
+          $theirUnsigned = 0
+          foreach ($f in $theirs) {
+            $status = (Get-AuthenticodeSignature -FilePath $f.FullName).Status
+            if ($status -eq "Valid") { $theirValid++ } elseif ($status -eq "NotSigned") { $theirUnsigned++ } else { $bad += "$($f.FullName): $status" }
+          }
+          Write-Host "Kestrel-signed files checked: $($ours.Count); third-party files validly signed by their makers: $theirValid; unsigned third-party files left as their makers shipped them: $theirUnsigned"
+          if ($bad.Count -gt 0) { $bad | ForEach-Object { Write-Host $_ }; throw "$($bad.Count) file(s) are not signed as required" }
+          $env:KESTREL_DATA_HOME = "$env:RUNNER_TEMP\kestrel-home"
+          & (Join-Path $target "kestrel-cli.exe") version
+          if ($LASTEXITCODE -ne 0) { throw "the signed app did not start" }
+      - name: Signing marker
+        shell: pwsh
+        env:
+          SIGN_MODE: ${{ needs.preflight.outputs.sign_mode }}
+        run: |
+          if ($env:SIGN_MODE -eq 'test') {
+            Set-Content -Path dist\SIGNING-windows.txt -Value "windows: unsigned: built with the Artifact Signing test profile, which Windows does not trust; a version tag signs with the public profile"
+          } else {
+            Set-Content -Path dist\SIGNING-windows.txt -Value "windows: signed"
+          }
+          Get-Content dist\SIGNING-windows.txt
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: Kestrel-windows
           path: |
@@ -234,16 +1175,20 @@ jobs:
 
   release:
     name: GitHub Release
-    needs: [linux, macos, windows]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # The two signing jobs are skipped when signing is not configured; a failed one still blocks.
+    needs: [preflight, linux, macos, macos-sign, macos-sign-test, macos-sign-check, windows, windows-tools, windows-sign, windows-sign-test, windows-verify]
+    if: github.event_name == 'push' && needs.preflight.outputs.is_version_tag == 'true' && !cancelled() && !failure()
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v7
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           path: artifacts
+          # Only the installers; the app folder and signed installer handed between the Windows
+          # jobs are named differently and never reach the release.
+          pattern: Kestrel-*
           merge-multiple: true
       - name: Checksums
         run: |
@@ -271,7 +1216,7 @@ jobs:
           } > RELEASE_BODY.md
           rm RELEASE_NOTES.md
           cat RELEASE_BODY.md
-      - uses: softprops/action-gh-release@v3
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         id: gh_release
         with:
           # A draft first: immutable releases refuse uploads once published.
@@ -300,18 +1245,18 @@ jobs:
 
   website:
     name: Publish latest.json
-    needs: [release]
-    # A real tag push only (never a dry run), and never a prerelease: the feed is what installed
-    # apps offer as an update.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    needs: [preflight, release]
+    # A real version-tag push only (never a dry run), and never a prerelease: the feed is what
+    # installed apps offer as an update.
+    if: github.event_name == 'push' && needs.preflight.outputs.is_version_tag == 'true' && !contains(github.ref_name, '-')
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       # WEBSITE_TOKEN is only ever checked for (preflight) and handed to the site checkout below,
       # which persists it for the push. It is never an env: value.
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
       - name: Install
         run: |
           uv python install 3.12
@@ -321,16 +1266,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release download "$GITHUB_REF_NAME" --pattern SHA256SUMS.txt --pattern SIGNING.txt
       - name: Build latest.json
+        env:
+          # The tag's UTC date from preflight: the same value the CHANGELOG date was checked
+          # against, so a run that reaches this job after midnight cannot disagree with it.
+          RELEASED_AT: ${{ needs.preflight.outputs.released_at }}
         run: |
           uv run python scripts/build_latest_json.py \
             --version "${GITHUB_REF_NAME#v}" \
+            --published-at "$RELEASED_AT" \
             --changelog CHANGELOG.md \
             --sums SHA256SUMS.txt \
             --signing SIGNING.txt \
             --assets-base "${{ github.server_url }}/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}" \
             --out latest.json
           cat latest.json
-      - uses: actions/checkout@v5
+      # The same latest.json, handed to the homebrew-tap job (#201).
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: latest-json
+          path: latest.json
+          if-no-files-found: error
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: ${{ vars.WEBSITE_REPO || 'distantsoil/kestrelapp-site' }}
           token: ${{ secrets.WEBSITE_TOKEN }}
@@ -347,4 +1303,63 @@ jobs:
           git config user.name "kestrel-release-bot"
           git config user.email "kestrel-release-bot@users.noreply.github.com"
           git commit -m "release: $GITHUB_REF_NAME"
+          git push
+
+  homebrew-tap:
+    name: Update the Homebrew tap
+    needs: [preflight, release, website]
+    # A pushed stable version tag only, after the release and latest.json are published (#201,
+    # D-REL-616). Never a dry run, a prerelease or a pull request. The tap token lives in the
+    # release environment and is only ever the token input of the tap checkout.
+    if: github.event_name == 'push' && needs.preflight.outputs.is_version_tag == 'true' && !contains(github.ref_name, '-') && (startsWith(github.ref, 'refs/tags/v0') || startsWith(github.ref, 'refs/tags/v1') || startsWith(github.ref, 'refs/tags/v2') || startsWith(github.ref, 'refs/tags/v3') || startsWith(github.ref, 'refs/tags/v4') || startsWith(github.ref, 'refs/tags/v5') || startsWith(github.ref, 'refs/tags/v6') || startsWith(github.ref, 'refs/tags/v7') || startsWith(github.ref, 'refs/tags/v8') || startsWith(github.ref, 'refs/tags/v9'))
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: latest-json
+          path: feed
+      - name: Render the cask
+        id: cask
+        # The runner's own python3, standard library only: no package is installed in this job.
+        run: |
+          python3 scripts/homebrew_cask.py --latest feed/latest.json --tag "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" --license LICENSE.md --out tap-update
+      - name: The tap token is set
+        # A boolean only. Without the token the checkout below would fail with a generic error.
+        if: steps.cask.outputs.publish == 'true'
+        env:
+          HAS_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TAP_TOKEN" != "true" ]; then
+            echo "::error::HOMEBREW_TAP_TOKEN is not set in the release environment, so the Homebrew tap was not updated. Add it (docs/RELEASING.md, Homebrew tap) and re-run this job."
+            exit 1
+          fi
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        if: steps.cask.outputs.publish == 'true'
+        with:
+          repository: distantsoil/homebrew-kestrel
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Commit and push
+        if: steps.cask.outputs.publish == 'true'
+        run: |
+          mkdir -p tap/Casks
+          cp tap-update/Casks/kestrel.rb tap/Casks/kestrel.rb
+          cp tap-update/LICENSE tap/LICENSE
+          cmp LICENSE.md tap/LICENSE
+          cd tap
+          git add Casks/kestrel.rb LICENSE
+          if git diff --cached --quiet; then
+            echo "The tap already has this version; nothing to push."
+            exit 0
+          fi
+          git config user.name "kestrel-release-bot"
+          git config user.email "kestrel-release-bot@users.noreply.github.com"
+          git commit -m "kestrel ${GITHUB_REF_NAME#v}"
           git push

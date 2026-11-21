@@ -95,15 +95,18 @@ def _go(page, href: str, name: str) -> dict:
 
 
 def _fresh_sheets(live, path: str) -> list[str]:
-    """The stylesheets a full load of the page puts in its head, in order. (A partial that htmx
-    loads later can bring one of its own into the body; that is the partial's, not the page's.)"""
+    """The stylesheets a full load of the page applies, in order: the head's, then any the page's
+    own content brings (the profile page's phone field), which an in-place change hoists into the
+    head as a page load applies them at the same place (kestrel-ui.js navSheets, D-UI-811)."""
     base, browser = live
     ctx = browser.new_context()
     try:
         p = ctx.new_page()
         p.goto(f"{base}{path}")
-        return p.evaluate("() => Array.from(document.head.querySelectorAll('link[rel=stylesheet]'))"
-                          ".map(l => new URL(l.href).pathname)")
+        return p.evaluate(
+            "() => Array.from(document.querySelectorAll("
+            "'head link[rel=stylesheet], #main main.container link[rel=stylesheet]'))"
+            ".map(l => new URL(l.href).pathname)")
     finally:
         ctx.close()
 

@@ -39,10 +39,11 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.bench import harness
-from kestrel.config import Settings
+from kestrel.config import ONLINE_APPROVE_FIRST, Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Label, Setting, Task
 from kestrel.errors import failure_record, shown_failure
+from kestrel.llm.engine_cycle import engine_unreachable
 
 log = structlog.get_logger()
 
@@ -125,6 +126,7 @@ async def _quick_screen(
 ) -> StepResult:
     from kestrel.llm.guard import run_prompt
     from kestrel.llm.prompts import load_prompt
+    from kestrel.pipeline._shared import encode_send, plan_client_send
     from kestrel.pipeline.context import build_tier1_values, render_user
     from kestrel.pipeline.profile import load_profile
 
@@ -139,16 +141,23 @@ async def _quick_screen(
             continue
         spec = load_prompt(version)
         profile = load_profile(track)
+        # Decided from the client that sends (issue #218, D-PRIV-800): the employer goes as a
+        # code, or the candidate is refused and recorded as no result.
+        plan = await plan_client_send(client, spec.tier, sm=_SEND_SM.get())
+        if plan.refuse:
+            raise ValueError(f"{plan.refuse}. Nothing was sent.")
         for entry in entries:
             opp = harness._synthetic_opportunity(entry)
             values = build_tier1_values(
                 opp=opp, org=None, profile=profile, source_name="model-check"
             )
             user = render_user(spec.user, values, trigger_event=False, posted=True)
-            result = await run_prompt(
-                client, spec,
+            # Replies are only scored (verdict and score), never shown: nothing to restore.
+            sent, _book = encode_send(
                 [{"role": "system", "content": spec.system}, {"role": "user", "content": user}],
+                plan.mapping,
             )
+            result = await run_prompt(client, spec, sent)
             if not result.ok and not result.quarantined:
                 # A request error says nothing about the model; the item is left out, not scored.
                 log.info("model_check_item_unanswered", model=model, error=result.error)
@@ -186,7 +195,8 @@ async def _evaluation_step(
         update["backend"] = backend
     base.llm.tiers["tier2"] = base.llm.tiers[tier].model_copy(update=update)
     report = await harness.run_bench(
-        settings=base, models=[model], make_client=make_client, gold_dir=gold_dir
+        settings=base, models=[model], make_client=make_client, gold_dir=gold_dir,
+        sm=_SEND_SM.get(),
     )
     n = sum(v.n_items for v in report.variants)
     matches = sum(
@@ -210,13 +220,9 @@ def default_runner(make_client: ClientFactory, gold_dir: Any = None) -> Runner:
     ) -> StepResult:
         if backend and backend not in settings.llm.backends:
             raise ValueError(f"no backend named {backend}")
-        mapping = _SEND_MAP.get()
-        factory: ClientFactory = (
-            (lambda s: _RedactingClient(make_client(s), mapping)) if mapping else make_client
-        )
         if step == "quick_screen":
-            return await _quick_screen(factory, settings, model, backend, gold_dir)
-        return await _evaluation_step(factory, settings, step, model, backend, gold_dir)
+            return await _quick_screen(make_client, settings, model, backend, gold_dir)
+        return await _evaluation_step(make_client, settings, step, model, backend, gold_dir)
 
     return run
 
@@ -225,37 +231,19 @@ def default_runner(make_client: ClientFactory, gold_dir: Any = None) -> Runner:
 # Confidential mode (CLAUDE.md Privacy): what an online candidate is sent (gold-set postings and
 # the operator's profile) goes through the same plan the pipeline uses (`plan_hosted_send`): the
 # current employer is replaced with a code for each call, and with no employer chosen the send is
-# held, not made. The runner reads the map from here so its signature stays what tests script.
-_SEND_MAP: contextvars.ContextVar[Any] = contextvars.ContextVar("model_check_send_map",
-                                                               default=None)
+# held, not made. Each step decides it from the client that sends (issue #218, D-PRIV-800:
+# `plan_client_send` in `_quick_screen` and in the harness), reading confidential mode through
+# the check's own sessionmaker, which the runner finds here so its signature stays what tests
+# script.
+_SEND_SM: contextvars.ContextVar[Any] = contextvars.ContextVar("model_check_send_sm",
+                                                              default=None)
 
 NO_PROVIDER_MESSAGE = (
     "Connect an online provider first. Online models need a key, and none is connected. Set one "
     "up under Models."
 )
-NO_APPROVAL_MESSAGE = (
-    "Online models need your approval first. Tick I understand what gets sent on the Models "
-    "page, then try again."
-)
-
-
-class _RedactingClient:
-    """Wraps a model client so every call it makes carries the employer map's codes instead of
-    the current employer (`pipeline._shared.encode_send`). Replies are only scored (verdict and
-    score), never shown, so there is nothing to restore."""
-
-    def __init__(self, inner: Any, mapping: Any) -> None:
-        self._inner = inner
-        self._mapping = mapping
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._inner, name)
-
-    async def complete(self, *, messages: list[dict], **kw: Any) -> Any:
-        from kestrel.pipeline._shared import encode_send
-
-        sent, _book = encode_send(messages, self._mapping)
-        return await self._inner.complete(messages=sent, **kw)
+# The Models page's own refusal, so Model check names the control that exists (round 8).
+NO_APPROVAL_MESSAGE = ONLINE_APPROVE_FIRST
 
 
 def connected_provider(settings: Settings) -> tuple[str, Any] | None:
@@ -368,6 +356,21 @@ def approval_for_offered(
 # ================================================================================= candidates
 def current_model(settings: Settings, step: str) -> str:
     return settings.llm.tiers[STEP_TIER[step]].model
+
+
+def _needs_ollama(settings: Settings, payload: dict) -> bool:
+    """Whether a check would run a model on this computer: a picked candidate on the local
+    backend, or one with no backend that is not the step's own model (an installed model). The
+    step's own model runs on the step's backend, judged before the lease."""
+    for step in [s for s in STEP_TIER if s in (payload.get("steps") or [])]:
+        for item in (payload.get("models") or {}).get(step) or []:
+            cand = _as_candidate(item)
+            if cand is None:
+                continue
+            model, backend = cand
+            if backend == "local" or (backend is None and model != current_model(settings, step)):
+                return True
+    return False
 
 
 Candidate = tuple[str, str | None]  # (model, backend); None: the tier's own backend
@@ -733,7 +736,8 @@ async def _send_plan(
 
     candidate = _settings_for(settings, step, model, backend)
     async with sm() as s:
-        return await plan_hosted_send(s, candidate, STEP_TIER[step])
+        # The check's client for this candidate is built from `candidate`.
+        return await plan_hosted_send(s, candidate, STEP_TIER[step], sender=candidate)
 
 
 async def run_check(
@@ -796,7 +800,7 @@ async def run_check(
             await _save_progress(sm, task.id, results=results,
                                  progress={**progress, "done": len(results)}, held=held)
             continue
-        token = _SEND_MAP.set(send.mapping or None)
+        token = _SEND_SM.set(sm)
         try:
             res = await runner(step, model, settings, backend)
         except harness.GoldSetMissing as exc:
@@ -806,7 +810,7 @@ async def run_check(
                         error_type=type(exc).__name__, error=str(exc))
             res = StepResult(step, model, False, 0, None, None, None, backend=resolved)
         finally:
-            _SEND_MAP.reset(token)
+            _SEND_SM.reset(token)
         res.backend = res.backend or resolved
         ran.append((step, model))
         results.append(_row(res))
@@ -878,15 +882,36 @@ async def drain_checks(
     """Run every queued check, one at a time, on the worker. A failed task goes back to the
     queue while attempts remain, then dead with the reason; never raises into the worker cycle."""
     from kestrel.interview.story_task import LEASE_S, _renew
+    from kestrel.llm import engine_cycle
+    from kestrel.pipeline.worker import _ollama_model, ollama_answering
     from kestrel.queue.queue import REASON_APPROVAL, REASON_STOPPED, TaskQueue
 
+    # A check's models are chosen per task, so before any lease only "Ollama does not answer"
+    # is certain: while it does not and a step runs on it, checks wait, spending no try
+    # (D-WORKER-6 amended, round 4). A local candidate that is missing is the check's result.
+    on_ollama = any(_ollama_model(settings, t) for t in ("tier1", "tier2", "tier3"))
+    # Probed only when something would run on Ollama: an all-online setup never asks it
+    # (round 6); a check naming a local model asks below, when it is leased.
+    answering: bool | None = await ollama_answering(settings) if on_ollama else None
+    if on_ollama and not answering:
+        return 0
     run = runner or default_runner(make_client, gold_dir)
     queue = TaskQueue(sm)
     wid = "pipeline-model-check"
     done = 0
     while stop is None or not stop.is_set():
+        if on_ollama and engine_cycle.lost():
+            break  # a call this cycle could not reach Ollama: lease nothing more (round 6)
         task = await queue.lease(wid, types=[TASK_TYPE], lease_seconds=LEASE_S)
         if task is None:
+            break
+        if _needs_ollama(settings, task.payload or {}) and not (
+            answering if answering is not None else await ollama_answering(settings)
+        ):
+            # Every tier is online, but this check names a model on this computer and Ollama
+            # does not answer: it waits, its try given back, rather than recording the model as
+            # missing (round 5, finding 4). Nothing more is leased this pass.
+            await queue.give_back(task.id, dict(task.payload or {}), worker_id=wid)
             break
         beat = asyncio.create_task(_renew(queue, task.id, wid))
         try:
@@ -895,7 +920,8 @@ async def drain_checks(
         except Exception as exc:  # noqa: BLE001 - a failed task is retried, never fatal
             beat.cancel()
             log.warning("model_check_failed", task=task.id, error=f"{type(exc).__name__}: {exc}")
-            await queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True)
+            await queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True,
+                             engine_wait=engine_unreachable(exc))
             continue
         finally:
             beat.cancel()

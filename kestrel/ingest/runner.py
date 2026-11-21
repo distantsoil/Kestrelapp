@@ -17,9 +17,22 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Notification, ScrapeRun, Source, Task
-from kestrel.ingest import board_discovery, employer_links, fetch_cap, smart_filter
+from kestrel.ingest import (
+    board_discovery,
+    employer_links,
+    empty_bodies,
+    failure_code,
+    fetch_cap,
+    smart_filter,
+)
 from kestrel.ingest.adapters import get_adapter
-from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
+from kestrel.ingest.base import (
+    AdapterError,
+    PostingBatch,
+    RawPosting,
+    SourceConfigError,
+    daily_limit,
+)
 from kestrel.ingest.http import HttpClient
 from kestrel.ingest.location import parse_location
 from kestrel.ingest.normalize import normalize_and_store
@@ -74,6 +87,9 @@ async def run_source(
     # D-SRC-17: the first titles this run drops as unrelated, kept only on the stored scrape_run
     # (never in RunOutcome.counts, which the CLI, Run now and the worker progress line print).
     dropped_sample: list[dict[str, str | None]] = []
+    # Issue 182: per source (per board for a search), the new roles stored and how many had no
+    # description text.
+    body_tally: dict[str, list[int]] = {}
     async with sessionmaker() as session:
         source = await session.get(Source, source_id)
         if source is None:
@@ -91,6 +107,7 @@ async def run_source(
         # expired attribute on an AsyncSession outside a greenlet raises MissingGreenlet.
         source_name, source_kind = source.name, source.kind
         error: str | None = None
+        error_code: str | None = None  # the SRC code of `error` (failure_code), stored on the run
         postings = None
 
         try:
@@ -102,16 +119,18 @@ async def run_source(
             if cap is not None and not await fetch_cap.reserve(session, source_kind, cap):
                 # D-SRC-15: the provider's daily limit is enforced here, from the stored count.
                 postings = PostingBatch()
-                postings.partial_error = getattr(adapter, "cap_sentence", None) or (
-                    f"This source is limited to {cap} fetches a day and today's are used."
-                )
+                postings.add(daily_limit(source_name, cap))
             else:
                 postings = await adapter.fetch(source.config, http)
             counts["fetched"] = len(postings)
             if not getattr(adapter, "discovery_only", False):
                 # A search board that stopped early or could not start (a key not saved, a 429,
                 # a 5xx) hands back what it has plus the reason: partial, not a source failure.
-                error = getattr(postings, "partial_error", None) or error
+                stopped = getattr(postings, "partial_error", None)
+                if stopped:  # the code comes from the notices' kinds, never their words
+                    error_code = failure_code.code_for_notices(
+                        getattr(postings, "notices", ()), fallback=failure_code.PARTIAL)
+                error = stopped or error
             if getattr(adapter, "discovery_only", False):
                 # A link source (RemoteRocketship, D-SRC-14): the fetch holds only employer URLs,
                 # which are never stored. Boards are found through D-SRC-7; the rest are read
@@ -119,6 +138,7 @@ async def run_source(
                 # A fetch that stopped early with links in hand (a 429) makes the run partial
                 # without counting a failure of the source.
                 stopped_early = getattr(postings, "partial_error", None)
+                notices = list(getattr(postings, "notices", ()))
                 links, postings = postings, None  # a failing resolve must store no bare link
                 postings, link_counts = await employer_links.resolve(
                     session, links, source=source, http=http
@@ -126,6 +146,8 @@ async def run_source(
                 counts.update(link_counts)
                 if stopped_early:
                     error = stopped_early
+                    error_code = failure_code.code_for_notices(
+                        notices, fallback=failure_code.PARTIAL)
             # Postings per board (JobSpy tags each with its site), so the Sources page can say
             # when a board found nothing instead of hiding it in the total (D-SRC-4).
             sites = ((p.raw or {}).get("site") for p in postings)
@@ -137,6 +159,7 @@ async def run_source(
             log.info("scrape_failed", source=source_name, kind=source_kind,
                      error_type=type(exc).__name__, error=str(exc))
             error = str(exc)
+            error_code = failure_code.code_for_exception(exc)
             source.consecutive_failures += 1
         except Exception as exc:  # unexpected: never abort the batch, but LOG it (may be a bug)
             log.error(
@@ -144,6 +167,7 @@ async def run_source(
                 error_type=type(exc).__name__, error=str(exc),
             )
             error = f"The run hit {fixed_reason(exc)}."
+            error_code = failure_code.code_for_exception(exc)
             source.consecutive_failures += 1
 
         if postings is not None:
@@ -197,6 +221,12 @@ async def run_source(
                         else "reseen"
                     )
                     counts[key] += 1
+                    if key == "new":
+                        tally = body_tally.setdefault(
+                            str((raw.raw or {}).get("site") or "").lower()
+                            or empty_bodies.WHOLE_SOURCE, [0, 0])
+                        tally[0] += 1
+                        tally[1] += 1 if empty_bodies.is_empty_body(raw) else 0
                     if res.suppressed:
                         # Hidden on arrival as a re-post of an applied pursuit (SPEC.md 5.6);
                         # still a stored row, so "new" counts it too.
@@ -209,12 +239,15 @@ async def run_source(
                     await session.refresh(run)
                     counts["errors"] += 1
                     error = f"One posting could not be stored ({fixed_reason(exc)})."
+                    error_code = failure_code.NOT_SAVED
                     log.warning("normalize_error", source=source_name,
                                 error_type=type(exc).__name__, error=str(exc))
             stored = counts["new"] + counts["reseen"] + counts["changed"]
             if stored == 0 and counts["errors"] > 0:
                 # every posting failed: a failure, not a benign success
                 source.consecutive_failures += 1
+                if error_code == failure_code.NOT_SAVED:  # "the others were saved" is not true
+                    error_code = failure_code.NONE_SAVED
             else:  # any success, an empty one included, clears the failing state (D-UI-33)
                 source.consecutive_failures = 0
 
@@ -244,11 +277,19 @@ async def run_source(
                 )
             )
         run = await session.get(ScrapeRun, run_id)
+        if run is None:  # the row this call created; only a concurrent delete can lose it
+            raise ValueError(f"scrape run {run_id} not found")
+        bodies = await _read_bodies(session, source_id, run_id, body_tally)
+        if bodies:  # like by_site, in the shared counts, so the outcome and the row agree
+            counts[empty_bodies.COUNTS_KEY] = bodies
         run.status = status
-        run.error = error
-        run.counts = (
-            {**counts, DROPPED_SAMPLE_KEY: dropped_sample} if dropped_sample else dict(counts)
-        )
+        run.error = str(error) if error else error  # a plain str, whatever type it came as
+        run.counts = {
+            **counts,
+            **({DROPPED_SAMPLE_KEY: dropped_sample} if dropped_sample else {}),
+            # A failed or partial check keeps its code; a clean one has none (D-ERR-5, D-ERR-20).
+            **({failure_code.ERROR_CODE_KEY: error_code} if error and error_code else {}),
+        }
         run.finished_at = utcnow_iso()
         source.last_run_at = utcnow_iso()
         await session.commit()
@@ -270,3 +311,22 @@ def _outside_area(location_raw: str | None, countries: list) -> bool:
         if not country or value_in(country, countries):
             return False
     return True
+
+
+async def _read_bodies(session: AsyncSession, source_id: int, run_id: int,
+                       tally: dict[str, list[int]]) -> dict[str, dict]:
+    """Each source's reading of this run's new roles without a description, judged against that
+    source's own earlier runs (`empty_bodies.read_share`). Empty when nothing new was stored."""
+    if not tally:
+        return {}
+    from sqlalchemy import select
+
+    earlier = (await session.execute(
+        select(ScrapeRun.counts).where(ScrapeRun.source_id == source_id, ScrapeRun.id < run_id)
+        .order_by(ScrapeRun.id.desc()).limit(empty_bodies.HISTORY_RUNS)
+    )).scalars().all()
+    out: dict[str, dict] = {}
+    for key, (new, empty) in tally.items():
+        history = [e for c in earlier if (e := empty_bodies.stored_entry(c, key))]
+        out[key] = empty_bodies.read_share(new, empty, history).as_counts()
+    return out

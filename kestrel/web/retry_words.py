@@ -40,6 +40,10 @@ HELD_REASON = "Waiting for you to choose your current employer"
 # is the truer reason; a refused key also says "http 4". Plain words, no jargon, no model names.
 _REASONS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("leave no room for this posting",), "Too long for your local model"),  # D-SCORE-21
+    (("hosted mode was turned off",), "Online sending was turned off before this was sent"),
+    (("invalid confidential mode",),
+     "Kestrel could not read your privacy setting, so nothing was sent"),
+    (("safety classifier declined",), "The online service declined to answer"),
     (("generation loop", "degenerate", "repeated"), "The AI repeated itself"),
     (("finish_reason: length", "finish_reason length", "max_tokens", "hit the cap"),
      "The AI ran out of room"),
@@ -72,7 +76,7 @@ def is_held(error: str | None) -> bool:
     """True for a send Kestrel held back (nothing was sent): confidential mode is on, an online
     model was picked and no current employer is chosen to hide (pipeline._shared.HOSTED_REFUSAL).
     That is a wait for the operator's choice, not a failed try."""
-    return "hosted send refused" in (error or "").lower()
+    return "no redaction map is configured" in (error or "").lower()
 
 
 def plain_reason(error: str | None) -> str:
@@ -84,6 +88,12 @@ def plain_reason(error: str | None) -> str:
         if any(re.search(n, low) for n in needles):
             return words
     return REASON_FALLBACK
+
+
+def not_sent(error: str | None) -> bool:
+    """True for every refused online send (held for the employer, hosted turned off, an
+    unreadable privacy setting): nothing left the machine, so the row counts no try (D-TEST-19)."""
+    return (error or "").lower().startswith("hosted send refused")
 
 
 def refused_key(error: str | None) -> bool:

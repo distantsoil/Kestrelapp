@@ -33,9 +33,27 @@ PYRIGHT_TIMEOUT_SECONDS = 900
 # ---- pyright -----------------------------------------------------------------------------------
 
 
-def run_pyright(paths: list[str], *, cwd: Path = ROOT) -> list[dict]:
-    """Error diagnostics for `paths` (repo-relative or absolute), from `pyright --outputjson`."""
-    cmd = [sys.executable, "-m", "pyright", "--pythonpath", sys.executable, "--outputjson", *paths]
+# The three systems Kestrel ships on. The type check runs once for the machine it is on and once
+# for each of the others, so code that is wrong only on Windows fails on a Linux builder too
+# (D-CI-595: six such errors reached the release check on the owner's PC, because every builder
+# was a Linux session and pyright checks for the system it runs on unless told otherwise).
+PLATFORMS = ("Windows", "Darwin", "Linux")
+# Not reported for another system: a package installed only there cannot be found here.
+OTHER_PLATFORM_IGNORED = frozenset({"reportMissingImports", "reportMissingModuleSource"})
+
+
+def host_platform(name: str | None = None) -> str:
+    name = sys.platform if name is None else name
+    return "Windows" if name == "win32" else "Darwin" if name == "darwin" else "Linux"
+
+
+def run_pyright(paths: list[str], *, cwd: Path = ROOT, platform: str | None = None) -> list[dict]:
+    """Error diagnostics for `paths` (repo-relative or absolute), from `pyright --outputjson`.
+    With `platform` ("Windows", "Darwin", "Linux") the code is checked as that system sees it."""
+    cmd = [sys.executable, "-m", "pyright", "--pythonpath", sys.executable, "--outputjson"]
+    if platform:
+        cmd += ["--pythonplatform", platform]
+    cmd += paths
     proc = subprocess.run(
         cmd,
         cwd=cwd,
@@ -132,6 +150,35 @@ def new_type_errors(
     return problems
 
 
+def other_platform_errors(files: list[str], baseline: dict, host_diags: list[dict], *,
+                          root: Path = ROOT, host: str | None = None,
+                          run=run_pyright) -> list[str]:
+    """New errors that appear only when `files` are checked as another system sees them."""
+    host = host or host_platform()
+    known = Counter(fingerprint(d, root) for d in host_diags)
+    problems: list[str] = []
+    for platform in PLATFORMS:
+        if platform == host:
+            continue
+        only_there: list[dict] = []
+        left = Counter(known)
+        for d in run(files, platform=platform):
+            if d.get("rule") in OTHER_PLATFORM_IGNORED:
+                continue
+            key = fingerprint(d, root)
+            if left[key] > 0:  # the same error the host run already judged
+                left[key] -= 1
+                continue
+            only_there.append(d)
+        for line in new_type_errors(only_there, baseline, set(files), root):
+            problems.append(line.replace(
+                "RULE type check: ", f"RULE type check (as {platform} sees it): ", 1).replace(
+                "Fix: correct the type error", f"Fix: this line is wrong on {platform} only. "
+                "Put the call behind `if sys.platform ...` so the checker can see it never "
+                f"runs there, or use a call {platform} has. Correct the type error", 1))
+    return problems
+
+
 def type_check_changed(
     changed_names: list[str], *, baseline_path: Path = BASELINE_PATH, log=print
 ) -> list[str]:
@@ -149,9 +196,13 @@ def type_check_changed(
             "(`git checkout origin/main -- scripts/pyright_baseline.json`)."
         ]
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-    problems = new_type_errors(run_pyright(files), baseline, set(files))
-    log(f"    pyright: {len(files)} changed file(s), {len(problems)} new error(s)")
-    return problems
+    host_diags = run_pyright(files)
+    problems = new_type_errors(host_diags, baseline, set(files))
+    elsewhere = other_platform_errors(files, baseline, host_diags)
+    log(f"    pyright: {len(files)} changed file(s), {len(problems)} new error(s) here, "
+        f"{len(elsewhere)} more as {' and '.join(p for p in PLATFORMS if p != host_platform())} "
+        "see them")
+    return problems + elsewhere
 
 
 # ---- ruff on changed lines ---------------------------------------------------------------------

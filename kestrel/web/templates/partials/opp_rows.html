@@ -61,7 +61,7 @@
 {% set visible_inputs = ['score_min', 'pay', 'work', 'posted', 'org', 'source', 'warn', 'live', 'legit'] %}
 <div id="pipeline-list" class="pl-list" data-signals="{{ '1' if signals_tab else '0' }}"
      hx-get="/opportunities?{{ query|urlencode }}"
-     hx-trigger="pipelineRefresh from:body{% if polling %}, every 10s [(!document.activeElement || document.activeElement.id !== 'pipeline-q') && !(document.getElementById('not-fit-show') && document.getElementById('not-fit-rows') && document.getElementById('not-fit-rows').childElementCount)]{% endif %}"
+     hx-trigger="pipelineRefresh from:body{% if polling %}, every 10s{% endif %}" data-k-when="poll=pipeline-idle"
      hx-target="this" hx-swap="outerHTML">
 
   {# Out of band: the line under the title and the tab counts. Only on a swap; the full page
@@ -76,7 +76,7 @@
 
   <form id="pipeline-form" class="pl-form" role="search" method="get" action="/opportunities"
         hx-get="/opportunities" {{ swap|safe }}
-        hx-trigger="submit, change[target.name != 'view_name'], keyup changed delay:400ms from:#pipeline-q">
+        hx-trigger="submit, change, keyup changed delay:400ms from:#pipeline-q" data-k-when="change=not-view-name">
     <input type="hidden" name="track" value="{{ f.track or '' }}">
     <input type="hidden" name="stage" value="{{ f.stage or '' }}">
     <input type="hidden" name="needs_review" value="{{ '1' if f.needs_review else '' }}">

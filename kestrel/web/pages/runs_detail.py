@@ -24,8 +24,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.models import Evaluation, Opportunity, Quarantine, Run, ScrapeRun, Source, Task
+from kestrel.ingest import failure_code
+from kestrel.llm.failure_kind import split_stored
 from kestrel.pipeline._shared import parse_rescore_failure
 from kestrel.pipeline.tasks import enqueue_once
+from kestrel.queue import row_retry
 from kestrel.queue.rescore import requeue_rescore_task
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
@@ -41,26 +44,11 @@ log = structlog.get_logger()
 
 router = APIRouter()
 
-# Retry must never move an opportunity BACKWARD into a position where it can be rejected.
-#
-# Hard rule 4 (uncertainty escalates, it never rejects) is already applied at quarantine time, and
-# that changes what "retry" may safely mean per tier:
-#
-#   Tier 1: handle_t1 (tier1.py) responds to a quarantine by PROMOTING to "t1_pass" with
-#     forced_by="t1_quarantine_promoted" and queuing t2. The item is not stuck, it is already saved.
-#     Rolling it back to "t0_pass" would re-run Tier 1, which can return a kill and land it in
-#     "t1_reject", so the Retry button would be able to reject an item the escalation rule had
-#     rescued. Retry therefore only re-queues the t2 the promotion already implies, self-healing a
-#     lost task without ever un-promoting.
-#   Tier 2: handle_t2 (tier2.py) sets stage="quarantined" on a structural failure, which IS stuck
-#     and has no queued successor. Resetting to "t1_pass" plus a t2 task is the real repair, and it
-#     is the case this button exists for.
-#   Tier 3: there is no worker task kind at all; escalation is operator-confirmed only and must
-#     never acquire an automatic path (hard rule 1). Resetting to "new" would re-run Tier 0, which
-#     CAN reject an item that already cleared Tiers 0, 1 and 2, discarding "t2_done" and burning two
-#     more evaluations. Retry does not touch the stage; it points the operator at Escalate.
-_RETRY_TASK = {1: "t2", 2: "t2"}
-_RETRY_STAGE = {2: "t1_pass"}  # tier 1 keeps whatever stage its promotion already earned
+# What a retry of a row runs is decided once, from the row itself (kestrel.queue.row_retry.plan,
+# D-UI-790): Fit score only. Quick sort already kept the role (hard rule 4) and re-running it could
+# set the role aside; Deep read is operator-confirmed escalation (hard rule 1). A Fit score retry of
+# a parked role puts it back at "t1_pass", the normal entry to Tier 2.
+_RETRY_STAGE = {2: "t1_pass"}
 
 
 async def _scrape_runs_during(session: AsyncSession, run: Run, limit: int = 50) -> list[dict]:
@@ -73,7 +61,9 @@ async def _scrape_runs_during(session: AsyncSession, run: Run, limit: int = 50) 
         stmt = stmt.where(ScrapeRun.started_at <= run.finished_at)
     stmt = stmt.order_by(ScrapeRun.started_at.desc()).limit(limit)
     rows = (await session.execute(stmt)).all()
-    return [{"scrape": sr, "source_name": name} for sr, name in rows]
+    return [{"scrape": sr, "source_name": name,
+             "code": failure_code.stored_code(sr.counts)
+             if sr.status in ("failed", "partial") else None} for sr, name in rows]
 
 
 async def _evaluations_during(session: AsyncSession, run: Run, limit: int = 100) -> list[dict]:
@@ -171,9 +161,11 @@ async def _quarantine_rows(
     for resolved, rows in ((False, open_rows), (True, done_rows)):
         for q, opp, queued, needs_you in rows:
             rescore, task_id, error = parse_rescore_failure(q.error)
+            kind, error = split_stored(error)  # the kind line is typing, not a message
             hidden = opp is not None and opp.archived_at is not None
             out.append(
                 {"q": q, "opp": opp, "rescore": rescore, "task_id": task_id, "error": error,
+                 "kind": kind,
                  "resolved": resolved, "hidden": hidden and not resolved,
                  "queued": bool(queued) and not resolved and not hidden,
                  "needs_you": bool(needs_you) and not resolved}
@@ -201,18 +193,11 @@ async def _retry_quarantine(session: AsyncSession, quarantine_id: int) -> str | 
     q = await session.get(Quarantine, quarantine_id)
     if q is None:
         return f"No quarantine record #{quarantine_id}."
-
-    if q.opportunity_id is None:
-        # D-UI-224: no role, so no task to queue. Say where it runs again; count no try.
-        return ("This did not come from scoring a role, so it cannot be tried again here. "
-                "Run it again where it started, or remove it from this list.")
-
-    q.attempts = (q.attempts or 0) + 1
-
-    opp = await session.get(Opportunity, q.opportunity_id)
-    if opp is None:
-        await session.commit()
-        return f"Retried, but opportunity #{q.opportunity_id} no longer exists."
+    opp = await session.get(Opportunity, q.opportunity_id) if q.opportunity_id else None
+    # The task comes from the row; a refusal queues nothing and spends no retry (D-UI-790).
+    plan = row_retry.plan(q, opp)
+    if plan.task is None or opp is None:
+        return plan.why
 
     is_rescore, task_id, _ = parse_rescore_failure(q.error)
     if is_rescore:
@@ -224,37 +209,24 @@ async def _retry_quarantine(session: AsyncSession, quarantine_id: int) -> str | 
         if override.get("backend") not in (None, "local"):
             # Hard rule 1: an online try was confirmed once, in its own dialog. Trying again must
             # not send the posting out again without the operator saying yes again.
-            await session.commit()
             return ("That try used an online model. Use Try with a different model to confirm "
                     "sending it again, or pick a model on this computer.")
-        added = await requeue_rescore_task(
-            session, opp.id, payload, earlier.type if earlier is not None else "t2"
-        )
-        await session.commit()
-        if not added:
+        if not await requeue_rescore_task(session, opp.id, payload, plan.task):
+            await session.rollback()
             return "This role is already waiting to be scored again."
-        return None
-
-    task_type = _RETRY_TASK.get(q.tier)
-    if task_type is None:
-        # Tier 3 and anything else with no worker task kind. Do NOT reset the stage: see the note
-        # on _RETRY_TASK above. Escalation stays operator-confirmed, which is hard rule 1.
+        q.attempts = (q.attempts or 0) + 1
         await session.commit()
-        return (
-            f"Tier {q.tier} has no automatic retry: escalation is operator-confirmed only. "
-            f"Attempt count updated. Use Escalate on the opportunity to send it again."
-        )
+        return None
 
     stage = _RETRY_STAGE.get(q.tier)
     if stage is not None:
         opp.stage = stage
         opp.stage_reason = f"quarantine #{q.id} retry: re-queued for tier {q.tier}"
-    else:
-        opp.stage_reason = (
-            f"quarantine #{q.id} retry: re-queued tier 2 (tier 1 promotion left intact)"
-        )
     # The operator clicked Retry: never held by a switched-off track (finding 10).
-    await enqueue_once(session, task_type, opp.id, priority=int(opp.pre_score * 100),
-                       extra={"requested": True})
+    if not await enqueue_once(session, plan.task, opp.id, priority=int(opp.pre_score * 100),
+                              extra={"requested": True}):
+        await session.rollback()
+        return "This role is already waiting to be scored."
+    q.attempts = (q.attempts or 0) + 1
     await session.commit()
     return None

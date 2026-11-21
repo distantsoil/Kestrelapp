@@ -28,6 +28,40 @@
       .replace(/href="#([^"]+)"/g, 'href="#$1-' + tag + '"');
   }
 
+  /* The art as the Content-Security-Policy allows it (D-INST-8, D-SEC-57): the policy refuses a
+     <style> element and a style= attribute in markup, so each scene's <style> text becomes rules
+     in the scene sheet (<link id="k-scene-sheet">, CSSOM, once per distinct text), and each
+     style= becomes data-k-style, which k-head.js applies as the art is inserted. */
+  var added = {};
+  function sceneSheet() {
+    if (typeof document === 'undefined') return null;  // no page (the smoke test in node)
+    var link = document.getElementById('k-scene-sheet');
+    try { return link && link.sheet; } catch (e) { return null; }
+  }
+  function topLevelRules(css) {
+    var out = [], depth = 0, start = 0;
+    for (var i = 0; i < css.length; i++) {
+      var c = css.charAt(i);
+      if (c === '{') depth++;
+      else if (c === '}') { depth--; if (depth === 0) { out.push(css.slice(start, i + 1).trim()); start = i + 1; } }
+    }
+    return out.filter(Boolean);
+  }
+  function addRules(css) {
+    if (added[css]) return;
+    var sheet = sceneSheet();
+    if (!sheet) return;  // not loaded yet: the art still draws, still (no animation rules)
+    added[css] = true;
+    topLevelRules(css).forEach(function (rule) {
+      try { sheet.insertRule(rule, sheet.cssRules.length); } catch (e) { /* one bad rule only */ }
+    });
+  }
+  function cspSafe(markup) {
+    return markup
+      .replace(/<style>([\s\S]*?)<\/style>/g, function (_, css) { addRules(css); return ''; })
+      .replace(/ style="/g, ' data-k-style="');
+  }
+
   function find(list, id) {
     for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
     return null;
@@ -49,7 +83,7 @@
     var html = '';
     if (scene) html += SVG_OPEN.replace('%CLS%', 'k-scene__scene') + uniq(draw(scene)) + '</svg>';
     if (touch) html += SVG_OPEN.replace('%CLS%', 'k-scene__touch') + uniq(draw(touch)) + '</svg>';
-    if (html) el.insertAdjacentHTML('afterbegin', html);
+    if (html) el.insertAdjacentHTML('afterbegin', cspSafe(html));
     el.setAttribute('data-rendered', key);
     return el;
   }

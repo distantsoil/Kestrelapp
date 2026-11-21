@@ -1,104 +1,137 @@
-// Options: API host/port, shared secret, boards, badge style. Stored in chrome.storage.local.
-const $ = (id) => document.getElementById(id);
-const KEYS = ["host", "port", "secret", "badgeStyle", "boards"];
+// Kestrel Capture settings page (issue #186, SPEC-INTERFACES 5.4). Connection, On this browser,
+// About. It talks only to Kestrel on this computer: the host is always 127.0.0.1 (D-EXT-740);
+// only the port can be set, for a Kestrel that is not on its usual ports.
 
-async function load() {
-  const c = await chrome.storage.local.get(KEYS);
-  if (c.host) $("host").value = c.host;
-  // Same legacy migration the background worker applies: every build before port discovery saved
-  // 8765 from the old options default, and treating that as a deliberate pin would suppress
-  // discovery. Persist the mapping so the field stops showing a port that is not really pinned,
-  // and so this page and the worker never disagree about what is configured.
-  if (c.port === 8765) {
-    await chrome.storage.local.set({ port: 0 });
-  } else if (c.port) {
-    $("port").value = c.port;
+(function () {
+  "use strict";
+
+  const Api = self.KestrelApi;
+  const $ = (id) => document.getElementById(id);
+  let found = null;
+
+  function say(id, text, tone) {
+    const el = $(id);
+    el.className = tone ? `confirm ${tone}` : "muted";
+    el.textContent = text;
   }
-  if (c.secret) $("secret").value = c.secret;
-  if (c.badgeStyle) $("badgeStyle").value = c.badgeStyle;
-  if (c.boards) $("boards").value = c.boards;
-}
 
-async function save() {
-  const host = $("host").value.trim() || "127.0.0.1";
-  // A non-loopback (LAN) host is not in the manifest's required host_permissions, so request it as
-  // an optional permission; without the grant the background fetch would be blocked. Loopback needs
-  // no grant. The extension still only ever talks to this one configured host.
-  if (host !== "127.0.0.1" && host !== "localhost") {
-    const granted = await chrome.permissions.request({ origins: [`http://${host}/*`] });
-    if (!granted) {
-      $("status").textContent = "Permission for the LAN host was not granted; not saved.";
+  function showSection(name) {
+    const sec = ["connection", "browser", "about"].includes(name) ? name : "connection";
+    for (const s of document.querySelectorAll(".sec")) s.classList.toggle("on", s.id === sec);
+    for (const a of document.querySelectorAll(".side a")) a.classList.toggle("on", a.dataset.sec === sec);
+  }
+  window.addEventListener("hashchange", () => showSection(location.hash.slice(1)));
+
+  async function refreshConnection() {
+    const { secret, port } = await Api.settings();
+    $("key").value = secret ? "••••••••••••••••" : "";
+    $("port").value = port ? String(port) : "";
+    found = await Api.resolve({ force: true });
+    const pill = $("conn-pill");
+    if (!found) {
+      pill.className = "pillbig";
+      pill.textContent = "Kestrel isn't running on this computer";
+      $("conn-to").textContent = "Not connected";
+      return null;
+    }
+    $("found-line").textContent = `Found automatically on 127.0.0.1, port ${found.port}. Set a port only if Kestrel is not on its usual ports.`;
+    const r = await Api.call("/api/extension/config");
+    if (r.ok) {
+      pill.className = "pillbig good";
+      pill.textContent = `Connected to Kestrel ${found.version}`;
+      $("conn-to").textContent = `Kestrel ${found.version} on 127.0.0.1:${found.port}`;
+      return r.body;
+    }
+    pill.className = "pillbig";
+    pill.textContent = r.status === 403 ? "Kestrel didn't accept the key" : "Not connected";
+    $("conn-to").textContent = "Not connected";
+    return null;
+  }
+
+  function showFeatures(cfg) {
+    const feats = (cfg && cfg.features) || {};
+    for (const box of document.querySelectorAll("[data-feature]")) {
+      box.checked = feats[box.dataset.feature] !== false;
+      box.disabled = !cfg;
+    }
+  }
+
+  async function showHidden() {
+    const r = await chrome.storage.local.get(["hiddenSites"]);
+    const list = Array.isArray(r.hiddenSites) ? r.hiddenSites : [];
+    const ul = $("hidden-sites");
+    ul.replaceChildren();
+    if (!list.length) {
+      const li = document.createElement("li");
+      li.className = "muted";
+      li.textContent = "None. Use Hide badges on this site in the popup's menu.";
+      ul.append(li);
       return;
     }
-  }
-  await chrome.storage.local.set({
-    host,
-    // 0 means "auto-detect": the background worker probes the port ladder. Only a port the operator
-    // typed on purpose is stored, and that one then overrides discovery.
-    port: parseInt($("port").value, 10) || 0,
-    secret: $("secret").value,
-    badgeStyle: $("badgeStyle").value,
-    boards: $("boards").value,
-  });
-  $("status").textContent = "Saved.";
-  setTimeout(() => ($("status").textContent = ""), 1500);
-}
-
-// Must stay in step with PORT_LADDER in background.js and kestrel/web/serve.py.
-const PORT_LADDER = [8765, 8766, 8767, 8768, 8769, 8770, 8771, 8772, 8773, 8774];
-
-// Once a server has positively identified itself as Kestrel, the secret can safely be exercised.
-// Test connection is the operator's only way to find out the secret is wrong before every capture
-// starts failing, so identifying the app but not checking the credential would be a half-test.
-// The secret is required on every extension request, not only over the LAN: Kestrel refuses an
-// extension-origin request without it (403), so any other installed extension cannot drive it.
-async function checkSecret(host, port) {
-  const secret = $("secret").value;
-  if (!secret) return "No shared secret set; captures will be refused. Generate one under Settings > LAN in Kestrel.";
-  try {
-    const r = await fetch(`http://${host}:${port}/api/opportunities/lookup`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Kestrel-Key": secret },
-      body: JSON.stringify({ urls: [] }),
-      signal: AbortSignal.timeout(1500),
-    });
-    if (r.ok) return "Shared secret accepted.";
-    return r.status === 401 || r.status === 403
-      ? "Shared secret REJECTED; captures will fail."
-      : `Shared secret check inconclusive (HTTP ${r.status}).`;
-  } catch (e) {
-    return "Shared secret could not be checked.";
-  }
-}
-
-async function test() {
-  const host = $("host").value.trim() || "127.0.0.1";
-  const typed = parseInt($("port").value, 10) || 0;
-  // The shared secret is NOT sent while probing: /health needs no auth, and a rung may be some
-  // other local server we have not identified yet. Same rule as the background worker.
-  // Blank port means auto-detect, so test what the background worker would actually do.
-  const candidates = typed ? [typed] : PORT_LADDER;
-  for (const p of candidates) {
-    try {
-      const r = await fetch(`http://${host}:${p}/health`, {
-        signal: AbortSignal.timeout(1500),
+    for (const host of list) {
+      const li = document.createElement("li");
+      const name = document.createElement("span");
+      name.textContent = host;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "Show again";
+      btn.addEventListener("click", async () => {
+        const now = (await chrome.storage.local.get(["hiddenSites"])).hiddenSites || [];
+        await chrome.storage.local.set({ hiddenSites: now.filter((x) => x !== host) });
+        showHidden();
       });
-      if (!r.ok) continue;
-      const j = await r.json();
-      if (j && j.service === "kestrel") {
-        $("status").textContent =
-          `Connected to Kestrel ${j.version || ""} on port ${p}. ` + (await checkSecret(host, p));
-        return;
-      }
-    } catch (e) {
-      // This rung is not listening, or is not Kestrel. Try the next one.
+      li.append(name, btn);
+      ul.append(li);
     }
   }
-  $("status").textContent = typed
-    ? `Nothing answering as Kestrel on port ${typed}.`
-    : "No Kestrel found on its usual ports. Is it running?";
-}
 
-$("save").addEventListener("click", save);
-$("test").addEventListener("click", test);
-load();
+  for (const box of document.querySelectorAll("[data-feature]")) {
+    box.addEventListener("change", async () => {
+      const r = await Api.call("/api/extension/features", { method: "PUT", body: { [box.dataset.feature]: box.checked } });
+      if (r.ok) say("sw-msg", "Saved.", "good");
+      else {
+        box.checked = !box.checked;
+        say("sw-msg", "Kestrel couldn't save that. Is it running?");
+      }
+    });
+  }
+
+  $("key-change").addEventListener("click", () => {
+    $("key-edit").classList.remove("hidden");
+    $("key-new").focus();
+  });
+  $("key-cancel").addEventListener("click", () => $("key-edit").classList.add("hidden"));
+  $("key-save").addEventListener("click", async () => {
+    const secret = $("key-new").value.trim();
+    const r = await Api.call("/api/extension/config", { secret, force: true });
+    if (!r.ok) {
+      return say("key-msg", r.status === 403
+        ? "Kestrel didn't accept that key. Copy it again from Settings, Browser extension."
+        : "Open Kestrel on this computer, then try again.");
+    }
+    await chrome.storage.local.set({ secret });
+    $("key-new").value = "";
+    $("key-edit").classList.add("hidden");
+    say("key-msg", "Saved.", "good");
+    showFeatures(await refreshConnection());
+  });
+  $("port-save").addEventListener("click", async () => {
+    const raw = $("port").value.trim();
+    const port = raw ? Number(raw) : 0;
+    if (raw && !(Number.isInteger(port) && port > 0 && port < 65536)) {
+      return say("port-msg", "A port is a number from 1 to 65535, or empty for automatic.");
+    }
+    await chrome.storage.local.set({ port, host: "127.0.0.1" });
+    await Api.forget();
+    say("port-msg", "Saved.", "good");
+    showFeatures(await refreshConnection());
+  });
+  $("help").addEventListener("click", () => {
+    if (found) chrome.tabs.create({ url: `${found.base}/help` });
+  });
+
+  $("ver").textContent = chrome.runtime.getManifest().version;
+  showSection(location.hash.slice(1));
+  showHidden();
+  refreshConnection().then(showFeatures);
+})();

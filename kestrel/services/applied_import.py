@@ -711,7 +711,7 @@ def _external_id(r: ImportRow) -> str:
     key = f"{r.company}|{r.title}|{r.date}"
     if r.same_slot_other_source:  # a second application on the same day: its own role
         key += f"|{(r.source or '').strip().lower()}|2"
-    h = hashlib.sha1(key.encode()).hexdigest()[:16]
+    h = hashlib.sha1(key.encode()).hexdigest()[:16]  # noqa: S324  content id, not a security hash
     return f"import:{h}"
 
 

@@ -56,10 +56,7 @@
     if (THEMES.indexOf(value) < 0) return;
     lsSet('kestrel-theme', value);
     // The desktop window keeps it too, so its next launch paints the right ground first.
-    var pv = root.pywebview;
-    if (pv && pv.api && typeof pv.api.window_set_theme === 'function') {
-      try { pv.api.window_set_theme(value); } catch (e) { /* not the desktop window */ }
-    }
+    if (frameApi) call('window_set_theme', [value]);  // the desktop window only (frameInit)
     var h = doc.documentElement;
     if (value === 'auto') h.removeAttribute('data-theme'); else h.setAttribute('data-theme', value);
   }
@@ -159,6 +156,60 @@
     arm();
     return { el: node, dismiss: dismiss };
   }
+  /* An answer whose sender left the page (#239, D-UI-870). htmx dispatches a response's
+     HX-Trigger events (k-toast with its Undo, pl-gone, pipelineRefresh) on the element that sent
+     the request. When a list refresh replaced that element while the request was in flight, the
+     element is detached, the events never bubble to the document, and the answer is lost although
+     the server already acted. So each request's sender is watched for its own beforeOnLoad (the
+     moment just before htmx reads HX-Trigger): only when the sender is detached by then are the
+     same events dispatched on the body, with the details htmx would have given them. A sender
+     still on the page is left to htmx alone, so nothing is ever delivered twice. Only the events
+     htmx itself sent to the sender are dispatched again (D-UI-871): once an event's detail names a
+     `target`, htmx sends that event and every later one in the header to that live target, which
+     already reaches the document, so those are left alone. */
+  // The events of an HX-Trigger header that htmx 2.0.4 dispatches on the sender itself, in its
+  // order. Its handleTriggerHeader starts on the sender and, at the first detail that names a
+  // `target`, moves to that target for that event and every later one, so those are not listed.
+  function senderEvents(raw) {
+    var out = [];
+    if (!raw) return out;
+    if (raw.charAt(0) === '{') {
+      var parsed;
+      try { parsed = JSON.parse(raw); } catch (err) { return out; }
+      var keys = Object.keys(parsed);
+      for (var i = 0; i < keys.length; i++) {
+        var v = parsed[keys[i]];
+        var obj = v && typeof v === 'object' && !Array.isArray(v);
+        if (obj && v.target !== undefined) break;
+        out.push({ name: keys[i], detail: obj ? v : { value: v } });
+      }
+      return out;
+    }
+    raw.split(',').forEach(function (name) {
+      name = name.trim();
+      if (name) out.push({ name: name, detail: {} });
+    });
+    return out;
+  }
+  function redeliverWhenDetached(e) {
+    var d = e.detail || {};
+    var sender = d.elt, xhr = d.xhr;
+    if (!sender || !xhr || e.target !== sender || !sender.addEventListener) return;
+    function onLoad(ev) {
+      if (ev.target !== sender || !ev.detail || ev.detail.xhr !== xhr) return;
+      sender.removeEventListener('htmx:beforeOnLoad', onLoad);
+      if (sender.isConnected || !root.htmx) return;
+      senderEvents(xhr.getResponseHeader('HX-Trigger')).forEach(function (t) {
+        root.htmx.trigger(doc.body, t.name, t.detail);
+      });
+    }
+    sender.addEventListener('htmx:beforeOnLoad', onLoad);
+    // A request that ends with no answer (aborted, a network error) takes its watcher with it.
+    xhr.addEventListener('loadend', function () {
+      sender.removeEventListener('htmx:beforeOnLoad', onLoad);
+    });
+  }
+
   function dismissToasts() {
     var r = doc.getElementById('k-toasts');
     if (r) Array.prototype.slice.call(r.querySelectorAll('.k-toast')).forEach(function (t) { t.parentNode.removeChild(t); });
@@ -708,9 +759,13 @@
   }
 
   /* ------------------------------------------------- the frameless desktop window (D-UI-88)
-     The desktop shell exposes a small JS API on the window (window.pywebview.api, see
-     kestrel/desktop/frame.py). Without it (a browser tab, `kestrel serve`) nothing here runs and
-     the controls stay hidden. With it: the controls appear at the top of the sidebar (Windows and
+     The page reaches the desktop shell's WindowApi (kestrel/desktop/frame.py) over HTTP:
+     POST /api/window/call/<name> for a control, and a long poll of /api/window/events for what
+     the shell tells the page (maximized or not, the closing screen, the update dialog). Not
+     pywebview's js_api or evaluate_js: both build code from strings in the page, which the
+     app's policy refuses on WKWebView (D-SEC-61). Only inside the desktop window (pywebview's
+     window.pywebview object is there; a browser tab, `kestrel serve`, never has it) does
+     anything here run; elsewhere the controls stay hidden. With it: the controls appear at the top of the sidebar (Windows and
      Linux; on macOS the real traffic lights sit there), the empty top of the sidebar and of the
      page's top row drag the window, a double click there toggles maximize, and the edge
      handles resize. Close asks the shell first: to the tray, or a real quit with the closing
@@ -756,9 +811,47 @@
     }
   }
   function call(name, args) {
-    if (!frameApi || typeof frameApi[name] !== 'function') return Promise.resolve(null);
-    try { return Promise.resolve(frameApi[name].apply(frameApi, args || [])); }
-    catch (e) { return Promise.resolve(null); }
+    if (!frameApi || !root.fetch) return Promise.resolve(null);
+    return root.fetch('/api/window/call/' + name, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ args: args || [] })
+    }).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { return j ? j.value : null; })
+      .catch(function () { return null; });
+  }
+  // What the shell tells this page (kestrel/desktop/channel.py APP_EVENTS), from now on: a page
+  // that loads late never replays an old state or a closing screen. Stops on a 404 (no shell).
+  var windowSeq = -1, windowPolling = false;
+  var WINDOW_EVENTS = {
+    state: function (v) { frameState(!!v); },
+    closing: function () { closingScreen(); },
+    open_update: function () {
+      if (root.htmx) root.htmx.ajax('GET', '/updates/details', { target: '#update-modal', swap: 'innerHTML' });
+    }
+  };
+  function pollWindow(misses) {
+    if (!root.fetch) return;
+    windowPolling = true;
+    root.fetch('/api/window/events?after=' + windowSeq, { cache: 'no-store' })
+      .then(function (r) {
+        if (r.status === 404) { windowPolling = false; return null; }
+        if (!r.ok) throw new Error('status ' + r.status);
+        return r.json();
+      })
+      .then(function (j) {
+        if (!j) return;
+        (j.events || []).forEach(function (ev) {
+          if (Object.prototype.hasOwnProperty.call(WINDOW_EVENTS, ev[0])) {
+            WINDOW_EVENTS[ev[0]].apply(null, Array.isArray(ev[1]) ? ev[1] : []);
+          }
+        });
+        if (typeof j.seq === 'number') windowSeq = j.seq;
+        pollWindow(0);
+      })
+      .catch(function () {
+        var n = (misses || 0) + 1;
+        setTimeout(function () { pollWindow(n); }, Math.min(5000, 200 * n));
+      });
   }
   function wireFrame(api, info) {
     frameApi = api;
@@ -809,25 +902,28 @@
       if (mq.addEventListener) mq.addEventListener('change', later);
     }
   }
-  // pywebview fills window.pywebview.api asynchronously and fires pywebviewready once; the page's
-  // script can run either side of that. So look now, on the event, and briefly poll, and wire
-  // once. The controls exist only when the desktop shell rendered them (#k-wctl).
+  // pywebview puts its window.pywebview object on the page after the page loads, and fires
+  // pywebviewready once; the page's script can run either side of that. So look now, on the
+  // event, and briefly poll, and wire once. Only its presence is used, never its API. The
+  // controls exist only when the desktop shell rendered them (#k-wctl).
   var frameWired = false, framePolls = 0;
   function frameInit() {
     if (frameWired || !doc || !doc.getElementById('k-wctl')) return;
-    var pv = root.pywebview;
-    if (!pv || !pv.api || typeof pv.api.window_info !== 'function') {
+    if (!root.pywebview) {
       if (framePolls++ < 100) setTimeout(frameInit, 100);  // up to 10 s
       return;
     }
     frameWired = true;
-    frameApi = pv.api;
+    frameApi = true;
     call('window_info').then(function (info) {
       if (info) {
-        wireFrame(pv.api, info);
+        // Tell the shell the channel works under the page's policy (bridge_check.py).
+        call('bridge_check');
+        wireFrame(true, info);
         var t = lsGet('kestrel-theme');
-        if (t && typeof pv.api.window_set_theme === 'function') call('window_set_theme', [t]);
-      } else { frameWired = false; }
+        if (t) call('window_set_theme', [t]);
+        if (!windowPolling) pollWindow(0);
+      } else { frameWired = false; frameApi = null; }
     });
   }
   function dragTarget(t) {
@@ -924,6 +1020,9 @@
       var at = next.attributes[i];
       if (cur.getAttribute(at.name) !== at.value) cur.setAttribute(at.name, at.value);
     }
+    // A parsed copy carries data-k-style but not the style k-head.js applied from it, so the
+    // loop above dropped that style: apply it again, in the same frame (D-SEC-57).
+    if (cur.hasAttribute('data-k-style') && root.KStyle) root.KStyle.apply(cur);
     var a = Array.prototype.slice.call(cur.childNodes), b = Array.prototype.slice.call(next.childNodes);
     for (i = 0; i < b.length; i++) {
       if (i < a.length) morphNode(a[i], b[i]); else cur.appendChild(b[i].cloneNode(true));
@@ -958,7 +1057,12 @@
       if (!trig || !/\bevery\b/.test(trig) || !d.xhr || !d.target) return;
       var norm = function (h) { return String(h || '').replace(/\s+/g, ' ').trim(); };
       var swap = (el.getAttribute('hx-swap') || 'innerHTML').split(' ')[0];
-      var now = swap === 'outerHTML' ? d.target.outerHTML : d.target.innerHTML;
+      // Compared as the server sent it: the style k-head.js applied from a data-k-style value is
+      // a style attribute in the live markup but not in the answer (D-SEC-57), so a copy drops it.
+      var copy = d.target.cloneNode(true);
+      [copy].concat(Array.prototype.slice.call(copy.querySelectorAll('[data-k-style]')))
+        .forEach(function (n) { if (n.hasAttribute('data-k-style')) n.removeAttribute('style'); });
+      var now = swap === 'outerHTML' ? copy.outerHTML : copy.innerHTML;
       if (norm(now) === norm(d.xhr.responseText)) d.shouldSwap = false;
     });
     // A request a person made that fails (an error answer, or no answer) always says so: htmx
@@ -2382,6 +2486,7 @@
       var d = e.detail || {};
       toast(d.message || d.value || '', d);
     });
+    doc.addEventListener('htmx:beforeRequest', redeliverWhenDetached);
     // A setting changed while a run is working: the run keeps what it was confirmed on, with a
     // Stop button (the toast's action button posts to /runs/stop).
     doc.addEventListener('k-run-notice', function (e) {

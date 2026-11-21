@@ -201,6 +201,10 @@ async def pane_ctx(pane: str, request: Request) -> dict:
         from kestrel.web.pages.settings_privacy import access_ctx, conf_ctx, mcp_ctx
 
         return {**await conf_ctx(), **await access_ctx(request), **await mcp_ctx()}
+    if pane == "extension":
+        from kestrel.web.pages.settings_extension import extension_ctx
+
+        return await extension_ctx(request)
     if pane == "data":
         from kestrel.web.pages.settings_data import data_pane_ctx
 
@@ -240,7 +244,7 @@ async def settings_page(request: Request):
                                       date.today()),
         "band_animate": ui.scene_animate,
     }
-    for pane in ("computer", "privacy", "data", "preferences"):
+    for pane in ("computer", "privacy", "extension", "data", "preferences"):
         ctx.update(await pane_ctx(pane, request))
     # Both A and the section partials read `pane` and these names; the page sets `pane` itself.
     return templates().TemplateResponse(request, "settings.html", ctx)
@@ -807,6 +811,8 @@ async def _mode_cards(session: AsyncSession, settings: Settings) -> dict:
 
 
 async def _hosted_ctx(session: AsyncSession, settings: Settings, **extra) -> dict:
+    from kestrel.services import setup_state
+
     status = prov.provider_status(settings)
     backends = {
         name: {
@@ -861,6 +867,9 @@ async def _hosted_ctx(session: AsyncSession, settings: Settings, **extra) -> dic
             "openrouter",
         ),
         "hosted_mode": settings.llm.hosted_mode,
+        # Read only: what the one send gate says now, so the page shows a held send as held
+        # (D-PRIV-798, #224 r2). Decides nothing; every send still asks the gate itself.
+        "send_held": setup_state.online_send_held(settings),
         "tier_rows": tier_rows,
         "tier_sends": _tier_sends(settings),
         "local_hints": local_hints,
@@ -895,6 +904,19 @@ async def hosted_status(request: Request):
         settings = await load_settings_with_db(s)
         ctx = await _hosted_ctx(s, settings, return_to=back)
     return _hosted_partial(request, ctx)
+
+
+@router.get("/settings/hosted/review", response_class=HTMLResponse)
+async def hosted_review(request: Request):
+    """Settings > Hosted as a whole page (D-PRIV-795): the way back to the updated disclosure from
+    the provider-reads notice and the Models page. Whether online is paused is read from the
+    stored rows here, never from the request. Makes no provider request."""
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+        ctx = await _hosted_ctx(s, settings)
+    ctx["reaccept"] = config_mod.disclosure_reaccept_needed(settings)
+    ctx["title"] = "Online models"
+    return templates().TemplateResponse(request, "settings_hosted.html", ctx)
 
 
 @router.post("/settings/hosted/key", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
@@ -1013,6 +1035,13 @@ def _scrub(text: str, value: str) -> str:
     return text[:300]
 
 
+# Test while online is paused by the changed disclosure: nothing is sent (D-REL-41, round 2).
+TEST_PAUSED = (
+    "Nothing was sent. Online models are paused because the disclosure changed since you accepted "
+    "it; accept the updated disclosure first, then test the key."
+)
+
+
 @router.post("/settings/hosted/test", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def hosted_test(request: Request):
     """Verify the key with the provider and fetch the models that can honor a JSON schema. This is
@@ -1027,6 +1056,19 @@ async def hosted_test(request: Request):
         if backend is None:
             ctx = await _hosted_ctx(
                 s, settings, message="Unknown hosted backend.", ok=False, return_to=back
+            )
+            return _hosted_partial(request, ctx)
+        # The pause holds for a button press too (D-REL-41, round 2): the key check and the model
+        # list go to the provider only while online models are in use, the same rule as the
+        # balance and model-list reads. Otherwise say why and send nothing.
+        from kestrel.services import setup_state
+
+        why_not = await setup_state.online_not_in_use_now(s, settings)
+        if why_not is not None:
+            paused = config_mod.disclosure_reaccept_needed(settings)
+            ctx = await _hosted_ctx(
+                s, settings, ok=False, return_to=back, review_link=paused,
+                message=(TEST_PAUSED if paused else f"Nothing was sent. {why_not}"),
             )
             return _hosted_partial(request, ctx)
         key = await prov.verify_key(backend)
@@ -1163,6 +1205,10 @@ async def hosted_mode_toggle(request: Request):
         elif action == "off":
             await _set(s, "llm.hosted_mode.enabled", False)
             await _set(s, "llm.mode", "local")
+            # The off switch is the person's run choice too (Settings > This computer reads it).
+            from kestrel.services.setup_state import CHOICE_KEY
+
+            await _set(s, CHOICE_KEY, "local")
             msg = (
                 "Hosted mode is off and Kestrel is back on local models. Your hosted "
                 "assignments are kept; they are not used until you turn it back on."
@@ -1587,7 +1633,7 @@ async def hosted_save_model(request: Request):
     return _hosted_partial(request, ctx)
 
 
-# ------------------------------------------------------------------ Settings > LAN > MCP server
+# ------------------------------------------------- Settings > Privacy and access > MCP server
 MCP_ENABLED_KEY = "mcp.enabled"
 
 

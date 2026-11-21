@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urljoin
 
+import soupsieve
 import structlog
 from bs4 import BeautifulSoup
 
@@ -88,6 +89,24 @@ class PePortfolioSignalSource:
                 raise SourceConfigError(
                     "pe_portfolio 'firms' entries must be objects with non-empty 'name' and 'url'"
                 )
+        selector = config.get("css_selector")
+        if selector is not None:
+            # Checked here, where the Sources page and the runner already stop on a bad config,
+            # so a selector the parser refuses never raises mid-fetch. soupsieve 4 refuses some
+            # selectors 2.x accepted, for example a combinator inside :has() (D-SEC-63).
+            if not isinstance(selector, str) or not selector.strip():
+                raise SourceConfigError("pe_portfolio 'css_selector' must be a non-empty string")
+            # soupsieve refuses a selector three ways: SelectorSyntaxError (bad or disallowed
+            # syntax), NotImplementedError (a pseudo-element such as ::before) and ValueError
+            # (too many selectors). All three are a config problem, never a crash.
+            try:
+                soupsieve.compile(selector)
+            except (soupsieve.SelectorSyntaxError, NotImplementedError, ValueError) as exc:
+                raise SourceConfigError(
+                    "pe_portfolio 'css_selector' is not a selector Kestrel can use. Use a plain "
+                    "selector such as 'div.portfolio a'; a combinator inside :has() and "
+                    "pseudo-elements such as ::before are not supported."
+                ) from exc
 
     async def fetch(self, config: dict, client: Any) -> list[RawSignal]:
         self.validate_config(config)

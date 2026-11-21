@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from kestrel import paths
 from kestrel.web import desktop_bridge
+from tests.page_source import inline_static
 
 pytestmark = pytest.mark.usefixtures("_isolate_data_home")
 
@@ -34,7 +35,7 @@ def desktop():
 def _source(name: str) -> str:
     from pathlib import Path
 
-    return (Path(paths.web_templates_dir()) / name).read_text(encoding="utf-8")
+    return inline_static((Path(paths.web_templates_dir()) / name).read_text(encoding="utf-8"))
 
 
 def test_no_dialog_without_a_shell():
@@ -48,7 +49,9 @@ def test_quit_button_opens_the_themed_dialog_not_a_native_confirm(desktop):
     button = re.search(r'<button[^>]*data-testid="quit-app"[^>]*>', body, re.S)
     assert button, "quit button missing"
     assert "confirm(" not in button.group(0)
-    assert "kestrelQuit.open(this)" in button.group(0)
+    # The click opens it through k-head.js's delegated handler (no inline handler, D-INST-8).
+    assert "data-k-quit-open" in button.group(0) and "onclick" not in button.group(0)
+    assert "window.kestrelQuit.open(q)" in _source("base.html")
     assert 'aria-haspopup="dialog"' in button.group(0)
     assert '<dialog id="quit-confirm"' in body
     assert 'aria-labelledby="quit-confirm-title"' in body

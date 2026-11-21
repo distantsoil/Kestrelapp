@@ -1,10 +1,23 @@
 {# The cards of a quick round (issue 171). Only what the posting says: organization, title,
-   place, work style, pay and age. Kestrel's score is not read for this partial and is not in
+   place, work style, pay and age, and a short excerpt of the posting's own description with a
+   More control for the whole text (D-UI-331). Kestrel's score is not read for this partial and is not in
    it, so it cannot anchor the answer. #}
+{% from "partials/posting_macros.html" import posting_body %}
 {% for c in cards %}
 <article class="qr-card" data-opp="{{ c.opp_id }}" data-testid="qr-card" tabindex="-1" aria-label="{{ c.title }}{% if c.org %}, {{ c.org }}{% endif %}">
   <div class="qr-org"><span class="cal-mono cal-mono--{{ c.mono }}" aria-hidden="true">{{ c.initials }}</span><span class="qr-org__name">{{ c.org or 'Organization not listed' }}</span></div>
   <h2 class="qr-title" title="{{ c.title }}">{{ c.title }}</h2>
+  {% if c.excerpt %}
+  <div class="qr-desc" data-testid="qr-desc">
+    <p class="qr-desc__excerpt" data-testid="qr-excerpt">{{ c.excerpt }}</p>
+    {% if c.has_more %}
+    <div class="qr-desc__full kp-text" id="qr-full-{{ c.opp_id }}" data-testid="qr-full" role="region" aria-label="Full posting" tabindex="-1" hidden>{{ posting_body(c.posting) }}{% if c.posting_cut %}<p class="kp-p">…</p>{% endif %}</div>
+    <button type="button" class="qr-more" data-testid="qr-more-text" aria-expanded="false" aria-controls="qr-full-{{ c.opp_id }}"><span class="qr-more__t">More</span></button>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="qr-nodesc" data-testid="qr-nodesc">No description was saved for this role.{% if c.url %} Open the posting to read it.{% else %} Answer from the details below.{% endif %}{% if c.blocked_note %} <span data-testid="qr-blocked-note">{{ c.blocked_note }}</span>{% endif %}</p>
+  {% endif %}
   <ul class="qr-facts">
     <li><svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg><span title="{{ c.where }}">{{ c.where }}</span></li>
     <li><svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 11l9-7 9 7v9H3z"/></svg><span>{{ c.style }}</span></li>

@@ -2,8 +2,13 @@
    the cost and the credit left. Nothing is sent until Send and try. static: a click outside does
    not close it, because it asks before something goes online. #}
 {% from "ui/macros.html" import modal %}
-{% set send_attrs = {'data-testid': 'rt-send', 'hx-post': '/quarantine/' ~ quarantine_id ~ '/model', 'hx-include': '#rt-online-model, #rt-online-approval', 'hx-target': '#' ~ dom_id, 'hx-swap': 'outerHTML'} %}
-{% call modal('rt-online-dialog', 'Try ' ~ role ~ ' with an online model?', [
+{% from "partials/correction_lines.html" import correction_lines as listed_lines %}
+{# A group's dialog (group_count) names the count and posts to the group (model_url, target). #}
+{% set model_url = model_url or '/quarantine/' ~ quarantine_id ~ '/model' %}
+{% set target = target or '#' ~ dom_id %}
+{% set what = (group_count ~ ' roles') if group_count else role %}
+{% set send_attrs = {'data-testid': 'rt-send', 'hx-post': model_url, 'hx-include': '#rt-online-model, #rt-online-approval, #rt-online-group, #rt-online-corrections', 'hx-target': target, 'hx-swap': 'outerHTML'} %}
+{% call modal('rt-online-dialog', 'Try ' ~ what ~ ' with an online model?', [
   {'label': 'Cancel', 'close': True},
   {'label': 'Send and try', 'kind': 'primary', 'close': True, 'attrs': send_attrs, 'vals': {'confirmed': '1'}}
 ], static=True) %}
@@ -12,8 +17,9 @@
     <b>What will be sent</b>
     <ul>
       <li data-testid="rt-sends">{{ sends }}.</li>
-      {% if pages %}<li>The posting for {{ role }} is about {{ pages }} {{ 'page' if pages == 1 else 'pages' }} of that.</li>{% endif %}
+      {% if pages %}<li>{% if group_count %}The postings for these {{ group_count }} roles are about {{ pages }} {{ 'page' if pages == 1 else 'pages' }} in all.{% else %}The posting for {{ role }} is about {{ pages }} {{ 'page' if pages == 1 else 'pages' }} of that.{% endif %}</li>{% endif %}
     </ul>
+    {{ listed_lines(correction_lines, 'rt') }}
     {% if employer == 'hidden' %}
     <p data-testid="rt-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
     {% elif employer == 'held' %}
@@ -22,14 +28,16 @@
     <p><b>Not sent:</b> your name, contact details and your resume file.</p>
     <p>{{ provider }} handles what it receives under its own terms, and Kestrel cannot recall it.{% if any_free %} Free models may use what they receive for training.{% endif %}</p>
   </div>
+  {% if group_ids %}<input type="hidden" id="rt-online-group" name="group_ids" value="{{ group_ids }}">{% endif %}
   {% if models %}
   <input type="hidden" id="rt-online-approval" name="online_approval" value='{{ approval_json }}'>
+  <input type="hidden" id="rt-online-corrections" name="corrections_digest" value="{{ corrections_digest }}">
   <label class="rt-field">Model
     <select id="rt-online-model" name="model" class="k-select" data-testid="rt-online-model">
       {% for m in models %}<option value="hosted:{{ m.id }}">{{ m.name }}, {{ m.cost }}</option>{% endfor %}
     </select>
   </label>
-  <p><b>Cost:</b> shown beside each model, an estimate for this one role.{% if credit %} {{ credit }}.{% endif %}</p>
+  <p><b>Cost:</b> shown beside each model, an estimate for {% if group_count %}the longest of these postings, so no more than about {{ group_count }} times that here{% else %}this one role{% endif %}.{% if credit %} {{ credit }}.{% endif %}</p>
   {% else %}
   <p class="rt-menu-note">{{ note or 'No online model can score a role right now. Check Models.' }}</p>
   {% endif %}

@@ -19,6 +19,7 @@
         <li data-testid="deeper-sends">{{ sends[:1]|upper }}{{ sends[1:] }}.</li>
         {% if correction_lines %}<li data-testid="deeper-corrections">Your own corrections, because you stated them:
           <ul data-testid="deeper-correction-lines">{% for line in correction_lines %}<li>{{ line[2:] if line.startswith('- ') else line }}</li>{% endfor %}</ul></li>{% endif %}
+        {% if digest_lines %}<li data-testid="deeper-digest">{{ digest_lines }} line{{ 's' if digest_lines != 1 }} from your current resume (skills and bullets), as you wrote them.</li>{% endif %}
         <li>About {{ preview.prompt_tokens_estimate|comma }} tokens in; {{ cost }}.</li>
       </ul>
       {% if preview.confidential %}<p data-testid="deeper-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>

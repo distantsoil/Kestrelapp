@@ -137,7 +137,7 @@ def test_missing_installer_refused():
             signing="",
             assets_base=BASE,
             download_page="x",
-            published_at="t",
+            published_at="2026-09-20T00:00:00Z",
         )
 
 

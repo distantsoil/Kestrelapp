@@ -10,7 +10,17 @@ from typing import Any
 
 import structlog
 
-from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError
+from kestrel.ingest.base import (
+    AdapterError,
+    Notice,
+    NoticeKind,
+    PostingBatch,
+    RawPosting,
+    SourceConfigError,
+    hedged_refusal,
+    rate_limited,
+    server_error,
+)
 
 log = structlog.get_logger()
 
@@ -31,6 +41,7 @@ _JOBSPY_PARAMS = {
     "enforce_annual_salary",
     "offset",
     "verbose",
+    "fetch_description",
 }
 
 _INTERVAL = {
@@ -53,6 +64,10 @@ LINKEDIN_REFUSED = (
     "LinkedIn posting by hand with Add a role I found elsewhere."
 )
 
+
+# A board's name in a stored sentence (a partial run's reason).
+_BOARD_NAMES = {"glassdoor": "Glassdoor", "indeed": "Indeed", "zip_recruiter": "ZipRecruiter",
+                "google": "Google", "bayt": "Bayt", "naukri": "Naukri", "bdjobs": "BDJobs"}
 
 # Kestrel's default boards. JobSpy reads a missing or None `site_name` as EVERY site it knows,
 # LinkedIn included, so Kestrel never passes one: a source with no boards named asks these
@@ -79,6 +94,27 @@ def _sites(config: dict) -> list[str]:
     """The explicit board list sent to JobSpy: never empty, never None, never LinkedIn."""
     sites = [s for s in _raw_sites(config) if s != "linkedin"]
     return sites or list(DEFAULT_SITES)
+
+
+# Boards whose JobSpy scraper reads the pay period AND the currency from structured fields of the
+# board's own reply (checked in python-jobspy 1.3.0: indeed/util.get_compensation, unitOfWork and
+# currencyCode; glassdoor _parse_salary, payPeriod and payCurrency; ziprecruiter _parse_salary,
+# interval and currency). Every other board has them filled in: Bayt reads a bare "$" as USD and
+# sets every period to monthly, Naukri sets every salary to yearly and a stipend to INR, BDJobs
+# sets monthly BDT. Those stay assumed unless proven and added here (round 6, D-SCORE-31).
+_STATED_PAY_BOARDS = frozenset({"indeed", "glassdoor", "zip_recruiter"})
+def _board_notice(board: str, exc: BaseException) -> Notice:
+    """The notice for one board's failed call, from the shared sentences. The kind comes from
+    the HTTP status on the exception's response, never its text: a 429 is rate limiting, a 5xx
+    a problem on the site's side. JobSpy mostly logs a bad status and returns no rows, and what
+    it raises carries no status, so anything else is the hedged sentence (rate limiting or
+    unavailable) under the general kind, because its cause is not proven."""
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status == 429:
+        return rate_limited(board)
+    if isinstance(status, int) and 500 <= status < 600:
+        return server_error(board)
+    return Notice(NoticeKind.STOPPED, hedged_refusal(board))
 
 
 class JobSpyAdapter:
@@ -109,22 +145,62 @@ class JobSpyAdapter:
         params.setdefault("description_format", "markdown")
         return params
 
+    def _calls(self, config: dict) -> list[dict]:
+        """The scrape_jobs calls for one search. JobSpy 1.3.0 fetches a Glassdoor posting's body
+        only when asked (its default is off), so without the flag every Glassdoor role arrived
+        with no description and could not be scored (issue 196). The flag applies to every
+        board in a call, and other boards that honor it (ZipRecruiter, Bayt, BDJobs, HelloWork,
+        Naukri) fetch one more page per posting, so Glassdoor gets a call of its own with the
+        flag and the other boards keep theirs without it (D-WORKER-10 amended). Glassdoor sends
+        the bodies in one request per 25 postings. A source that sets the flag itself is sent
+        as one call, exactly as it asks."""
+        params = self._params(config)
+        sites = params["site_name"]
+        if "fetch_description" in params or "glassdoor" not in sites:
+            return [params]
+        glassdoor = {**params, "site_name": ["glassdoor"], "fetch_description": True}
+        others = [s for s in sites if s != "glassdoor"]
+        return ([{**params, "site_name": others}] if others else []) + [glassdoor]
+
     async def fetch(self, config: dict, client: Any = None) -> list[RawPosting]:
         self.validate_config(config)
         try:
             import jobspy
-
-            df = await asyncio.to_thread(jobspy.scrape_jobs, **self._params(config))
-        except Exception as exc:  # a board's 429 etc. -> partial run, never abort the batch
-            # The class name left the stored sentence (D-SEC-4); keep it for the log.
+        except ImportError as exc:  # a broken install fails the source cleanly, as on the base
             log.warning("jobspy_scrape_failed", error_type=type(exc).__name__, error=str(exc))
             raise AdapterError(f"jobspy scrape failed: {exc}") from exc
-        if df is None or len(df) == 0:
-            return []
-        return [self._row_to_posting(row) for _, row in df.iterrows()]
+
+        out = PostingBatch()
+        failed: list[tuple[list[str], Exception]] = []
+        calls = self._calls(config)
+        for params in calls:
+            try:
+                df = await asyncio.to_thread(jobspy.scrape_jobs, **params)
+            except Exception as exc:  # noqa: BLE001 - JobSpy raises any type per board
+                # A board's 429 etc.: logged with context and recovered as a partial run (or the
+                # source's AdapterError when every call failed), never an aborted batch.
+                # The class name left the stored sentence (D-SEC-4); keep it for the log.
+                log.warning("jobspy_scrape_failed", error_type=type(exc).__name__,
+                            error=str(exc), sites=params["site_name"])
+                failed.append((params["site_name"], exc))
+                continue
+            if df is not None and len(df):
+                out.extend(self._row_to_posting(row) for _, row in df.iterrows())
+        if failed and len(failed) == len(calls):
+            exc = failed[0][1]
+            raise AdapterError(f"jobspy scrape failed: {exc}") from exc
+        for sites, exc in failed:
+            # One board's call failed and the other's did not: what was found is kept and the
+            # run is partial (a notice), never a failed source.
+            out.add(_board_notice(" and ".join(_BOARD_NAMES.get(s, s) for s in sites), exc))
+        return out
 
     def _row_to_posting(self, row: Any) -> RawPosting:
         interval = _INTERVAL.get(str(_v(row, "interval") or "").lower())
+        # The period and currency count as stated only when JobSpy read them from a structured
+        # field of a board on the allowlist below, never from the description (round 6).
+        assumed = (str(_v(row, "salary_source") or "").lower() == "description"
+                   or str(_v(row, "site") or "").lower() not in _STATED_PAY_BOARDS)
         desc = _v(row, "description")
         fmt = _v(row, "description_format")
         return RawPosting(
@@ -142,6 +218,11 @@ class JobSpyAdapter:
             comp_max=_num(_v(row, "max_amount")),
             comp_currency=_str(_v(row, "currency")),
             comp_interval=interval,
+            # Pay JobSpy read from the description has its period guessed from the size of the
+            # figure and USD filled in (jobspy util.extract_salary), and boards off the allowlist
+            # fill them in too: neither was stated (#208).
+            comp_interval_assumed=assumed,
+            comp_currency_assumed=assumed,
             # Glassdoor's pay is its p10-p90 estimate (jobspy glassdoor _parse_salary), never
             # a figure the employer posted.
             comp_is_estimate=str(_v(row, "site") or "").lower() == "glassdoor",

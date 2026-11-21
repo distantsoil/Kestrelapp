@@ -35,7 +35,7 @@
         {% for d in dims %}<div class="rl-nr" data-key="{{ d.key }}" data-v="{{ d.score }}">
           <span class="rl-nr__n">{{ d.name }}</span>
           <button type="button" data-n="-1" aria-label="Lower {{ d.name }}">−</button>
-          <i><u style="--w: {{ d.pct }}%"></u></i>
+          <i><u data-k-style="--w: {{ d.pct }}%"></u></i>
           <button type="button" data-n="1" aria-label="Raise {{ d.name }}">+</button>
           <b>{{ '%.1f'|format(d.score) }}</b>
           <input type="hidden" name="dim_{{ d.key }}" value="{{ d.score }}">

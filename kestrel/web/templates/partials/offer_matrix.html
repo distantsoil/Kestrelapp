@@ -4,7 +4,7 @@
    moving a weight swaps only the summary. #}
 <div id="of-matrix" class="of-matrix">
 {%- if matrix %}
-  <div class="of-cmp" data-testid="of-matrix" style="--of-cols: {{ matrix.columns|length }}" role="table" aria-label="Comparison matrix">
+  <div class="of-cmp" data-testid="of-matrix" data-k-style="--of-cols: {{ matrix.columns|length }}" role="table" aria-label="Comparison matrix">
     <div class="of-cmp__hd" role="columnheader">What matters to you<span>Drag to set how much each one counts</span></div>
     {%- for col in matrix.columns %}
     <div class="of-cmp__hd" role="columnheader"><span class="of-mono of-mono--{{ col.mono_i }}" aria-hidden="true">{{ col.mono }}</span><span class="of-cmp__who"><b title="{{ col.org }}">{{ col.org }}</b><span title="{{ col.title }}">{{ col.title }}</span></span></div>
@@ -26,7 +26,7 @@
         </span>
         {%- else %}
         <b>{{ cell.text }}</b>
-        {%- if cell.n is not none %}<span class="of-cbar"><i style="width:{{ cell.pct }}%"></i></span>{% endif %}
+        {%- if cell.n is not none %}<span class="of-cbar"><i data-k-style="width:{{ cell.pct }}%"></i></span>{% endif %}
         {%- endif %}
       </div>
       {%- endfor %}

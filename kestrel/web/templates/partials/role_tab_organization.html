@@ -6,7 +6,7 @@
 {% from "partials/role_icons.html" import ric %}
 <div id="rl-orgtab" class="rl-orgtab" data-tab="organization"
   {% if research_jobs|selectattr('live')|list %}hx-get="/opportunities/{{ opp.id }}/role/research"
-  hx-trigger="every 2s [!document.querySelector('dialog:modal')]" hx-swap="outerHTML"{% endif %}>
+  hx-trigger="every 2s" data-k-when="poll=no-modal" hx-swap="outerHTML"{% endif %}>
   <section class="k-card rl-card" data-testid="org-card">
   {% if org %}
     <header class="k-sec-head"><span class="k-badge">{{ ric('building') }}</span><div class="k-grow"><h3>{{ org.name }}</h3></div>

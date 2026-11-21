@@ -65,6 +65,8 @@
 .td-scan { display: inline-flex; align-items: center; gap: 8px; }
 .td-scanform { margin: 0; display: inline; }
 .td-scanmsg { color: var(--muted); font-size: var(--fs-sm); }
+/* The registry code under a refused Run now: its own line, never clipped. */
+.td-scancode { display: block; font-weight: 700; font-size: 12.5px; }
 .score-again-slot:empty { display: none; }
 /* The Run now dialog is the shared partial (partials/run_now_dialog.html), which names the
    legacy .btn and .score-again-* classes; this page no longer loads the legacy sheet, so the
@@ -127,6 +129,15 @@
   .td-strip { grid-template-columns: minmax(0, 1fr); }
   .td-seg + .td-seg { border-left: 0; border-top: 1px solid var(--line); }
 }
+/* A narrow window: a Run now message (and its code) wraps onto its own row under the run line
+   instead of running past the strip's clipped edge. Only a segment that shows a message. */
+@container kwin (max-width: 700px) {
+  .td-seg:has(.td-scanmsg) { flex-wrap: wrap; }
+  .td-seg:has(.td-scanmsg) .td-seg__act { flex: 1 1 100%; min-width: 0; flex-wrap: wrap;
+    padding-bottom: 12px; }
+  .td-seg__act .td-scan:has(.td-scanmsg) { flex-wrap: wrap; min-width: 0; }
+  .td-scanmsg { flex: 1 1 100%; min-width: 0; }
+}
 
 /* ------------------------------------------------------------------------ section heads */
 .td-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -156,7 +167,9 @@
 .td-viewport.is-dragging .td-track { transition: none; }
 .td-viewport.is-dragging .td-card { pointer-events: none; }
 .td-track { display: flex; gap: 16px;
-  transition: transform .5s var(--ease), height .45s var(--ease); }
+  /* Height eases in and out: with the front-loaded --ease, one long frame (slow layout) at the
+     start of an arrival covered most of the move and read as a jump. */
+  transition: transform .5s var(--ease), height .45s cubic-bezier(.45, 0, .55, 1); }
 .td-card {
   flex: none; width: 270px; display: flex; flex-direction: column; gap: 6px; min-width: 0;
   background: linear-gradient(180deg, var(--paper) 60%, var(--tint-info));

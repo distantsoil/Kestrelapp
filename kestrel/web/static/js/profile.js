@@ -320,8 +320,16 @@
     var body = doc.getElementById('pf-enlarge-body');
     if (!body) return;
     // The same markup, so the same frame at the same layout width: only the scale differs.
-    body.innerHTML = src ? src.outerHTML
-      : '<p class="pf-hint">Nothing to show yet. Refresh the preview first.</p>';
+    // A copy of the nodes, not of their HTML: the sizes fitAll set are style attributes now,
+    // which the policy refuses in parsed markup (D-INST-8); fitAll sets them again below.
+    if (src) {
+      var copy = src.cloneNode(true);
+      [copy].concat(Array.prototype.slice.call(copy.querySelectorAll('[style]')))
+        .forEach(function (el) { el.removeAttribute('style'); });
+      body.replaceChildren(copy);
+    } else {
+      body.innerHTML = '<p class="pf-hint">Nothing to show yet. Refresh the preview first.</p>';
+    }
     if (root.KUI && root.KUI.openModal) root.KUI.openModal('#pf-enlarge');
     root.requestAnimationFrame(function () { fitAll(body); });
     // The modal is still easing in: fit again once it has its final width.

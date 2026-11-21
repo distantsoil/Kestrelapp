@@ -6,6 +6,7 @@ The live-browser checks are in tests/test_quick_round_browser.py."""
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import re
 
@@ -530,3 +531,237 @@ def test_quick_cards_hide_the_current_employer_in_confidential_mode():
             assert r.status_code == 200 and "qr-card" in r.text
             assert "Acme Freight" not in r.text
             assert "Current Employer" in r.text
+
+
+# ------------------------------------------------------------ the posting text
+_LONG = (
+    "## About us\n\nNorthwind Parts is a family company that makes brackets and has done so for a "
+    "long time, serving builders across the region with steady care and honest prices.\n\n"
+    "## The role\n\nYou will own the weekly stock report and explain it to the floor leads. You "
+    "will also chase late deliveries. Third sentence about tools. Fourth sentence about travel.\n\n"
+    "- Two years of spreadsheet work\n- Comfort with a phone\n\n"
+    "Northwind Parts is an equal opportunity employer."
+)
+
+
+def _describe(text: str | None, *, i: int = 0) -> list[int]:
+    ids = qf.seed(6)
+
+    async def put(s):
+        from kestrel.db.models import Opportunity
+
+        for oid in ids:
+            (await s.get(Opportunity, oid)).description_md = text
+        await s.commit()
+
+    qf.run(put)
+    return ids
+
+
+def _first_card(path: str = "/calibrate/quick") -> str:
+    with qf.client() as c:
+        body = c.get(path).text
+    return re.findall(r'<article class="qr-card".*?</article>', body, re.S)[0]
+
+
+def test_a_card_shows_the_start_of_the_postings_own_description_and_a_more_control():
+    _describe(_LONG)
+    card = _first_card()
+    excerpt = re.search(r'data-testid="qr-excerpt">(.*?)</p>', card, re.S).group(1)
+    # The leading company paragraph is skipped; the first sentences of the role are shown.
+    assert excerpt.startswith("You will own the weekly stock report")
+    assert "family company" not in excerpt and len(excerpt) <= 281
+    # It stops at a full stop, so no ellipsis follows it (a cut mid-sentence still gets one:
+    # test_an_ellipsis_follows_only_a_cut_that_is_not_a_finished_sentence), and More is offered.
+    assert excerpt.endswith("tools.") and "…" not in excerpt
+    assert 'data-testid="qr-more-text"' in card
+    # The button's name is its visible word (WCAG 2.5.3); aria-expanded and aria-controls carry
+    # the state, and the text region is named "Full posting".
+    more = re.search(r'<button[^>]*data-testid="qr-more-text"[^>]*>', card).group(0)
+    assert "aria-label" not in more and 'aria-expanded="false"' in more and "aria-controls" in more
+    assert 'role="region" aria-label="Full posting"' in card
+    assert "Show more of the posting" not in card and "Show less of the posting" not in card
+    # The whole text keeps every paragraph, the company one and the bullets included; a bullet
+    # is a list item of the shared posting renderer (issue #210), not a mark in the text.
+    full = re.search(r'data-testid="qr-full".*?</div>', card, re.S).group(0)
+    for needle in ("family company", "Fourth sentence about travel.",
+                   '<li class="kp-li">Comfort with a phone</li>', "equal opportunity employer"):
+        assert needle in full
+    assert "<script" not in card and "##" not in card
+
+
+@pytest.mark.parametrize("stored", [None, "", "  \n ", "<br/><p>&nbsp;</p>"])
+def test_text_with_no_words_gives_no_excerpt_and_no_error(stored):
+    from kestrel.web.quick_text import posting_text
+
+    text = posting_text(stored)
+    assert (text.excerpt, text.paragraphs, text.has_more) == ("", [], False)
+
+
+def test_a_card_with_no_description_has_no_excerpt_and_says_so_without_an_error():
+    stored = "<br/><p>&nbsp;</p>"  # the round offers a role only when something is stored
+    _describe(stored)
+    card = _first_card()
+    assert "qr-excerpt" not in card and "qr-more" not in card
+    assert "Show more of the posting" not in card
+    note = re.search(r'data-testid="qr-nodesc">(.*?)</p>', card, re.S).group(1)
+    assert note.startswith("No description was saved for this role.")
+    assert "Open the posting" in note  # the seeded roles carry a link
+
+
+def test_the_no_description_note_leaves_out_the_pointer_when_there_is_no_link():
+    ids = _describe("<br/><p>&nbsp;</p>")
+
+    async def unlink(s):
+        from kestrel.db.models import Opportunity
+
+        for oid in ids:
+            (await s.get(Opportunity, oid)).url = None
+        await s.commit()
+
+    qf.run(unlink)
+    card = _first_card()
+    note = re.search(r'data-testid="qr-nodesc">(.*?)</p>', card, re.S).group(1)
+    assert note == "No description was saved for this role. Answer from the details below."
+
+
+@pytest.mark.parametrize("stored", ["<br/><p>&nbsp;</p>", _LONG])
+@pytest.mark.parametrize(("word", "score"), [("yes", 4.0), ("no", 2.0)])
+def test_an_answer_saves_the_same_label_with_or_without_an_excerpt(stored, word, score):
+    """Invariant: the Quick answers (value, source, storage) do not depend on the card text."""
+    _describe(stored)
+    with qf.client() as c:
+        ids = [int(i) for i in re.findall(r'data-opp="(\d+)"', c.get("/calibrate/quick").text)]
+        r = c.post("/calibrate/quick/answer", data={"opportunity_id": ids[0], "answer": word})
+        assert r.status_code == 200 and r.json()["saved"] is True
+    (row,) = qf.labels()
+    assert row.opportunity_id == ids[0]
+    assert (row.source, row.score) == ("quick", score)
+
+
+def test_a_short_description_is_shown_whole_with_no_more_control():
+    _describe("Own weekly reporting for the floor.")
+    card = _first_card()
+    assert "Own weekly reporting for the floor." in card and "qr-more" not in card
+
+
+def test_markup_in_a_description_is_stripped_and_never_rendered_as_markup():
+    _describe("<p>Run the <b>dock</b> schedule.</p><script>alert(1)</script> See "
+              "[the guide](https://example.test/g) &amp; **ask**.")
+    card = html.unescape(_first_card())
+    assert "<script" not in card and "alert(1)" in card  # the text stays, as text
+    assert "Run the dock schedule." in card and "See the guide & ask." in card
+    assert "https://example.test/g" not in card.replace('href="https://example.test/', "")
+
+
+def test_a_leading_company_paragraph_is_kept_when_that_would_leave_almost_nothing():
+    _describe("## About us\n\nWe make brackets.\n\n## The role\n\nLift boxes.")
+    card = _first_card()
+    shown = re.search(r'data-testid="qr-excerpt">(.*?)</p>', card, re.S).group(1)
+    assert "We make brackets." in shown
+
+
+def test_the_card_text_is_only_the_employers_description_never_a_score_or_model_text():
+    """Invariant: Kestrel's score, verdict, reasons and model text never reach a card."""
+    _describe("Own the weekly stock report for the floor.")
+
+    async def tag(s):
+        from sqlalchemy import update
+
+        marker = {k: {"score": 4, "why": "MODELNOTE-ZZ"} for k in qf.DIMS}
+        await s.execute(update(Evaluation).values(dimensions=marker, verdict="strong_match"))
+        await s.commit()
+
+    qf.run(tag)
+    card = _first_card()
+    for word in ("MODELNOTE-ZZ", "strong_match"):
+        assert word not in card
+    assert not re.search(r"\d\.\d", re.sub(r"<[^>]+>", " ", card))
+
+
+def test_the_description_hides_the_current_employer_in_confidential_mode():
+    """Invariant: Confidential mode redacts the current employer in the excerpt and full text."""
+    from kestrel.db.engine import forget_engine
+    from kestrel.db.models import DocMaster, DocSection, Setting
+
+    text = ("Acme Freight is hiring. Acme Freight needs an analyst to own weekly reporting and "
+            "explain it clearly to the floor. Work with the Acme Freight team in Columbus daily. "
+            "More detail follows here about the work and the tools used each week.")
+    _describe(text)
+
+    async def on(s):
+        s.add(Setting(key="confidential_mode", value=True))
+        m = DocMaster(track="employment", doc_kind="resume", name="Resume")
+        s.add(m)
+        await s.flush()
+        s.add(DocSection(doc_master_id=m.id, section_kind="role", title="Experience",
+                         org_label="Acme Freight", org_label_redacted="Current Employer",
+                         end_date="present"))
+        await s.commit()
+
+    qf.run(on)
+    forget_engine()
+    with qf.client() as c:
+        for path in ("/calibrate/quick", "/calibrate/quick/cards"):
+            body = c.get(path).text
+            assert "qr-excerpt" in body and "qr-full" in body
+            assert "Acme Freight" not in body
+            assert "Current Employer is hiring" in body
+
+
+def test_building_the_description_text_makes_no_model_or_network_call(closed_world):
+    _describe(_LONG)
+    with qf.client() as c:
+        assert c.get("/calibrate/quick").status_code == 200
+        assert c.get("/calibrate/quick/cards").status_code == 200
+    assert closed_world == []
+
+
+# ------------------------------------------------------- the text stays the posting's own
+def test_a_name_split_by_markup_is_still_redacted_in_confidential_mode():
+    from kestrel.web.quick_text import posting_text
+
+    raw = "<p>Join <b>Acme</b> Freight today.</p><p>Also Acme&nbsp;Freight again.</p>"
+    plain = posting_text(raw, lambda t: t.replace("Acme Freight", "Current Employer"))
+    assert "Acme" not in " ".join(plain.paragraphs) and "Acme" not in plain.excerpt
+    assert "Current Employer" in plain.excerpt
+
+
+def test_characters_in_the_posting_that_only_look_like_markup_are_kept():
+    from kestrel.web.quick_text import posting_text
+
+    text = posting_text("Pay <$100k and >5 yrs of work. Use __init__ in the tests.")
+    assert "<$100k and >5 yrs" in text.paragraphs[0] and "__init__" in text.paragraphs[0]
+
+
+def test_a_very_long_posting_is_cut_without_adding_words_of_ours():
+    from kestrel.web.quick_text import FULL_CHARS, posting_text
+
+    para = "Word " * 400
+    text = posting_text("\n\n".join([para.strip()] * 40))
+    assert sum(len(p) for p in text.paragraphs) <= FULL_CHARS + 1
+    assert all(p.startswith("Word") for p in text.paragraphs)
+
+
+def test_an_excerpt_the_card_could_shorten_keeps_its_more_control():
+    from kestrel.web.quick_text import posting_text
+
+    one = posting_text("You will run the dock schedule and talk to carriers each day. " * 3)
+    assert one.has_more is True
+    assert posting_text("Own weekly reporting for the floor.").has_more is False
+
+
+# ------------------------------------------------------------- the excerpt audit (issue 197)
+def test_an_ellipsis_follows_only_a_cut_that_is_not_a_finished_sentence():
+    from kestrel.web.quick_text import EXCERPT_CHARS, posting_text
+
+    finished = posting_text("<p>First sentence here. Second one follows! Is a third? A fourth.</p>")
+    assert finished.excerpt == "First sentence here. Second one follows! Is a third?"
+    assert "…" not in finished.excerpt
+    one_long = "word " * 120  # one sentence past the cap, cut mid-sentence
+    cut = posting_text(f"<p>{one_long}</p>").excerpt
+    assert cut.endswith("…") and len(cut) <= EXCERPT_CHARS + 1
+    from kestrel.web.quick_text import _ended
+
+    assert _ended('He said "go home."') == 'He said "go home."'  # a closing quote is not a cut
+    assert _ended("It ended with a comma,") == "It ended with a comma,…"

@@ -31,7 +31,16 @@ import httpx
 import structlog
 
 from kestrel.ingest import source_secrets
-from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError
+from kestrel.ingest.base import (
+    AdapterError,
+    Notice,
+    PostingBatch,
+    Problem,
+    RawPosting,
+    SourceConfigError,
+    daily_limit_problem,
+    server_error_problem,
+)
 from kestrel.pipeline.profile import load_profile
 
 log = structlog.get_logger(__name__)
@@ -48,16 +57,10 @@ _NEEDS_SUBSCRIPTION = (
 )
 
 
-class LinkBatch(list):
-    """The employer links one fetch collected, as RawPostings holding only `url`, plus
-    `partial_error`: why the fetch stopped early after collecting some (a 429). Still a plain list
-    to every consumer; the runner reads `partial_error` (duck-typed) to record a partial run."""
-
-    partial_error: str | None
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.partial_error = None
+class LinkBatch(PostingBatch):
+    """The employer links one fetch collected, as RawPostings holding only `url`, plus the
+    notices of a fetch that stopped early after collecting some (a 429). Still a plain list to
+    every consumer; the runner reads the notices to record a partial run."""
 
 
 MAX_PROFILE_FILTERS = 10
@@ -110,20 +113,24 @@ def _problem(status: int, body: Any) -> str:
     if status == 401:
         said = str(body.get("message", "")).lower() if isinstance(body, dict) else ""
         if "missing" in said:
-            return "RemoteRocketship did not receive an API key. Check the key name in the source"
-        return (
+            return Problem(
+                "RemoteRocketship did not receive an API key. Check the key name in the source",
+                status,
+            )
+        return Problem(
             "RemoteRocketship did not accept the API key. "
-            "Save it again in the RemoteRocketship card on Sources"
+            "Save it again in the RemoteRocketship card on Sources",
+            status,
         )
     if status == 403:
-        return _NEEDS_SUBSCRIPTION
+        return Problem(_NEEDS_SUBSCRIPTION, status)
     if status == 429:
-        return "RemoteRocketship's daily limit was reached; try again after 00:00 UTC"
+        return daily_limit_problem("RemoteRocketship", status)
     if status in (400, 413):
-        return "RemoteRocketship rejected the request. Check the source's filters"
+        return Problem("RemoteRocketship rejected the request. Check the source's filters", status)
     if status >= 500:
-        return "RemoteRocketship had a problem on their side; try again later"
-    return f"RemoteRocketship answered with an unexpected status ({status})"
+        return server_error_problem("RemoteRocketship", status)
+    return Problem(f"RemoteRocketship answered with an unexpected status ({status})", status)
 
 
 def _int_in(config: dict, name: str, default: int, low: int, high: int) -> int:
@@ -186,7 +193,7 @@ class RemoteRocketshipAdapter:
                     # The daily quota is spent: what is already collected (maybe nothing) is
                     # returned and the run is partial. Not a failure of the source, so it never
                     # counts toward the auto-disable streak.
-                    batch.partial_error = message
+                    batch.add(Notice.of(message))
                     return batch
                 raise AdapterError(message)
             try:

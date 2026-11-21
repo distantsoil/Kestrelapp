@@ -22,6 +22,7 @@ from kestrel.ingest.board_lookup import candidate_slugs
 from kestrel.ingest.generated import rebuild_generated_sources
 from kestrel.services import profile_edit as pe
 from kestrel.services import tracks
+from tests.page_source import as_written
 
 FIXTURES = Path(__file__).parent / "fixtures"
 EMP_TERMS = {"target_titles": ["VP of IT", "Head of IT"], "anti_titles": ["Intern"]}
@@ -448,7 +449,7 @@ def test_consulting_off_hides_it_everywhere_and_on_brings_it_back():
         r = c.post("/settings/tracks", data={"tracks": ["employment"]})
         assert r.status_code == 200 and r.headers.get("HX-Refresh") == "true"
         assert 'class="track-switch"' not in c.get("/help").text
-        assert "kestrel-track" in c.get("/help").text
+        assert "kestrel-track" in as_written(c.get("/help").text)
         assert 'data-tab="consulting"' not in c.get("/profile").text
         assert 'data-track="consulting"' not in c.get("/profile?tab=about").text
         assert c.get("/profile?tab=consulting").status_code == 200  # the route still works

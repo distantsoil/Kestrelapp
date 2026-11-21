@@ -21,6 +21,7 @@ from kestrel.db.engine import forget_engine, make_async_engine, reset_engine
 from kestrel.db.models import Evaluation, Opportunity, Org, Quarantine, Setting, Source
 from kestrel.web import deps
 from kestrel.web.deps import BOTTOM_BAR, NAV_GROUPS, nav_active, nav_title
+from tests.page_source import inline_static
 
 _PAGES = ["/", "/opportunities", "/pursuits", "/documents", "/profile", "/stories", "/offers",
           "/sources", "/settings", "/analytics", "/bench", "/about", "/calibrate", "/runs",
@@ -104,7 +105,7 @@ def test_base_renders_the_three_groups_and_every_link():
     # The track switch shows only when both tracks are on (a new install is employment-only).
     asyncio.run(_seed([Setting(key="tracks.enabled", value=["employment", "consulting"])]))
     with _client() as c:
-        html = c.get("/").text
+        html = inline_static(c.get("/").text)
     for group in ("Work", "Learn", "Setup"):
         assert f'<div class="k-sec">{group}</div>' in html
     links = _links(html)
@@ -154,7 +155,7 @@ def test_base_renders_the_three_groups_and_every_link():
 def test_active_class_follows_the_current_path(path, active_href):
     asyncio.run(_seed())
     with _client() as c:
-        html = c.get(path).text
+        html = inline_static(c.get(path).text)
     links = _links(html)
     active = [href for href, cls in links.items() if "active" in cls.split()]
     assert active == [active_href], (path, active)
@@ -176,7 +177,7 @@ def test_html_carries_the_stored_scheme_for_the_first_paint():
         assert 'data-scheme="indigo"' in c.get("/").text
     asyncio.run(_seed([Setting(key="ui.scheme", value="teal")]))
     with _client() as c:
-        html = c.get("/").text
+        html = inline_static(c.get("/").text)
     assert html.startswith('<!doctype html>\n<html lang="en" data-scheme="teal"')
     # The pre-paint script is in <head>, ahead of the stylesheet, so there is no flash.
     head = html.split("</head>")[0]
@@ -497,8 +498,8 @@ def test_sidebar_collapse_toggle_is_present_and_accessible():
         # The toggle button is present with an accessible name
         assert 'data-testid="side-toggle"' in r.text
         assert 'aria-label="Collapse sidebar"' in r.text
-        # The inline script persists the choice to localStorage
-        assert "kestrel-side-collapsed" in r.text
+        # The sidebar script (k-side.js) persists the choice to localStorage
+        assert "kestrel-side-collapsed" in inline_static(r.text)
     # The CSS rules for the collapsed state exist
     css = _COMPONENTS_CSS.read_text(encoding="utf-8")
     assert ".k-win.is-side-collapsed" in css

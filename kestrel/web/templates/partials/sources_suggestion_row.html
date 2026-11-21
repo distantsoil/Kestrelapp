@@ -3,7 +3,7 @@
    No board Kestrel can read (Add by hand, Check again), Could not check (Try again). #}
 {% import "partials/sources_macros.html" as sm %}
 <div class="src-sugc{{ ' is-settling' if settle else '' }}" data-testid="suggestion" data-state="{{ sg.state }}" data-name="{{ sg.name }}"
-  {%- if sg.state == 'checking' %} hx-get="/sources/suggestions/row?name={{ sg.name | urlencode }}" hx-trigger="every 3s [srcPollOk()]" hx-swap="outerHTML"{% endif %}>
+  {%- if sg.state == 'checking' %} hx-get="/sources/suggestions/row?name={{ sg.name | urlencode }}" hx-trigger="every 3s" data-k-when="poll=sources-poll-ok" hx-swap="outerHTML"{% endif %}>
   {{ sm.mono(sg.name) }}
   <div class="src-rn">
     <div class="src-nm">{{ sg.name }}</div>

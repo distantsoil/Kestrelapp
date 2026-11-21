@@ -69,7 +69,10 @@
       var file = doc.getElementById('ob-imp-file');
       if (file) file.value = '';
       var name = $('[data-ob-filename]');
-      if (name) name.textContent = name.getAttribute('data-default') || name.textContent;
+      if (name) {
+        name.textContent = name.getAttribute('data-default') || name.textContent;
+        name.classList.remove('is-chosen');
+      }
     }
   }
   function onFoldSwitch(e) {
@@ -203,6 +206,7 @@
         if (!name.getAttribute('data-default')) name.setAttribute('data-default', name.textContent);
         var f = e.target.files && e.target.files[0];
         name.textContent = f ? f.name : name.getAttribute('data-default');
+        name.classList.toggle('is-chosen', !!f);  // bold and larger once a file is chosen
       }
     }
   }

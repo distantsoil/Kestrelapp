@@ -28,6 +28,7 @@ from kestrel.learning.ledger import delete_label
 from kestrel.pipeline.scoring import verdict_from_score
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import calibrate_view as cv
+from kestrel.web import posting_format
 from kestrel.web.db_retry import write_with_retry
 from kestrel.web.deps import active_track, sessionmaker, templates
 from kestrel.web.errors import plain_error
@@ -183,13 +184,26 @@ async def _card_ctx(s: AsyncSession, track: str, item, *, revisit) -> dict:
     opp, ev = item.opportunity, item.evaluation
     dims = cv.dim_scores(ev, track)
     text = (opp.description_md or "").strip()
+    # Confidential mode hides the current employer here as on every other surface (#210 review):
+    # the organization, the title, the place and the posting text.
+    from kestrel.web.redact import confidential_once, redact_name, redact_text
+
+    enabled, mapping = await confidential_once(s)
+
+    def hide(t: str) -> str:
+        return redact_text(t, mapping, enabled=enabled) or ""
+
+    # The flyout shows the formatted text and the card a plain excerpt, both built from our own
+    # nodes, so no raw mark and no markup from the posting reaches the page (issue #210).
+    plain = posting_format.plain_text(text, hide)
     return {
         "opp": opp,
-        "org": await cv.org_name(s, opp),
+        "org": redact_name(await cv.org_name(s, opp), mapping, enabled=enabled),
+        "title": hide(opp.title or "") or "(untitled)",
         "pay": cv.pay_line(opp),
-        "place": cv.place_line(opp),
-        "text": text,
-        "excerpt": text if len(text) <= 900 else text[:900].rsplit(" ", 1)[0] + "...",
+        "place": hide(cv.place_line(opp) or ""),
+        "posting": posting_format.parse(text, hide),
+        "excerpt": plain if len(plain) <= 900 else plain[:900].rsplit(" ", 1)[0] + "...",
         "why": cv.why_asked(item) if revisit is None else "",
         "dims": dims,
         "read": cv.kestrel_read(ev, dims),
@@ -577,9 +591,19 @@ async def api_reject(cal_id: int):
 @router.post("/api/learning/train")
 async def api_train(request: Request):
     track = active_track(request)
+    from kestrel.learning import signing
+    from kestrel.web.errors import authored_error
+
     async with sessionmaker()() as s:
         settings = await load_settings_with_db(s)
-        result = await reranker_mod.train_reranker(s, track, settings)
+        try:
+            result = await reranker_mod.train_reranker(s, track, settings)
+        except signing.SigningKeyUnavailable as exc:
+            log.warning("train_signing_key_unusable")
+            said = authored_error(exc, signing.KEY_UNUSABLE_SENTENCES, signing.KEY_UNUSABLE.format(
+                problem=signing.KEY_PROBLEMS["unreadable"]))
+            return JSONResponse({"track": track, "promoted": False, "reason": said},
+                                status_code=409)
     return {
         "track": result.track,
         "n_labeled": result.n_labeled,

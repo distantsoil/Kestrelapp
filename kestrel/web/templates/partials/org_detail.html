@@ -79,11 +79,11 @@
           <div><div class="co-dl">Middle half of roles</div><b>{{ pay.middle }}</b></div>
           <div><div class="co-dl">Lowest to highest</div><b>{{ pay.spread }}</b></div>
         </div>
-        <div class="co-pt" aria-hidden="true" style="left:{{ [[pay.bar.typical, 12]|max, 88]|min }}%">Typical {{ pay.typical }}</div>
+        <div class="co-pt" aria-hidden="true" data-k-style="left:{{ [[pay.bar.typical, 12]|max, 88]|min }}%">Typical {{ pay.typical }}</div>
         <div class="co-bar" role="img" aria-label="Typical pay {{ pay.typical }}, middle half {{ pay.middle }}">
-          <i class="co-bar__w" style="left:{{ pay.bar.lo }}%;width:{{ pay.bar.spanw }}%"></i>
-          <i class="co-bar__m" style="left:{{ pay.bar.q1 }}%;width:{{ pay.bar.q3w }}%"></i>
-          <i class="co-bar__d" style="left:{{ pay.bar.typical }}%"></i>
+          <i class="co-bar__w" data-k-style="left:{{ pay.bar.lo }}%;width:{{ pay.bar.spanw }}%"></i>
+          <i class="co-bar__m" data-k-style="left:{{ pay.bar.q1 }}%;width:{{ pay.bar.q3w }}%"></i>
+          <i class="co-bar__d" data-k-style="left:{{ pay.bar.typical }}%"></i>
         </div>
         <div class="co-sc"><span>{{ pay.scale[0] }}</span><span>{{ pay.scale[1] }}</span></div>
         <p class="co-foot" data-testid="co-pay-basis">Based on {{ pay.n }} similar roles that list their pay. These are the company's posted ranges, not what people were offered.</p>

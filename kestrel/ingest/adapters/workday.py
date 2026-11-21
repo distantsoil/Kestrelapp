@@ -30,7 +30,15 @@ from typing import Any
 
 import httpx
 
-from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError
+from kestrel.ingest.base import (
+    AdapterError,
+    NoticeKind,
+    PostingBatch,
+    RawPosting,
+    SourceConfigError,
+    Unread,
+    failure_kind,
+)
 
 _PAGE_LIMIT = 20  # Workday hard-caps the list `limit` at 20.
 _DEFAULT_MAX_RESULTS = 200
@@ -84,13 +92,18 @@ class WorkdayAdapter:
 
         listings = await self._fetch_list(client, f"{cxs}/jobs", max_results)
 
-        postings: list[RawPosting] = []
+        postings = PostingBatch()
+        unread = Unread()  # roles whose detail could not be read, by the kind each failed with
         for item in listings:
             posting = await self._fetch_one(
                 client, base=base, cxs=cxs, site=site, item=item, company=company or tenant
             )
-            if posting is not None:
+            if isinstance(posting, NoticeKind):
+                unread.add(posting)  # only a failed detail returns a kind; the run says so
+            else:
                 postings.append(posting)
+        for notice in unread.notices("Workday", tenant):
+            postings.add(notice)
         return postings
 
     async def _fetch_list(self, client: Any, list_url: str, max_results: int) -> list[dict]:
@@ -127,7 +140,7 @@ class WorkdayAdapter:
         site: str,
         item: dict,
         company: str,
-    ) -> RawPosting | None:
+    ) -> RawPosting | NoticeKind:
         external_path = _str(item.get("externalPath")) or ""
         # The real list externalPath already begins with "/job/..."; only prepend "/job" when it
         # does not, so the detail path is never "/job/job/..." (a 404 that would skip every job).
@@ -135,8 +148,8 @@ class WorkdayAdapter:
         detail_url = f"{cxs}{detail_path}"
         try:
             detail = await client.get_json(detail_url, rate_per_sec=_RATE_PER_SEC, headers=_HEADERS)
-        except httpx.HTTPError:
-            return None  # skip just this job; the rest of the board still returns.
+        except httpx.HTTPError as exc:
+            return failure_kind(exc)  # skip just this job and say why; the rest still returns
 
         info = detail.get("jobPostingInfo") if isinstance(detail, dict) else None
         if not isinstance(info, dict):

@@ -799,7 +799,8 @@ async def _promote_hosted(tier: str, model_id: str) -> HTMLResponse:
             # sentence is built from nothing the failure carried (D-SEC-4).
             return HTMLResponse(
                 f'<div class="mo-msg is-bad">The model list from {escape(name)} could not be '
-                "fetched. Check the key and your connection under Settings &gt; Hosted.</div>"
+                "fetched. Check the key and your connection under Settings &gt; This "
+                "computer.</div>"
             )
         result = await hm.save_overrides(s, settings, name, backend, {tier: model_id}, models)
     box = "mo-msg is-bad" if result.refused else "mo-msg is-good"

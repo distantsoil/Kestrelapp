@@ -366,9 +366,11 @@ async def undo_setting(request: Request) -> Response:
         now = io.loads(q.get("now") or "absent")
     except ValueError:
         return io.refuse(io.NO_UNDO)
+    # Undo must not reach a key its own route guards, whatever the link carries: the guard comes
+    # before the value check, so a key holder is refused the same way for any value.
+    io.refuse_remote(request, key, prev)
     if not io.plausible(key, prev):
         return io.refuse(io.NO_UNDO)
-    io.refuse_remote(request, key, prev)  # Undo must not reach a key its own route guards
     async with sessionmaker()() as s:
         if await io.read(s, key) != now:
             return io.refuse(io.NO_UNDO)

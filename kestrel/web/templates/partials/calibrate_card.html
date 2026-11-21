@@ -2,6 +2,7 @@
    operator has answered. Kestrel's score is NOT in this markup until then (it arrives from
    /calibrate/reveal), so it cannot anchor the answer. The wrapper #cal-card is the swap target. #}
 {% import "ui/macros.html" as ui %}
+{% from "partials/posting_macros.html" import posting_body %}
 <div id="cal-card" class="cal-cardwrap" data-testid="cal-card"{% if revisit %} data-change="1"{% endif %} data-since="{{ since }}" data-skip="{{ skip }}">
 {% if card %}
   {% set opp = card.opp %}
@@ -11,9 +12,9 @@
       <button type="button" class="k-link" hx-get="/calibrate/card" hx-vals='{{ {"since": since, "skip": skip}|tojson }}' hx-target="#cal-card" hx-swap="outerHTML" data-testid="cal-revisit-cancel">Cancel</button></div>
     {% endif %}
     <header class="cal-qhead">
-      <span class="cal-mono cal-mono--{{ ((card.org or '')|length) % 4 }}" aria-hidden="true">{{ ((card.org or opp.title or '?')[:1])|upper }}</span>
+      <span class="cal-mono cal-mono--{{ ((card.org or '')|length) % 4 }}" aria-hidden="true">{{ ((card.org or card.title or '?')[:1])|upper }}</span>
       <div class="cal-qtitle">
-        <h2>{{ opp.title or '(untitled)' }}</h2>
+        <h2>{{ card.title }}</h2>
         <div class="cal-sm cal-dsm">{{ card.org }}{% if card.org %} · {% endif %}{{ card.place }} · {{ card.pay }}</div>
       </div>
       {% if not revisit %}<span class="cal-sm cal-dsm cal-nowrap">{{ queue.done + 1 }} of {{ queue.total }}</span>{% endif %}
@@ -58,9 +59,9 @@
       </div>
     </form>
   </section>
-  {% call ui.flyout('cal-post-fly', opp.title or 'Full posting', eyebrow='Full posting') %}
+  {% call ui.flyout('cal-post-fly', card.title or 'Full posting', eyebrow='Full posting') %}
     <p class="cal-sm cal-dsm">{{ card.org }}{% if card.org %} · {% endif %}{{ card.place }} · {{ card.pay }}</p>
-    <div class="cal-fulltext" data-testid="cal-fulltext">{{ card.text }}</div>
+    <div class="cal-fulltext kp-text" data-testid="cal-fulltext">{{ posting_body(card.posting) }}</div>
     <p class="cal-sm cal-dsm">Shown as the employer wrote it.</p>
     {% if opp.url and opp.url.lower().startswith(('http://', 'https://')) %}<p><a class="k-btn k-btn--sm" href="{{ opp.url }}" target="_blank" rel="noopener noreferrer" data-testid="cal-original">Open original posting {{ ui.icon('arrow', 'k-ic--sm') }}</a></p>{% endif %}
   {% endcall %}

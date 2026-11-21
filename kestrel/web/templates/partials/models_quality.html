@@ -14,7 +14,7 @@
     <div><dt>Readable the first time</dt><dd>{% if quality.json_validity_rate is none %}None yet{% else %}{{ '%.0f'|format(quality.json_validity_rate * 100) }}% of {{ q_total }}{% endif %}</dd></div>
     {% if q_total %}
     <div class="mo-qbar" role="img" aria-label="Readable the first time {{ q_ok }}, set aside {{ quality.quarantine_n }}, of {{ q_total }}" data-testid="mo-quality-bar">
-      <i class="is-g" style="width: {{ '%.1f'|format(q_ok / q_total * 100) }}%"></i><i class="is-i" style="width: 0%"></i><i class="is-w" style="width: {{ '%.1f'|format(quality.quarantine_n / q_total * 100) }}%"></i></div>
+      <i class="is-g" data-k-style="width: {{ '%.1f'|format(q_ok / q_total * 100) }}%"></i><i class="is-i" data-k-style="width: 0%"></i><i class="is-w" data-k-style="width: {{ '%.1f'|format(quality.quarantine_n / q_total * 100) }}%"></i></div>
     {% endif %}
     <div data-testid="mo-quality-retried"><dt>Fixed after one retry</dt><dd class="k-muted">Not recorded</dd></div>
     <div><dt>Set aside for another try</dt><dd>{{ quality.quarantine_n }} <a class="k-link" href="/quarantine">See them</a></dd></div>

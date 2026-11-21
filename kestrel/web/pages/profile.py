@@ -199,6 +199,9 @@ async def profile(request: Request):
     }
     if tab == "documents":
         ctx.update(await documents_context(request))
+        from kestrel.web.pages.proof_points import proof_ctx  # issue #208 item 6
+
+        ctx.update(await proof_ctx(ctx["track"]))
     if tab == "about":
         ctx.update(await _confidential_ctx())
     if tab == "stories":
@@ -820,7 +823,8 @@ async def profile_save(request: Request, track: str, section: str):
     searches_updated = False
     rechecking = 0
     try:
-        values = pe.section_from_form(section, form)
+        stored = pe.load_state().tracks.get(track)  # the server's own record decides the phone
+        values = pe.section_from_form(section, form, stored)
         pe.save_section(track, section, values)
         searches_updated = await _rebuild_searches()
         rechecking = await _queue_recheck([track])

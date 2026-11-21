@@ -19,6 +19,12 @@ import pytest
 
 from kestrel import paths
 
+# Imported before any test sets sys.platform to "win32": a Windows toast imports the shell
+# module, and a first import under the patched platform would leave its IS_WINDOWS True for every
+# later test in the same worker (stress run, seed 1188979310).
+from kestrel.desktop import shell as _shell_imported_first  # noqa: F401
+from tests import channel_spy
+
 # ------------------------------------------------------------------------------- 1. data_home
 
 
@@ -1258,11 +1264,13 @@ def test_desktop_window_allows_downloads(shell, monkeypatch):
     monkeypatch.setattr("kestrel.db.migrate.run_migrations", lambda *a, **k: None)
     monkeypatch.setattr("kestrel.web.serve.wait_for_health", lambda port, timeout=30.0: True)
     monkeypatch.setitem(sys.modules, "webview", _FakeWebview)
+    said = channel_spy.spy(monkeypatch)
 
     assert shell.run_desktop() == 0
     assert _FakeWebview.settings["ALLOW_DOWNLOADS"] is True
-    assert created["frameless"] is True and created["js_api"] is not None
-    assert "window.KSplash" in created["html"] and "/*K-TOKENS*/" not in created["html"]
+    # No pywebview bridge (D-SEC-61): the loading page comes from the shell's own server.
+    assert created["frameless"] is True and "js_api" not in created and "html" not in created
+    assert created["url"].startswith("http://127.0.0.1:") and "/s/" in created["url"]
     assert created["width"] == 1440 or created["width"] >= 960
     assert any("Opening your data" in js for js in said) and any("ready" in js for js in said)
     assert loaded == ["http://127.0.0.1:8765/#k-intro"]
@@ -1333,6 +1341,7 @@ def test_a_failed_start_shows_the_problem_card_and_keeps_the_window(shell, monke
     monkeypatch.setattr("kestrel.web.serve.wait_for_health", lambda port, timeout=30.0: False)
     monkeypatch.setattr(shell, "HEALTH_WAIT_S", 0.3)
     monkeypatch.setitem(sys.modules, "webview", _FakeWebview)
+    said = channel_spy.spy(monkeypatch)
 
     assert shell.run_desktop() == 1
     fail = [js for js in said if "KSplash.fail(" in js]

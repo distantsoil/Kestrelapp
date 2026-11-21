@@ -860,11 +860,18 @@ async def _ask(client, spec, user: str, schema: dict, check, on_quarantine, book
 
 async def propose_import(
     client, markdown: str, *, on_quarantine=None, source_format: str | None = None,
-    mapping=None,
+    session=None, unmarked_confirmed: bool = False,
 ) -> ImportProposal:
     """Run P7 v2 and flag the proposal. Writes nothing. A structural failure returns an error.
     `markdown` is the converted source (kestrel.docs.convert) or the pasted text; every variant
-    is copied from it, and the verbatim check still runs against exactly that text."""
+    is copied from it, and the verbatim check still runs against exactly that text.
+
+    What hides the current employer is decided here, from the client that sends (issue #218,
+    D-PRIV-800), never handed in by the caller: `plan_hosted_send` with `session`. Without a
+    session an import that would go online is refused (D-PRIV-801). Under confidential mode with
+    no employer marked the import is refused too, unless the person confirmed sending this text
+    as written (`unmarked_confirmed`, the import's own bound confirmation, D-PRIV-1: importing a
+    first resume is how the employer gets marked)."""
     import asyncio
 
     from kestrel.llm.schemas import (
@@ -885,12 +892,21 @@ async def propose_import(
     lines = number_lines(markdown)
     if not lines:
         return fail("There is no text to import.")
+    from kestrel.pipeline._shared import HOSTED_REFUSAL, plan_hosted_send
+
+    plan = await plan_hosted_send(session, None, load_prompt("resume_outline/v1").tier,
+                                  sender=client)
+    if plan.refuse and not (plan.refuse == HOSTED_REFUSAL and unmarked_confirmed):
+        return fail(plan.refuse)
+    mapping = plan.mapping
     every = set(lines)
     # D-PRIV-1: one set of stand-in codes for this import. The line TEXT the model reads is coded
     # before any view shortens it (a cut must never leave half a name), while `lines`, which
     # every copied bullet comes from, stays the original text.
     book = mapping.codebook(lines.values()) if mapping else None
-    shown = {n: book.encode(t) for n, t in lines.items()} if book is not None else lines
+    shown: dict[int, str] = (
+        {n: book.encode(t) or "" for n, t in lines.items()} if book is not None else lines
+    )
 
     def check_outline(outline):
         outline = _extend_role_ranges(
@@ -1416,16 +1432,16 @@ async def suggest_variants(
     user = (spec.user.replace("{role_label}", role_label[:_LABEL_MAX])
             .replace("{bullet_text}", text).replace("{tags}", ", ".join(tags) or "none"))
     messages = [{"role": "system", "content": spec.system}, {"role": "user", "content": user}]
-    if session is not None:
-        from kestrel.pipeline._shared import make_quarantine_hook, run_prompt_hosted
+    from kestrel.pipeline._shared import make_quarantine_hook, run_prompt_hosted
 
-        res = await run_prompt_hosted(
-            session, client, spec, messages, quarantine_tier=4, master_id=master_id,
-            on_quarantine=on_quarantine or make_quarantine_hook(session, tier=4,
-                                                                opportunity_id=None),
-        )
-    else:
-        res = await run_prompt(client, spec, messages, on_quarantine=on_quarantine)
+    if session is not None and on_quarantine is None:
+        on_quarantine = make_quarantine_hook(session, tier=4, opportunity_id=None)
+    # Without a session a call that would go online is refused, never sent as written
+    # (D-PRIV-801); one on this computer runs as before.
+    res = await run_prompt_hosted(
+        session, client, spec, messages, quarantine_tier=4, master_id=master_id,
+        on_quarantine=on_quarantine,
+    )
     if not res.ok or res.value is None:
         return [], res.error
     out: list[VariantSuggestion] = []

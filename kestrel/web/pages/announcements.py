@@ -35,6 +35,16 @@ async def _model_upgrade_notice() -> dict | None:
     return announcements.model_upgrade_notice(gb) if gb else None
 
 
+async def _provider_reads_notice() -> dict | None:
+    """Decided from this install's stored rows and saved keys (D-PRIV-795). Reads only local
+    state: no provider is asked anything here."""
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+    return announcements.provider_reads_notice(settings)
+
+
 @router.post("/announcements/model-upgrade/download", response_class=HTMLResponse,
     dependencies=[LOCAL_ONLY])
 async def model_upgrade_download(request: Request):
@@ -59,6 +69,8 @@ async def banner(request: Request):
             row = await s.get(Setting, announcements.DISMISSED_KEY)
         dismissed = _as_ids(row.value if row else None)
         notice = announcements.pending(dismissed)
+        if notice is None and announcements.PROVIDER_READS_ID not in dismissed:
+            notice = await _provider_reads_notice()
         if notice is None and announcements.MODEL_UPGRADE_ID not in dismissed:
             notice = await _model_upgrade_notice()
     except SQLAlchemyError as exc:

@@ -1,0 +1,17 @@
+/* The phone field (#207): the input and the country selector side by side, wrapping under it on a
+   narrow window. The note fades in; the OS reduced-motion setting turns every change off. */
+.ph-field { min-width: 0; }
+.ph-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: stretch; }
+.ph-input { flex: 1 1 160px; min-width: 0; }
+.ph-country { flex: 0 1 190px; min-width: 0; max-width: 100%; }
+.ph-note {
+  margin: 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere;
+  max-height: 0; opacity: 0; overflow: hidden;
+  transition: opacity .25s var(--ease), max-height .25s var(--ease), margin-top .25s var(--ease);
+}
+.ph-note.ph-show { max-height: 4em; opacity: 1; margin-top: 6px; }
+.ph-input.ph-flash { animation: phFlash .45s var(--ease); }
+@keyframes phFlash { from { background: var(--soft); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) {
+  .ph-note, .ph-input.ph-flash { transition: none !important; animation: none !important; }
+}

@@ -216,6 +216,12 @@ class RestoreResult:
     # local-only came from the backup; and backup model servers whose name Kestrel never writes.
     local_settings_refused: bool = False
     backends_dropped: int = 0
+    # D-INST-12: settings sections the restore could not check for the install ID (too long,
+    # nested too deep, not UTF-8) are dropped, never adopted. A count.
+    settings_unchecked_dropped: int = 0
+    # D-INST-17: install-shaped values the backup's settings carried (a row keyed as the old
+    # install ID key, or such a leaf inside a section row, removed leaf by leaf). A count.
+    install_values_removed: int = 0
 
     # D-SEC-20: restore is an import. What the backup held that is never imported, as counts: a
     # table Kestrel does not have (or one of ours that is not a real table there), a view or a
@@ -357,12 +363,47 @@ def _strip_secrets(snapshot: Path) -> None:
         con.close()
 
 
-def create_backup(out_dir: str | Path | None = None) -> Path:
+# The note a backup carries when it left files out. Restore reads only the entries this format
+# defines (the database, config/ and documents/), so the note is never restored.
+LEFT_OUT_NOTE = "LEFT-OUT.txt"
+LEFT_OUT_HEAD = "Kestrel left these files out of this backup:"
+LINKS_NOT_FOLLOWED = (
+    "Kestrel does not follow links when it makes a backup: a link is left out, and so is "
+    "whatever it leads to."
+)
+
+
+def left_out_note(left_out: list[str]) -> str:
+    """The text of LEFT_OUT_NOTE: each file by name with its reason, then the sentence on
+    links."""
+    lines = [LEFT_OUT_HEAD, "", *(f"- {item}" for item in left_out), "", LINKS_NOT_FOLLOWED]
+    return "\n".join(lines) + "\n"
+
+
+def _named(prefix: str, rel: str) -> str:
+    """The name a left-out file is shown by: as it would be named in the archive, or the folder
+    itself (rel "") when the whole folder was left out."""
+    return f"{prefix}{rel}" if rel else f"{prefix.rstrip('/')}/ (the whole folder)"
+
+
+def create_backup(out_dir: str | Path | None = None, *, left_out: list[str] | None = None,
+                  ) -> Path:
     """Zip a consistent snapshot of the database, the YAML config, and the generated
     documents/prep packs into a timestamped archive under out_dir (default: the data dir). Never
-    includes .env or anything else under data_home()."""
+    includes .env or anything else under data_home().
+
+    Every file the shared-file walker leaves out (a link, a second name, unreadable) is named,
+    with its reason, in LEFT_OUT_NOTE inside the archive and appended to `left_out` when given
+    ("name: reason"), so nothing is dropped in silence."""
     from kestrel.db import migrate
 
+    skipped: list[str] = []
+
+    def noted(prefix: str):
+        return lambda rel, why: skipped.append(f"{_named(prefix, rel)}: {why}.")
+
+    if os.path.lexists(paths.db_path()):  # before migrations, which would write through a link
+        _refuse_a_linked_database(paths.db_path())
     migrate.run_migrations()  # ensure the db exists and is at head before it is copied into the zip
     out = Path(out_dir) if out_dir else paths.data_dir()
     out.mkdir(parents=True, exist_ok=True)
@@ -375,37 +416,77 @@ def create_backup(out_dir: str | Path | None = None) -> Path:
         zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z,
     ):
         if db.exists():
+            _refuse_a_linked_database(db)
             snapshot = Path(snap_dir) / DB_NAME
             snapshot_database(db, snapshot)
             _strip_secrets(snapshot)  # the LAN shared key stays on this machine
             z.write(snapshot, DB_NAME)
-        cfg = paths.config_dir()
-        if cfg.exists():
-            for f in sorted(cfg.rglob("*")):
-                if f.is_file() and f.suffix in (".yml", ".yaml"):  # never .env
-                    z.write(f, f"{CONFIG_PREFIX}{f.relative_to(cfg).as_posix()}")
+        # Every other file comes through paths.shareable_files (D-SEC-55): only regular files
+        # with a single name, found and read without following a link at any level, so a link,
+        # junction or hard link planted anywhere in the data folder copies nothing from outside
+        # it into the archive.
+        for rel, data in paths.shareable_files(
+            paths.config_dir(), lambda rel: rel.endswith((".yml", ".yaml")), recursive=True,
+            unreadable=noted(CONFIG_PREFIX),
+        ):  # never .env
+            z.writestr(f"{CONFIG_PREFIX}{rel}", data)
         for sub in DOC_SUBDIRS:
-            d = paths.data_dir() / sub
-            if d.exists():
-                for f in sorted(d.glob("*.pdf")):
-                    z.write(f, f"{DOCS_PREFIX}{sub}/{f.name}")
+            for rel, data in paths.shareable_files(
+                paths.data_dir() / sub, lambda rel: rel.endswith(".pdf"),
+                unreadable=noted(f"{DOCS_PREFIX}{sub}/"),
+            ):
+                z.writestr(f"{DOCS_PREFIX}{sub}/{rel}", data)
         # The trained reranker and its PCA (review finding 6): a reset deletes them, and
         # retraining needs enough labels to pass the promotion criteria again. Kept for
         # recovery by hand (copy back into data/ml); restore leaves this folder alone.
         # The signing key (secrets/model_signing.key) is never written to a backup and never
         # restored from one: copied-back files are unsigned here, so the loader refuses them
-        # and they retrain.
-        ml = paths.data_dir() / "ml"
-        if ml.exists():
-            for f in sorted(ml.rglob("*")):
-                # The signing key is this computer's alone (D-SEC-13); it lives in secrets/,
-                # never here, and a stray copy is skipped all the same.
-                if f.is_file() and f.name != paths.model_signing_key_path().name:
-                    z.write(f, f"{ML_PREFIX}{f.relative_to(ml).as_posix()}")
+        # and they retrain. Only Kestrel's own model files are copied; the key is never named
+        # like one.
+        for rel, data in paths.shareable_files(paths.ml_dir(), paths.is_model_file_name,
+                                               unreadable=noted(ML_PREFIX)):
+            z.writestr(f"{ML_PREFIX}{rel}", data)
+        if skipped:
+            z.writestr(LEFT_OUT_NOTE, left_out_note(skipped))
+            log.warning("backup_files_left_out", count=len(skipped))
+    if left_out is not None:
+        left_out.extend(skipped)
     return archive
 
 
 _TEMP_PREFIX = "kestrel-backup-"
+
+
+class DatabaseRefused(UserFacingError, PermissionError):
+    """The database file is not one a backup copies (paths.database_refusal). Raised before
+    migrations run, so nothing is written through a link either."""
+
+
+# What the backup says when it stops at the database, one sentence per paths.database_refusal
+# reason, so the page shows the true reason and never a generic "permission was denied".
+DATABASE_REFUSED: dict[str, str] = {
+    why: f"{why}, so Kestrel did not copy it" for why in paths.DATABASE_REFUSALS
+}
+
+
+def database_refused_reason(exc: DatabaseRefused) -> str:
+    """The sentence a refused database is shown with: one of DATABASE_REFUSED, never the
+    exception's own text."""
+    from kestrel.web.errors import authored_error
+
+    return authored_error(exc, DATABASE_REFUSED.values(),
+                          "the database file is not one Kestrel copies")
+
+
+def _refuse_a_linked_database(db: Path) -> None:
+    """A backup never copies a database file that is a link, has a second name, or is not a
+    regular file: whatever it leads to may be some other program's file, and the archive is
+    something the person shares (D-SEC-55). Only the file itself is checked: a data folder moved
+    to another drive behind a link is a normal setup and is backed up as usual."""
+    why = paths.database_refusal(db)
+    if why is not None:
+        log.warning("backup_database_refused", reason=why)
+        raise DatabaseRefused(DATABASE_REFUSED[why])
 
 
 def create_backup_to_temp() -> Path:
@@ -477,11 +558,39 @@ def profile_path() -> Path:
     return paths.config_dir() / PROFILE_NAME
 
 
-def export_profile() -> Path | None:
+def export_profile() -> bytes | None:
     """The operator's profile.yml for download, or None when only the shipped example exists.
-    The example is deliberately not exported: it is fiction, not the operator's profile."""
+    The example is deliberately not exported: it is fiction, not the operator's profile.
+
+    Read through paths.shareable_files (D-SEC-55): a profile.yml that is a link, or a hard link
+    to some other file, is not exported, so a download never carries a file from outside."""
+    return export_profile_why()[0]
+
+
+def export_profile_why() -> tuple[bytes | None, str]:
+    """(bytes, "") for the export, (None, "") when there is no profile.yml yet, or (None, why)
+    when there is one and it was refused (a link, a second name, unreadable, its folder out of
+    place), `why` being one of the paths.LEFT_OUT_* sentences. So the page never says "no
+    profile.yml yet" about a file that is there."""
     p = profile_path()
-    return p if p.is_file() else None
+    refused: list[str] = []
+
+    def heard(rel: str, why: str) -> None:
+        if rel in ("", p.name):
+            refused.append(why)
+
+    for rel, data in paths.shareable_files(p.parent, lambda rel: rel == p.name,
+                                           unreadable=heard):
+        if rel == p.name:
+            return data, ""
+    if refused:
+        return None, refused[0]
+    return None, ""
+
+
+def profile_not_exported(why: str) -> str:
+    """The sentence the Backup page shows for a profile.yml that is there but was refused."""
+    return f"Your profile.yml was not exported: {why}."
 
 
 def import_profile(data: bytes) -> ProfileImportResult:
@@ -785,10 +894,10 @@ def _scrub_stored_paths(staged_db: Path) -> int:
             if table not in present:
                 continue
             for row_id, stored in con.execute(
-                f"SELECT id, pdf_path FROM {table} WHERE pdf_path IS NOT NULL"
+                f"SELECT id, pdf_path FROM {table} WHERE pdf_path IS NOT NULL"  # noqa: S608  identifiers are code constants, values are bound
             ):
                 if paths.confined_file(stored, folder) is None:
-                    con.execute(f"UPDATE {table} SET pdf_path = NULL WHERE id = ?", (row_id,))
+                    con.execute(f"UPDATE {table} SET pdf_path = NULL WHERE id = ?", (row_id,))  # noqa: S608  identifiers are code constants, values are bound
                     cleared += 1
         if cleared:
             con.commit()
@@ -880,7 +989,9 @@ RESTORED_TABLES: frozenset[str] = frozenset({
     "requirement_correction", "run", "saved_view", "scrape_run", "selection_override", "setting",
     "source", "status_event", "story", "story_usage", "title_suggestion", "verdict_override",
 })
-NOT_RESTORED_TABLES: frozenset[str] = frozenset({"task", "alembic_version"})
+# The install ID's table is carried in the backup file but never imported: a restore rebuilds it
+# from this computer's record (D-INST-15, install_id.keep_across_restore).
+NOT_RESTORED_TABLES: frozenset[str] = frozenset({"task", "alembic_version", "install_identity"})
 
 # Setting rows that stand for queued work or a one-time token, never data a person expects back
 # (D-SEC-20): a run's one-run model waiting for Tier 0, the queued one-shot run mode (it carried a
@@ -893,6 +1004,8 @@ NOT_RESTORED_TABLES: frozenset[str] = frozenset({"task", "alembic_version"})
 DROPPED_SETTING_KEYS = frozenset({
     _PENDING_RUN_MODE_KEY, "setup.rebuild_owed", "setup.recheck_owed",
     "pipeline.orphan_requeue", "worker.stop_request", "scheduler.scan_hold_until",
+    # Undo for Ollama's environment on the computer that made it (#181): never another one's.
+    "ollama_env.undo",
 })
 DROPPED_SETTING_PREFIXES = ("run_model.pending.", "undo.", "org_summary_hold.")
 
@@ -1008,12 +1121,12 @@ def _import_rows(source: Path, target: Path) -> _Imported:
                     if not cols:
                         continue
                     listing = ", ".join(_q(c) for c in cols)
-                    dst.execute(f"DELETE FROM {_q(table)}")
+                    dst.execute(f"DELETE FROM {_q(table)}")  # noqa: S608  identifiers are code constants, values are bound
                     insert = (
-                        f"INSERT INTO {_q(table)} ({listing}) "
+                        f"INSERT INTO {_q(table)} ({listing}) "  # noqa: S608  identifiers are code constants, values are bound
                         f"VALUES ({', '.join('?' for _ in cols)})"
                     )
-                    cur = src.execute(f"SELECT {listing} FROM {_q(table)}")
+                    cur = src.execute(f"SELECT {listing} FROM {_q(table)}")  # noqa: S608  identifiers are code constants, values are bound
                     while batch := cur.fetchmany(500):
                         dst.executemany(insert, batch)
         finally:
@@ -1057,7 +1170,7 @@ def _import_follow_up_drafts(source: Path, target: Path) -> int:
     for _id, raw, created, updated in rows:
         try:
             payload = json.loads(raw) if isinstance(raw, str) else None
-        except ValueError:
+        except (ValueError, RecursionError):  # hostile input is never a crash (D-INST-12)
             continue
         if not isinstance(payload, dict):
             continue
@@ -1229,9 +1342,11 @@ def _stays_here(path: str, opt_in: bool, keyed: frozenset[str] = frozenset()) ->
 
 
 def _decode(raw: object) -> object:
+    """A row's value, or _ABSENT when it is not JSON or nests too deep to parse (D-INST-12):
+    hostile input is never a crash."""
     try:
         return json.loads(raw) if isinstance(raw, str) else raw
-    except ValueError:
+    except (ValueError, RecursionError):
         return _ABSENT
 
 
@@ -1254,6 +1369,21 @@ def _leaf_rows(rows: dict[str, tuple[str, str]]) -> dict[str, tuple[str, str, st
     return out
 
 
+def _under(path: str, row: str) -> bool:
+    """Whether PATH lies inside the row keyed ROW. The root row (key "") holds every other path."""
+    return path != row and (row == "" or path.startswith(row + "."))
+
+
+def _relative(path: str, row: str) -> str:
+    """PATH below the row keyed ROW: the inverse of _flat(value, row). The root row adds no
+    prefix, so nothing is cut from its leaves."""
+    if row == "":
+        return path
+    if not path.startswith(row + "."):
+        raise ValueError("leaf is not inside its row")
+    return path[len(row) + 1:]
+
+
 def _regroup(leaves: dict[str, tuple[str, str, str]]) -> dict[str, tuple[str, str]]:
     """Rows from leaves: leaves that came from one row go back into that row (so a server row the
     Models page wrote stays one row it can delete), unless that row would overlap another row's
@@ -1261,14 +1391,14 @@ def _regroup(leaves: dict[str, tuple[str, str, str]]) -> dict[str, tuple[str, st
     leaf is dropped (it could only be a scalar standing where a section belongs)."""
     paths_ = sorted(leaves)
     leaves = {
-        p: v for p, v in leaves.items() if not any(q.startswith(p + ".") for q in paths_)
+        p: v for p, v in leaves.items() if not any(_under(q, p) for q in paths_)
     }
     origin = {p: v[2] for p, v in leaves.items()}
     while True:
         keys = set(origin.values())
         clash = {
             k for k in keys
-            if any(o != k and (o.startswith(k + ".") or k.startswith(o + ".")) for o in keys)
+            if any(o != k and (_under(o, k) or _under(k, o)) for o in keys)
             and any(origin[p] == k and p != k for p in origin)
         }
         if not clash:
@@ -1288,7 +1418,7 @@ def _regroup(leaves: dict[str, tuple[str, str, str]]) -> dict[str, tuple[str, st
         nested: dict = {}
         for p in members:
             cursor = nested
-            parts = p[len(k) + 1:].split(".")
+            parts = _relative(p, k).split(".")
             for part in parts[:-1]:
                 cursor = cursor.setdefault(part, {})
             cursor[parts[-1]] = _decode(leaves[p][0])
@@ -1511,12 +1641,18 @@ _ABSENT = object()
 
 
 def _flat(value: object, prefix: str = "") -> dict[str, object]:
-    if isinstance(value, dict):
-        out: dict[str, object] = {}
-        for k, v in value.items():
-            out.update(_flat(v, f"{prefix}.{k}" if prefix else str(k)))
-        return out
-    return {prefix: value}
+    """A settings tree as dotted leaves, depth first in key order. Iterative, so a row nested
+    deeper than the interpreter's recursion limit is flattened like any other (D-INST-12)."""
+    out: dict[str, object] = {}
+    stack: list[tuple[str, object]] = [(prefix, value)]
+    while stack:
+        path, node = stack.pop()
+        if isinstance(node, dict):
+            stack.extend(reversed([(f"{path}.{k}" if path else str(k), v)
+                                   for k, v in node.items()]))
+        else:
+            out[path] = node
+    return out
 
 
 def _merge_local(
@@ -1873,6 +2009,13 @@ def restore_backup(path: str | Path, *, restore_local_settings: bool = False) ->
             # database, so the live rows never hold either.
             result.paths_cleared = _scrub_stored_paths(fresh)
             result.rerankers_disabled = _deactivate_rerankers(fresh)
+            # This machine's install ID, never the backup's, read before the local-settings merge
+            # reshapes any row (D-INST-1); again after it, below.
+            from kestrel.services import install_id
+
+            removed = install_id.keep_across_restore(fresh, db, source_db=work)
+            result.settings_unchecked_dropped += removed.unchecked
+            result.install_values_removed += removed.stripped
             # D-SEC-10: the model route, keys and server switches stay this computer's.
             result.settings_kept = _keep_local_settings(
                 fresh, db, opt_in, keyed, counts, live_confidential
@@ -1881,6 +2024,10 @@ def restore_backup(path: str | Path, *, restore_local_settings: bool = False) ->
             _drop_markers(fresh)
             # This machine's LAN key, never the backup's.
             _put_back_lan_key(fresh, _read_lan_key(db))
+            # And after the merge: this machine's install ID, never the backup's (D-INST-1).
+            removed = install_id.keep_across_restore(fresh, db)
+            result.settings_unchecked_dropped += removed.unchecked
+            result.install_values_removed += removed.stripped
             migrate.stamp_saved_by(fresh)
             _checkpoint(fresh)
             _fsync(fresh)

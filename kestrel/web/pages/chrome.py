@@ -18,6 +18,7 @@ from sqlalchemy import and_, func, select
 
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Evaluation, Notification, Opportunity, Org, Pursuit
+from kestrel.services.role_id_query import parse_role_id, role_id_hits
 from kestrel.services.tracks import enabled_tracks_cached
 from kestrel.web import notifications_view as nv
 from kestrel.web.deps import bell_label as _bell_label
@@ -77,6 +78,12 @@ async def _panel_ctx(s, tab: str) -> dict:
     ))).scalars().all() if due else []
     by_pursuit = {p.id: p for p in pursuits if eligible(p)}
     by_opp = {p.opportunity_id: p for p in pursuits if eligible(p)}
+    download = None
+    if any(n.kind == "update" for n in rows):
+        from kestrel.services import updater
+        from kestrel.web.pages.updates import download_link
+
+        download = download_link(await updater.load_state(s))
     items = []
     for n in rows:
         draft = by_pursuit.get(n.pursuit_id) or by_opp.get(n.opportunity_id)
@@ -96,7 +103,7 @@ async def _panel_ctx(s, tab: str) -> dict:
             "track": words(track)["track_name"] if (both and track) else "",
             "action": nv.context_action(
                 n.kind, draft.opportunity_id if draft else n.opportunity_id,
-                follow_up=draft is not None,
+                follow_up=draft is not None, download=download,
             ),
             "attention": attention,
         })
@@ -196,12 +203,19 @@ async def palette_search(q: str = ""):
     from kestrel.web.redact import redact_name, redact_text, redaction_map
 
     term = " ".join(q.split())[:80]
-    if len(term) < 2:
+    role_id = parse_role_id(term)
+    # An ID query is the one search that skips the two-character minimum (D-UI-770).
+    if len(term) < 2 and role_id is None:
         return {"roles": [], "companies": []}
     like = f"%{term}%"
     async with sessionmaker()() as s:
         conf = bool((await load_settings_with_db(s)).confidential_mode)
         mapping = await redaction_map(s) if conf else None
+        if role_id is not None:
+            found = await _palette_role_by_id(s, role_id, conf, mapping)
+            if found:
+                return {"roles": found, "companies": []}
+            # No such role: the query is searched as ordinary text, exactly as before.
         best = (
             select(Evaluation.opportunity_id, func.max(Evaluation.score).label("score"))
             .group_by(Evaluation.opportunity_id)
@@ -246,6 +260,46 @@ async def palette_search(q: str = ""):
             companies.append({"t": shown, "s": f"{n} {noun} in your Pipeline",
                               "href": f"/orgs/{org_id}"})
     return {"roles": roles, "companies": companies}
+
+
+async def _palette_role_by_id(s, role_id: int, conf: bool, mapping) -> list[dict]:
+    """The one role an ID query names (D-UI-770, issue 213): found whatever its state, with a
+    Hidden label when the operator hid it (or its company), the main copy when the ID is a
+    duplicate, and the employer redacted under confidential mode exactly as a title result is.
+    Empty when no such role exists. Read only."""
+    from kestrel.web.redact import redact_name, redact_text
+
+    hits = {h.opp_id: h for h in await role_id_hits(s, role_id)}
+    if not hits:
+        return []
+    two_tracks = len(enabled_tracks_cached()) > 1
+    best = (
+        select(Evaluation.opportunity_id, func.max(Evaluation.score).label("score"))
+        .group_by(Evaluation.opportunity_id)
+        .subquery()
+    )
+    rows = (
+        await s.execute(
+            select(Opportunity.id, Opportunity.title, Opportunity.org_name, best.c.score)
+            .outerjoin(best, best.c.opportunity_id == Opportunity.id)
+            .where(Opportunity.id.in_(hits))
+            .order_by(Opportunity.id)
+            .limit(_PALETTE_LIMIT)
+        )
+    ).all()
+    roles = []
+    for oid, title, org, score in rows:
+        org = redact_name(org, mapping, enabled=conf) if conf else org
+        title = redact_text(title, mapping, enabled=conf) if conf else title
+        hit = hits[oid]
+        # With two tracks in use the row says which one the role is on.
+        track = f"{hit.track.capitalize()} role" if two_tracks else ""
+        sub = " · ".join(
+            x for x in (org, f"Role {oid}", track, hit.label, hit.note,
+                        f"Fit {score:.1f}" if score is not None else "") if x
+        )
+        roles.append({"t": title or "Untitled role", "s": sub, "href": f"/opportunities/{oid}"})
+    return roles
 
 
 _SW = """

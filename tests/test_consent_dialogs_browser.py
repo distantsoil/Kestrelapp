@@ -60,6 +60,7 @@ def live(monkeypatch):
     from kestrel.db.models import Setting, Source
     from kestrel.llm import providers as prov
     from kestrel.llm.profiles import Hardware
+    from kestrel.services import hosted_balance as hb
     from kestrel.services import hosted_models as hm
     from kestrel.services import setup_state as ss
     from kestrel.web.pages import rescore
@@ -80,6 +81,11 @@ def live(monkeypatch):
         ]
 
     monkeypatch.setattr(hm, "fetch_models", fake_models)
+
+    async def no_balance(backend):  # the dialog's balance line would call the provider
+        return hb.Reading(False)
+
+    monkeypatch.setattr(hb, "_fetch", no_balance)
     monkeypatch.setattr(rescore, "_local_models", lambda settings: (["local-one:latest"], None))
     monkeypatch.setattr(
         ss,

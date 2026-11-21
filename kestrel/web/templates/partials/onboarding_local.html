@@ -21,7 +21,7 @@
           <span class="ob-mono-text">{{ i.target }}</span>
           <span class="ob-dsm">{{ i.step }}{% if i.percent is not none and i.status == 'leased' %} <b data-testid="setup-percent">{{ i.percent }}%</b>{% endif %}</span>
           {% if i.status in ('leased', 'done') %}<progress class="ob-bar" max="100"{% if i.percent is not none %} value="{{ i.percent }}"{% endif %}>{{ i.percent or 0 }}%</progress>{% endif %}
-          {% if i.error %}<span class="ob-err">{{ i.error }}</span>{% endif %}
+          {% if i.error %}<span class="ob-err">{{ i.error }}</span>{% if i.code %}<span class="ob-err-code" data-testid="setup-progress-code">Code {{ i.code }}</span>{% endif %}{% endif %}
         </li>
         {% endfor %}
       </ul>

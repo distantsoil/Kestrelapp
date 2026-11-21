@@ -1,0 +1,24 @@
+{# Settings > Online models as a page of its own (D-PRIV-795, D-REL-41, #224): where an online user
+   reads the updated disclosure and ticks it again. Linked from the provider-reads notice on Today,
+   from Settings > This computer and from the Models page while online is paused. The panel is the
+   same partial GET /settings/hosted serves; its forms post exactly as they do there. No script of
+   its own; styles in css/pages/hosted.css on theme tokens (CSP-ready). #}
+{% extends "base.html" %}
+{% import "ui/macros.html" as ui %}
+{% block title %}Online models · Settings · Kestrel{% endblock %}
+{# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{ static_url('css/pages/hosted.css') }}">{% endblock %}
+{# No script of its own; named for the page lifecycle (D-UI-210), like the stub page. #}
+{% block page_name %}stub{% endblock %}
+{% block content %}
+<div class="ho-wrap"><div class="ho-page">
+  {% call ui.scene_band('Online models') %}{% endcall %}
+  <section class="k-card ho-card" data-testid="hosted-review">
+    <p class="k-muted ho-lede">What online models send, your keys and which model runs each step. Nothing here is sent anywhere until you confirm it.</p>
+    {% if reaccept %}<p class="ho-banner" role="status" data-testid="hosted-review-paused">Online scoring is paused because the disclosure changed since you accepted it. It now also names the balance and model-list checks Kestrel makes with your provider. Read it under <a href="#hosted-disclosure" data-testid="hosted-review-jump">What leaves this machine</a> below, tick I understand and turn online models on again.</p>{% endif %}
+  </section>
+  {% set review = true %}
+  {% include "partials/hosted_status.html" %}
+</div></div>
+{% endblock %}

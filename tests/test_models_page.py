@@ -249,7 +249,7 @@ def test_get_models_page_renders_the_comparison():
     assert "too few to judge (3 of 5 needed)" in body
     assert "Deeper read (Tier 3): too few to judge (3 of 5 needed)" in body
     assert "No stored benchmark run" in body
-    assert 'href="/bench"' in body and "Settings &gt; Hosted" in body
+    assert 'href="/bench"' in body and "Settings &gt; This computer" in body  # round 7
     assert "local" in body and "$0.0123" in body
     assert 'href="/models"' in body  # the nav link
     assert "last 30 days" in body

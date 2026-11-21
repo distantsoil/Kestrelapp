@@ -1,6 +1,6 @@
 # Settings
 
-Use Settings to choose how Kestrel runs, tune the roles it keeps and scores, protect private details, and manage your data and display. Changes save as you make them; most can be reversed with **Undo**. The six sections are grouped under **Set up** and **You**.
+Use Settings to choose how Kestrel runs, tune the roles it keeps and scores, protect private details, and manage your data and display. Changes save as you make them; most can be reversed with **Undo**. The seven sections are grouped under **Set up** and **You**.
 
 ![Settings overview](../images/walk/settings-main-light.png)
 
@@ -43,6 +43,10 @@ Use **Track** to view a track's weights and learning. **What matters most** show
 **Connect an AI assistant (MCP)** is off by default. When enabled, it lets a compatible app read your roles and applications. It can also make some changes, marked **Changes your lists** on the card: adding a role from a link or text, asking for a search or a new score, moving an application to a new stage, and adding a note. Copy the address into that app. The card lists what it can and cannot do through Kestrel. The assistant is a separate app and may use an online service. **Show details** displays the port; **Start again** appears if the service stops.
 
 ![Privacy and access](../images/walk/settings-privacy-light.png)
+
+## Browser extension
+
+The browser extension brings the posting you are looking at into Kestrel in one click. The status line says **Connected**, with the browser and when it was last used, or **Not connected yet**. **Get it for Chrome** and **Get it for Firefox** open the extension's page; Edge, Brave and Arc use the Chrome version. Under **Connect it**, **Copy key** copies the connection key; paste it into the extension once. Copying the key never turns on access from other devices. **Show details** gives the port Kestrel is on, the steps for loading the extension by hand, and **Make a new key**; the extension and any devices you joined then need the new key. **What it does** has three switches, the same ones the extension's own options page shows: scores on job boards, roles waiting for a description, and a count on the toolbar icon. The extension never applies, fills in a form or sends a message, and it talks only to Kestrel on this computer.
 
 ## Your data
 

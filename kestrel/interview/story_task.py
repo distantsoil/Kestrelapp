@@ -24,6 +24,7 @@ from kestrel.config import Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting, Task
 from kestrel.errors import failure_record, shown_failure, task_failure_text
+from kestrel.llm.engine_cycle import engine_unreachable
 
 log = structlog.get_logger()
 
@@ -66,11 +67,15 @@ BUILD_SENDS_ALL = (
 )
 
 
-async def request_build(session: AsyncSession, *, consent: dict | None = None) -> bool:
+async def request_build(
+    session: AsyncSession, *, consent: dict | None = None, commit: bool = True
+) -> bool:
     """Queue one build unless one is already waiting or running. Commits. True when queued.
     `consent` is the operator's confirmation of an online send
     (kestrel.services.online_consent.consent_payload). With Tier 2 online and no confirmation for
-    the model configured now, nothing is queued: a build never goes online without a click."""
+    the model configured now, nothing is queued: a build never goes online without a click.
+    `commit=False` adds the task to the caller's transaction and leaves the commit to the caller,
+    so another write (the first run's flag, D-STORY-700) lands atomically with it."""
     from kestrel.services.online_consent import held_for_consent
     from kestrel.services.setting_overrides import load_settings_with_db
 
@@ -80,11 +85,12 @@ async def request_build(session: AsyncSession, *, consent: dict | None = None) -
         # Asked again while a build waits out a retry backoff: it runs now (D-QUEUE-7).
         from kestrel.queue.queue import run_now
 
-        if await run_now(session, Task.type == TASK_TYPE):
+        if await run_now(session, Task.type == TASK_TYPE) and commit:
             await session.commit()
         return False
     session.add(Task(type=TASK_TYPE, payload=dict(consent or {}), max_attempts=MAX_ATTEMPTS))
-    await session.commit()
+    if commit:
+        await session.commit()
     return True
 
 
@@ -152,13 +158,18 @@ async def drain_story_builds(
     remain (the page shows it as building) and is recorded once the task is dead (the page
     shows the reason and Try again); it never raises into the caller's worker cycle."""
     from kestrel.interview.stories import FAILED_IDS_ATTR, consolidate_stories
+    from kestrel.pipeline.worker import engine_lost_for, local_engine_ready
     from kestrel.queue.queue import TaskQueue
     from kestrel.services.online_consent import held_at_run_time
 
+    if not await local_engine_ready(settings, TIER):
+        return 0  # Ollama is not answering or lacks the model: nothing leased, no try spent
     queue = TaskQueue(sm)
     wid = "pipeline-stories"
     done = 0
     while stop is None or not stop.is_set():
+        if engine_lost_for(settings, TIER):
+            break  # a call this cycle could not reach Ollama: lease nothing more (round 6)
         task = await queue.lease(wid, types=[TASK_TYPE], lease_seconds=LEASE_S)
         if task is None:
             break
@@ -209,7 +220,8 @@ async def drain_story_builds(
             # worker cycle, the same as the suppressed _record below.
             with contextlib.suppress(Exception):
                 await _record_failed_ids(sm, task.id, getattr(exc, FAILED_IDS_ATTR, None))
-            status = await queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True)
+            status = await queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True,
+                                      engine_wait=engine_unreachable(exc))
             if status == "dead":
                 with contextlib.suppress(Exception):
                     await _record(sm, {"at": utcnow_iso(), "ok": False,

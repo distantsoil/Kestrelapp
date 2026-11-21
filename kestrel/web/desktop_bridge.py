@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -47,6 +48,25 @@ def set_window_frame(on: bool) -> None:
 
 def has_window_frame() -> bool:
     return _window_frame
+
+
+_window_api: Any = None
+_window_channel: Any = None
+
+
+def set_window_api(api: Any, channel: Any) -> None:
+    """The shell registers its WindowApi and the app page's event channel (D-SEC-61): app pages
+    reach the window over /api/window/* instead of pywebview's js_api and evaluate_js."""
+    global _window_api, _window_channel
+    _window_api, _window_channel = api, channel
+
+
+def window_api() -> Any:
+    return _window_api
+
+
+def window_channel() -> Any:
+    return _window_channel
 
 
 _LOOPBACK = {"127.0.0.1", "::1", "localhost"}

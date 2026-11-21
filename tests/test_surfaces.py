@@ -17,6 +17,7 @@ from kestrel import paths
 from kestrel.db import migrate
 from kestrel.db.engine import forget_engine, get_sessionmaker, reset_engine
 from kestrel.db.models import Notification, Opportunity, Pursuit, Source, Task
+from tests.page_source import inline_static
 
 pytestmark = pytest.mark.usefixtures("_isolate_data_home")
 
@@ -262,12 +263,22 @@ def test_update_cards_say_get_it_from_the_site_and_never_offer_to_restart_or_ins
         assert "restart to update" not in text and "install now" not in text, name
         assert "—" not in text, name
     banner = (TEMPLATES / "partials" / "update_banner.html").read_text(encoding="utf-8")
-    assert "Get it from kestrelapp.co" in banner and "is available." in banner
+    # D-UPD-8, D-UPD-9: one shared link and label on every surface (the site label is the
+    # fallback when the feed has no valid release entry).
+    from kestrel.web.pages.updates import SITE_LABEL
+
+    assert SITE_LABEL == "Get it from kestrelapp.co"
+    for name in ("update_banner", "update_details", "update_check_result",
+                 "about_update_result"):
+        text = (TEMPLATES / "partials" / f"{name}.html").read_text(encoding="utf-8")
+        assert 'href="{{ download.url }}"' in text and "{{ download.label }}" in text, name
+        assert "kestrelapp.co</a>" not in text, name
+    assert "is available." in banner
 
 
 # ----------------------------------------------------------------------------------- toasts
 def test_toasts_use_the_shared_region_and_carry_undo_through():
-    text = (TEMPLATES / "partials" / "toast.html").read_text(encoding="utf-8")
+    text = inline_static((TEMPLATES / "partials" / "toast.html").read_text(encoding="utf-8"))
     assert "window.KUI.toast(" in text and "undoUrl: opts.undoUrl" in text
     assert "undo: opts.undo" in text
     # The persistent scan toast keeps its own box (Phase 1 decision).
@@ -303,6 +314,35 @@ def test_a_failing_page_shows_the_calm_error_page_with_plain_details(monkeypatch
     assert client.get("/boom", headers=HX).text == "Internal Server Error"
     assert client.get("/boom", headers={"accept": "application/json"}).text == (
         "Internal Server Error")
+
+
+def test_the_error_page_shows_app_001_under_the_sentence_and_first_in_details():
+    from fastapi import APIRouter
+    from structlog.testing import capture_logs
+
+    from kestrel.web.app import build_app
+
+    asyncio.run(_fresh())
+    app = build_app(worker=False)
+    router = APIRouter()
+
+    @router.get("/boom-code")
+    async def boom():
+        raise RuntimeError("sample failure")
+
+    app.include_router(router)
+    client = TestClient(app, raise_server_exceptions=False)
+    with capture_logs() as logged:
+        r = client.get("/boom-code", headers={"accept": "text/html"})
+    assert r.status_code == 500
+    assert 'data-testid="error-code">Code APP-001<' in r.text
+    # first line of the details block, ahead of Page: and the time
+    opening = '<pre class="sf-code" id="sf-code" data-testid="error-details">'
+    assert opening + "Code APP-001\nPage:" in r.text
+    assert any(
+        e.get("event") == "unhandled_error" and e.get("error_code") == "APP-001"
+        for e in logged
+    )
 
 
 # ---------------------------------------------------------------------------------- the sheet

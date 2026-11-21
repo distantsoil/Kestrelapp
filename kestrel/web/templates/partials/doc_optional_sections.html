@@ -2,8 +2,8 @@
    typed entries, printed exactly as typed and only when a section has entries. Never chosen by
    the model. Each section collapses to its name and entry count. #}
 <div class="optional-sections" id="optional-sections" data-testid="optional-sections">
-  <h3 style="margin:1.2rem 0 .3rem">Optional sections</h3>
-  <p class="muted" style="margin:0 0 .5rem">Shown on the resume only when they have entries.</p>
+  <h3 class="u-m-12-0-03">Optional sections</h3>
+  <p class="muted u-m-0-0-05">Shown on the resume only when they have entries.</p>
   {% if optional_confidential %}<p class="muted confidential-hint" data-testid="optional-confidential-hint">Confidential mode is on: an employer name typed here prints as that role's redacted label.</p>{% endif %}
   {% if optional_note %}<p class="tree-note" role="status">{{ optional_note }}</p>{% endif %}
   {% if optional_error %}<div class="warnbox" role="alert">{{ optional_error }}</div>{% endif %}

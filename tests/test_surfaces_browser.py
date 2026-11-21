@@ -43,6 +43,29 @@ def _overlaps(a, b) -> bool:
         and b["tp"] < a["bt"] - 1
 
 
+RELEASE = "https://github.com/distantsoil/Kestrelapp/releases/download"
+NEWER = "99.0.0"
+FILES = {"windows": f"Kestrel-Setup-{NEWER}.exe", "macos": f"Kestrel-{NEWER}.dmg",
+         "linux": f"Kestrel-{NEWER}-x86_64.AppImage"}
+SHA = "ef" * 32
+
+
+def update_feed() -> dict:
+    """A cached feed with a valid release entry for every platform (D-UPD-8), so the dialog shows
+    the direct download wherever the test runs. Notes carry bold markers and raw HTML."""
+    return {
+        "schema": 1, "version": NEWER, "published_at": "2026-10-01T00:00:00Z",
+        "download_page": "https://kestrelapp.co/download",
+        "downloads": {p: {"file": f, "url": f"{RELEASE}/v{NEWER}/{f}", "sha256": SHA,
+                          "signed": False} for p, f in FILES.items()},
+        "releases": [{"version": NEWER, "date": "2026-10-01",
+                      "notes_md": "### Changed\n- **The role page shows where each match comes "
+                                  "from** and lets you correct it <script>alert(1)</script>\n"
+                                  "- A long line of release notes that has to wrap inside the "
+                                  "dialog at phone width without pushing anything past the edge"}],
+    }
+
+
 def _seed() -> int:
     from kestrel.db import migrate
     from kestrel.db.engine import forget_engine, get_sessionmaker, reset_engine
@@ -69,8 +92,8 @@ def _seed() -> int:
             await s.commit()
             oid = o.id
             state = updater.UpdateState(
-                disclosure_shown=True, latest_version="99.0.0",
-                download_page=updater.DOWNLOAD_PAGE)
+                disclosure_shown=True, latest_version=NEWER,
+                download_page=updater.DOWNLOAD_PAGE, cached_feed=update_feed())
             await updater.save_state(s, state)
         forget_engine()
         return oid
@@ -161,7 +184,8 @@ def test_score_again_and_run_now_dialogs(live, theme, width):
 def test_update_banner_and_the_bell_panel(live, theme, width):
     ctx, page, errors = _open(live, theme, width, "/help", '[data-testid="update-banner"]')
     try:
-        assert "Get it from kestrelapp.co" in page.inner_text('[data-testid="update-banner"]')
+        # D-UPD-8: the button downloads this platform's installer from the release.
+        assert f"Download Kestrel {NEWER}" in page.inner_text('[data-testid="update-banner"]')
         # D-UI-218: at the top of the window, above the search row, and the button carries the
         # external-link icon (the mockup's arrow-out-of-box path), not an arrow.
         banner = page.get_by_test_id("update-banner").bounding_box()
@@ -189,7 +213,7 @@ def test_update_banner_and_the_bell_panel(live, theme, width):
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
-@pytest.mark.parametrize("width", [1280, 1680])
+@pytest.mark.parametrize("width", [390, 480, 1280, 1440, 1680])
 def test_the_error_page(live, monkeypatch, theme, width):
     async def boom(*_a, **_k):
         raise RuntimeError("the database was busy")
@@ -199,9 +223,14 @@ def test_the_error_page(live, monkeypatch, theme, width):
                               '[data-testid="error-page"]')
     try:
         page.get_by_test_id("error-details-toggle").click()
-        assert "What happened:" in page.inner_text('[data-testid="error-details"]')
+        assert page.inner_text('[data-testid="error-code"]') == "Code APP-001"
+        details = page.inner_text('[data-testid="error-details"]')
+        assert details.startswith("Code APP-001\n")
+        assert "What happened:" in details
         _clean(page, errors, theme, width,
-               lines=[".sf-err h1", ".sf-err .k-btn"], groups=[".sf-err-actions", ".sf-head"])
+               # a long title may wrap on a phone; it must still not overlap or clip
+               lines=([".sf-err h1"] if width >= 480 else []) + [".sf-err .k-btn", ".sf-err-code"],
+               groups=[".sf-err-actions", ".sf-head"])
     finally:
         ctx.close()
 
@@ -313,8 +342,9 @@ def _reopen_dialog_test(live, opener, ready, cancel, markup_probe):
           const dlg = document.querySelector(sel);
           const old = dlg.nextElementSibling;
           dlg.close();
+          // The script is a file now (D-INST-8): the same file, with the same attributes.
           const again = document.createElement('script');
-          again.textContent = old.textContent;
+          Array.from(old.attributes).forEach((a) => again.setAttribute(a.name, a.value));
           dlg.after(again);
         }""", markup_probe)
         page.wait_for_selector(ready)
@@ -355,3 +385,111 @@ def test_the_score_again_dialog_opened_twice_holds_one_set_of_handlers(live):
 
     _reopen_dialog_test(live, opener, '[data-testid="score-again-dialog"][open]',
                         '[data-testid="score-again-cancel"]', '[data-testid="score-again-dialog"]')
+
+
+# --- the update dialog (#199: D-UPD-8, D-UI-351) ----------------------------------------------
+
+_DIALOG = '[data-testid="update-dialog"][open]'
+_ANIMS = """() => { const d = document.querySelector('[data-testid="update-dialog"]');
+  return d ? d.getAnimations().map(a => a.animationName) : null; }"""
+# Settled means the open animation has started AND finished. An empty list is not settled: on a
+# loaded machine the check could run before the animation registered (the owner's Windows gate
+# on 156f622d read [] at 390px dark), and every() over [] is true.
+_SETTLED = """() => { const d = document.querySelector('[data-testid="update-dialog"]');
+  if (!d) return false; const a = d.getAnimations();
+  return a.some(x => x.animationName === 'sf-upd-in')
+    && a.every(x => x.playState === 'finished'); }"""
+_FOOT_GEOMETRY = """() => {
+  const d = document.querySelector('[data-testid="update-dialog"]');
+  const foot = d.querySelector('.sf-foot');
+  const box = e => { const b = e.getBoundingClientRect();
+    return {l: b.left, r: b.right, t: b.top, b: b.bottom, text: (e.textContent || '').trim()}; };
+  const pad = parseFloat(getComputedStyle(foot).paddingLeft);
+  return {dialog: box(d), foot: box(foot), pad,
+          footClipped: foot.scrollWidth > foot.clientWidth + 1,
+          dialogClipped: d.scrollWidth > d.clientWidth + 1,
+          buttons: Array.from(foot.querySelectorAll('.k-btn')).map(e => ({...box(e),
+            clipped: e.scrollWidth > e.clientWidth + 1})),
+          h2Clipped: (() => { const h = d.querySelector('h2');
+            return h.scrollWidth > h.clientWidth + 1; })()};
+}"""
+
+
+def _open_update_dialog(page) -> None:
+    page.get_by_test_id("update-details-toggle").click()
+    page.get_by_test_id("update-whats-new").click()
+    page.wait_for_selector(_DIALOG)
+    page.wait_for_function(_SETTLED)
+    wait_for_layout(page)
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [390, 480, 1280])
+def test_the_update_dialog_footer_wraps_and_nothing_is_clipped(live, theme, width):
+    ctx, page, errors = _open(live, theme, width, "/help", '[data-testid="update-banner"]')
+    try:
+        _open_update_dialog(page)
+        # The open is animated (D-UI-351); fill: both keeps the finished animation listed.
+        assert "sf-upd-in" in (page.evaluate(_ANIMS) or []), (theme, width)
+        geo = page.evaluate(_FOOT_GEOMETRY)
+        d, pad = geo["dialog"], geo["pad"]
+        assert pad >= 22, pad  # the body's inner padding, so the footer matches it
+        assert not geo["footClipped"] and not geo["dialogClipped"] and not geo["h2Clipped"], geo
+        labels = [b["text"] for b in geo["buttons"]]
+        assert labels == ["Skip this version", "Remind me tomorrow", f"Download Kestrel {NEWER}"]
+        for b in geo["buttons"]:
+            # Every button sits inside the padded footer, on the screen, and is not cut.
+            assert b["l"] >= d["l"] + pad - 1 and b["r"] <= d["r"] - pad + 1, (b, d, pad, width)
+            assert b["t"] >= d["t"] and b["b"] <= d["b"] + 1 and b["b"] <= 900, (b, d)
+            assert not b["clipped"], b
+        rows = {round(b["t"]) for b in geo["buttons"]}
+        # One button per row at phone width; wider, the three share at most two rows.
+        assert len(rows) == (3 if width <= 480 else min(len(rows), 2)), (rows, width)
+        _clean(page, errors, theme, width,
+               lines=[".sf-upd .sf-foot .k-btn"], groups=[".sf-upd .sf-foot", ".sf-upd .sf-head"])
+        # The link is the rebuilt release address for this platform, with no query string.
+        from kestrel.services import updater
+
+        href = page.get_attribute('.sf-upd [data-testid="update-download"]', "href")
+        assert href == f"{RELEASE}/v{NEWER}/{FILES[updater.feed_platform()]}", href
+        source = page.inner_text('[data-testid="update-source"]')
+        assert "GitHub, the Kestrel release page" in source
+        # Bold renders, the markers do not show, and the script tag is text (D-UPD-10).
+        notes = page.inner_text(".sf-upd .sf-notes")
+        assert "**" not in notes and "<script>alert(1)</script>" in notes
+        assert page.evaluate("document.querySelector('.sf-upd .sf-notes strong').textContent"
+                             ).startswith("The role page shows")
+        assert page.evaluate("document.querySelectorAll('.sf-upd .sf-notes script').length") == 0
+        # Show details lists the file, the release and the checksum.
+        page.locator('[data-testid="update-file-details"] > summary').click()
+        page.wait_for_selector('[data-testid="update-file-info"]', state="visible")
+        info = page.inner_text('[data-testid="update-file-info"]')
+        assert f"SHA-256: {SHA}" in info and "github.com/distantsoil/Kestrelapp" in info
+        wait_for_layout(page)
+        assert page.evaluate("""() => { const p = document.querySelector(
+          '[data-testid="update-file-info"]'); return p.scrollWidth <= p.clientWidth + 1; }""")
+        page.locator(".sf-upd .sf-x").click()
+        page.wait_for_selector('[data-testid="update-dialog"]', state="detached")
+    finally:
+        ctx.close()
+
+
+def test_the_update_dialog_does_not_animate_under_reduced_motion(live):
+    base, browser, _oid = live
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900}, color_scheme="light",
+                              reduced_motion="reduce")
+    page = ctx.new_page()
+    try:
+        page.goto(f"{base}/help")
+        page.wait_for_selector('[data-testid="update-banner"]')
+        wait_for_layout(page)
+        page.get_by_test_id("update-details-toggle").click()
+        page.get_by_test_id("update-whats-new").click()
+        page.wait_for_selector(_DIALOG)
+        assert page.evaluate(_ANIMS) == []
+        dialog_anim, backdrop_anim = page.evaluate("""() => { const d = document.querySelector(
+          '[data-testid="update-dialog"]'); return [getComputedStyle(d).animationName,
+          getComputedStyle(d, '::backdrop').animationName]; }""")
+        assert dialog_anim == "none" and backdrop_anim == "none", (dialog_anim, backdrop_anim)
+    finally:
+        ctx.close()

@@ -313,7 +313,7 @@ async def test_a_rescore_sends_the_facts_stores_v3_and_the_v2_score_reads_older(
                                    kestrel_state="gap", reason="all",
                                    note="Licensed since last spring.")
     settings = get_settings()
-    from kestrel.pipeline.tier2 import _VERSION, handle_t2
+    from kestrel.pipeline.tier2 import evaluate_versions, handle_t2
 
     out = await handle_t2(sm, _Capture(settings), settings, opportunity_id=a, rescore=True,
                           profiles={t: load_profile(t) for t in ("employment", "consulting")})
@@ -325,14 +325,17 @@ async def test_a_rescore_sends_the_facts_stores_v3_and_the_v2_score_reads_older(
         evs = (await s.execute(select(Evaluation).where(Evaluation.opportunity_id == a)
                                .order_by(Evaluation.id))).scalars().all()
         opp = await s.get(Opportunity, a)
-    assert [e.prompt_version for e in evs] == ["evaluate/v2", _VERSION["employment"]]
-    assert _VERSION == {"employment": "evaluate/v3", "consulting": "evaluate_consulting/v3"}
+    assert [e.prompt_version for e in evs] == ["evaluate/v2",
+                                               evaluate_versions(settings)["employment"]]
+    # The default since 0.7.7 (owner, D-SCORE-32); v4 carries the same corrections block.
+    assert evaluate_versions(settings) == {"employment": "evaluate/v4",
+                                           "consulting": "evaluate_consulting/v4"}
     # The read records the corrections it was given, so removing one later marks it (D-SCORE-4).
     async with sm() as s:
         badge = (await s.execute(select(RequirementCorrection))).scalars().one()
     assert evs[0].correction_ids is None and evs[1].correction_ids == [badge.id]
     # The v2 read reads as older because a correction bears on the role (issue 179, D-SCORE-4);
-    # the v3 read made after it does not.
+    # the current read made after it does not.
     from kestrel.learning import score_age
 
     async with sm() as s:

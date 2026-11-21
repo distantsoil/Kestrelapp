@@ -9,7 +9,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from kestrel.llm.guard import run_prompt
 from kestrel.llm.plain_repair import enforce
 from kestrel.llm.prompts import load_prompt
 
@@ -57,6 +56,8 @@ class LetterDraft:
     # the online key is out of credit. The page shows a fixed sentence for each, never `error`.
     quarantined: bool = False
     out_of_credit: bool = False
+    # The call could not reach the local engine: the task waits, its try given back.
+    engine_unreachable: bool = False
     # Kestrel refused the online send before anything left the computer; `error` says why.
     refused: bool = False
     # The reply still spoke of the person in the third person after the one repair (D-UI-241).
@@ -93,13 +94,9 @@ def banned_hits(text: str) -> list[str]:
 async def _run(
     client, spec, messages, *, session, on_quarantine, reask=False, opportunity_id=None
 ):
-    """The tier3 prompts go through the Hosted mode plan (redaction or refusal) when the caller
-    has a session; without one the call is local-only as before."""
-    if session is None:
-        # A failed re-ask leaves no quarantine row.
-        return await run_prompt(
-            client, spec, messages, on_quarantine=None if reask else on_quarantine
-        )
+    """The tier3 prompts go through the Hosted mode plan (redaction or refusal), decided from the
+    client that sends. Without a session a call on this computer runs as before, and one that
+    would go online is refused, never sent as written (D-PRIV-801)."""
     from kestrel.pipeline._shared import run_prompt_hosted
 
     return await run_prompt_hosted(
@@ -112,6 +109,7 @@ def _failed(result) -> LetterDraft:
     return LetterDraft(
         value=None, error=result.error, quarantined=bool(getattr(result, "quarantined", False)),
         out_of_credit=bool(getattr(result, "out_of_credit", False)),
+        engine_unreachable=bool(getattr(result, "engine_unreachable", False)),
         refused=bool(getattr(result, "refused", False)),
     )
 

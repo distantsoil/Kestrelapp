@@ -62,7 +62,7 @@ async def escalate_preview(opp_id: int):
     # Plain summary above the payload: what leaves, where, and that it
     # includes the job + your profile
     summary = (
-        f'<p class="muted" style="margin:.3rem 0 .6rem">This sends the job posting and your '
+        f'<p class="muted u-m-03-0-06">This sends the job posting and your '
         f'profile to {_esc(service)}, using the model '
         f'<span class="mono">{_esc(preview.model)}</span>. '
         f"Confidential redaction: {('on' if preview.confidential else 'off')}.</p>"
@@ -85,7 +85,7 @@ async def escalate_preview(opp_id: int):
         f'<div class="muted">To <span class="mono">{_esc(preview.base_url)}</span> '
         f"&middot; model <span class=\"mono\">{_esc(preview.model)}</span> &middot; "
         f"about {preview.prompt_tokens_estimate} tokens in, {_esc(cost)} &middot; {conf}</div>"
-        f'<pre style="max-height:22rem;overflow:auto;white-space:pre-wrap">{payload}</pre>'
+        f'<pre class="u-maxh-22 u-ov-auto u-ws-pre-wrap">{payload}</pre>'
         f"{confirm_form}"
         f'<div id="t3-result"></div>'
         f"</div>"

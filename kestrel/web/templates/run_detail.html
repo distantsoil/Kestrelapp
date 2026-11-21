@@ -33,7 +33,7 @@
           {% for r in scrape_runs %}
             <tr>
               <td>{{ r.source_name or '-' }}</td>
-              <td>{{ r.scrape.status }}</td>
+              <td>{{ r.scrape.status }}{% if r.code %}<span class="rn-code rn-code--cell" data-testid="rn-code">Code {{ r.code }}</span>{% endif %}</td>
               <td><small>{{ date_display(r.scrape.started_at, 'raw') }}</small></td>
               <td><small>{{ date_display(r.scrape.finished_at, 'raw') or '-' }}</small></td>
               <td><small>{{ r.scrape.counts | run_counts }}</small>{% if r.scrape.counts | run_model_label %}<br><small data-testid="run-model-used">on {{ r.scrape.counts | run_model_label }}</small>{% endif %}</td>

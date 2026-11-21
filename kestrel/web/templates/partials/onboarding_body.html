@@ -131,7 +131,7 @@
       <details class="ob-details" data-testid="ob-sends">
         <summary>What leaves this computer</summary>
         {% if st.choice == 'both' %}
-        <p class="ob-dsm" data-testid="ob-sends-both">Quick sort and fit score stay on this computer. A deep read you start on one role sends {{ tier_sends.tier3 }}. Kestrel shows exactly what before you confirm, and holds the send when confidential mode is on and no current employer is chosen. The service's own retention rules apply to anything sent; Kestrel cannot recall it. Keys stay on this computer and go only to the service.</p>
+        <p class="ob-dsm" data-testid="ob-sends-both">Quick sort and fit score stay on this computer. A deep read you start on one role sends {{ tier_sends.tier3 }}. Kestrel shows exactly what before you confirm, and holds the send when confidential mode is on and no current employer is chosen. The service's own retention rules apply to anything sent; Kestrel cannot recall it. {{ provider_reads }} Keys stay on this computer and go only to the service.</p>
         {% else %}{{ disclosure_text() }}{% endif %}
       </details>
       {% set free_on = connect_form.free_only if connect_form else hosted_mode.free_only %}
@@ -185,9 +185,9 @@
           <div class="ob-f"><label for="ob-head">Headline <span class="k-pill">Optional</span></label>
             <input class="k-input" id="ob-head" name="headline" value="{{ a.headline }}" placeholder="e.g. Your role in a few words"></div>
           <div class="ob-f"><label for="ob-phone">Phone <span class="k-pill">Optional</span></label>
-            <input class="k-input" id="ob-phone" type="tel" name="phone" value="{{ a.phone }}" placeholder="e.g. (555) 010-0100" autocomplete="tel"></div>
-          <div class="ob-f"><label for="ob-li">LinkedIn link <span class="k-pill" data-testid="ob-linkedin-note">Not recorded</span></label>
-            <input class="k-input" id="ob-li" disabled placeholder="Kestrel does not keep a LinkedIn link yet"></div>
+            {% with ph_id='ob-phone', ph_value=a.phone, ph_country=a.phone_country, ph_entered=a.phone_entered, ph_e164=a.phone_e164, ph_pin=a.phone_pin, ph_under=a.phone_under %}{% include 'partials/phone_field.html' %}{% endwith %}</div>
+          <div class="ob-f"><label for="ob-li">LinkedIn link <span class="k-pill">Optional</span></label>
+            {% with li_id='ob-li', li_value=a.linkedin_profile %}{% include 'partials/linkedin_field.html' %}{% endwith %}</div>
         </div>
       </div></div></div>
     </section>

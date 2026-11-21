@@ -22,7 +22,7 @@ from kestrel import paths
 from kestrel.db.base import iso
 from kestrel.db.engine import make_async_engine
 from kestrel.db.models import Run, ScrapeRun, Task
-from tests import runs_seed
+from tests import clock_seed, runs_seed
 from tests.browser import (
     LINES_JS,
     TIMER_PROBE_JS,
@@ -1074,5 +1074,69 @@ def test_a_poll_updates_the_work_in_flight_without_moving_the_card(running, widt
         _eased(frames, "top", "the card below the live card")
         _eased(frames, "h", "the live card")
         assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_clock_ticks_in_seconds_without_redrawing_the_step_text(running):
+    """#177 (D-UI-690, D-UI-691): a run 20 s old reads "20 sec so far", never "just started";
+    after the next poll the clock reads the new time while the step text node is the same
+    element it was before (only what changed is redrawn)."""
+    base, browser = running
+
+    async def started(s, seconds_ago):
+        run = (await s.execute(select(Run).where(Run.status == "running"))).scalars().one()
+        run.started_at = iso(clock_seed.ago(horizon=timedelta(0), seconds=seconds_ago))
+
+    async def twenty(s):
+        await started(s, 20)
+
+    async def forty(s):
+        await started(s, 40)
+
+    _db(twenty)
+    ctx, page, errors = _page(base, browser, "light", 1280)
+    try:
+        before = page.get_by_test_id("run-clock").inner_text()
+        assert "sec so far" in before and "just started" not in before, before
+        page.evaluate("""() => { window.__mainNode = document.querySelector(
+          '[data-live="step-main"]'); }""")
+        _db(forty)
+        with page.expect_response(lambda r: r.url.endswith("/runs") and r.request.method == "GET"):
+            page.evaluate("htmx.trigger(document.body, 'run-refresh')")
+        page.wait_for_function(
+            "() => /^ · (4\\d|5\\d) sec so far$/.test("
+            "document.querySelector('[data-live=\"step-clock\"]').textContent)")
+        assert page.evaluate("""() => window.__mainNode === document.querySelector(
+          '[data-live="step-main"]')""") is True
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_keep_running_after_a_failed_stop_puts_the_two_step_spans_back(running):
+    """#177 (D-UI-692): the Stopping words replace the step line while the request is out; when the
+    stop fails the card restores the same span nodes it held, so the step text and the clock are
+    not rebuilt as one string. The refresh and poll are blocked, so only the restore is observed."""
+    base, browser = running
+    ctx, page, errors = _page(base, browser, "light", 1280)
+    try:
+        page.evaluate("""() => { window.__mainNode = document.querySelector(
+          '[data-live="step-main"]'); window.__clockNode = document.querySelector(
+          '[data-live="step-clock"]'); }""")
+        page.route("**/runs", lambda route: route.abort())
+        page.route("**/runs/stop", lambda route: route.fulfill(status=500, body="no"))
+        page.get_by_test_id("run-stop").click()
+        with page.expect_response(lambda r: r.url.endswith("/runs/stop")):
+            page.get_by_test_id("run-stop-yes").click()
+        page.wait_for_function(
+            "() => !document.querySelector('[data-testid=\"run-live\"]').hasAttribute("
+            "'data-stopping')")
+        page.wait_for_function(_ANIMATIONS_DONE)
+        same = page.evaluate("""() => [
+          window.__mainNode === document.querySelector('[data-live="step-main"]'),
+          window.__clockNode === document.querySelector('[data-live="step-clock"]')]""")
+        assert same == [True, True], same
+        assert "Stopping" not in page.get_by_test_id("run-step").inner_text()
     finally:
         ctx.close()

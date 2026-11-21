@@ -219,7 +219,7 @@ def test_migration_0032_creates_the_table_and_indexes_and_downgrades(tmp_path):
     con.close()
     assert not any("requirement_correction" in n for n in names)
     _go(db, "up", "head")
-    assert migrate.head_revision() == "0034"
+    assert migrate.head_revision() == "0041"  # D-SCORE-28 added 0037 and 0040; #204 0041 on top
 
 
 def test_migration_0033_adds_the_correction_ids_and_downgrades(tmp_path):
@@ -234,6 +234,43 @@ def test_migration_0033_adds_the_correction_ids_and_downgrades(tmp_path):
     cols = {r[1] for r in con.execute("PRAGMA table_info(evaluation)")}
     con.close()
     assert "correction_ids" not in cols
+
+
+def test_migration_0037_adds_comp_currency_known_and_downgrades(tmp_path):
+    """D-SCORE-28: whether a posting's pay currency was stated; NULL on older rows."""
+    db = tmp_path / "m.db"
+    _go(db, "up", "0037")
+    con = sqlite3.connect(db)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(opportunity)")}
+    con.close()
+    assert "comp_currency_known" in cols
+    _go(db, "down", "0034")
+    con = sqlite3.connect(db)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(opportunity)")}
+    con.close()
+    assert "comp_currency_known" not in cols
+
+
+def test_migration_0040_adds_comp_interval_known_after_0037_and_downgrades(tmp_path):
+    """0037 adds only the currency flag; 0040, chained after it, adds the interval flag."""
+    db = tmp_path / "m.db"
+    _go(db, "up", "0037")
+    con = sqlite3.connect(db)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(opportunity)")}
+    con.close()
+    assert "comp_currency_known" in cols
+    assert "comp_interval_known" not in cols
+    _go(db, "up", "0040")
+    con = sqlite3.connect(db)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(opportunity)")}
+    con.close()
+    assert "comp_interval_known" in cols
+    _go(db, "down", "0037")
+    con = sqlite3.connect(db)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(opportunity)")}
+    con.close()
+    assert "comp_interval_known" not in cols
+    assert "comp_currency_known" in cols
 
 
 # ------------------------------------------------------------------------------- scope rules

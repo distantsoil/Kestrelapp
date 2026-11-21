@@ -9,6 +9,7 @@ from sqlalchemy import select
 from kestrel.config import HostedMode
 from kestrel.db.models import DocSlot, Setting
 from kestrel.web.pages import analytics, escalate, offers  # noqa: F401  (imported before any stub)
+from tests.page_source import as_written
 from tests.test_documents_editor import _app
 
 
@@ -124,5 +125,5 @@ def test_local_import_keeps_automatic_processing(monkeypatch) -> None:
 
     response = client.post("/api/documents/import/read", data={"text": "Led a team."})
     assert response.status_code == 200
-    assert 'class="import-processing"' in response.text
+    assert 'class="import-processing"' in as_written(response.text)
     assert 'hx-trigger="load"' in response.text

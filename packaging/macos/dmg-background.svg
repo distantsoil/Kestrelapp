@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 660 400" width="660" height="400">
+  <!-- The Kestrel disk image window background (#198), Paper and Indigo (D-UI-53). Finder draws
+       the two icons on top at (170, 200) and (490, 200), the positions in dmg_settings.py.
+       The image does not follow the system theme, so it carries its own light paper ground in
+       both Finder modes. Every color is a token variable from kestrel/web/static/css/tokens.css
+       (light theme); scripts/make_dmg_background.py fills them in and renders the PNGs. -->
+  <rect width="660" height="400" fill="var(--bg)"/>
+  <rect x="0" y="0" width="660" height="64" fill="var(--soft)"/>
+  <image x="24" y="14" width="36" height="36" href="kestrel-mark.svg" xlink:href="kestrel-mark.svg"/>
+  <text x="70" y="40" font-family="-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="19" font-weight="600" fill="var(--ink)">Kestrel</text>
+  <!-- the cue: an indigo arrow from the app to the Applications folder -->
+  <path d="M262 200 H384" stroke="var(--brand)" stroke-width="6" stroke-linecap="round" fill="none"/>
+  <path d="M372 184 L398 200 L372 216" stroke="var(--brand)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <text x="330" y="340" text-anchor="middle" font-family="-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="16" fill="var(--muted)">Drag Kestrel to Applications</text>
+</svg>

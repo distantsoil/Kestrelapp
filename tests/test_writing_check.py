@@ -420,13 +420,15 @@ def test_the_scoring_prompts_keep_their_version_and_get_no_plain_writing_block()
 
     # v3 is the operator-corrections change (D-LEARN-3, D-SCORE-1), not plain writing: its system
     # prompts are v2's byte for byte, so D-SCORE-PW still holds.
+    # v4 (issue #208, D-SCORE-24) sits behind scoring.evaluate_version; v3 is the default
+    # until the owner's live benchmark (D-SCORE-29). Neither has a plain-writing block.
     assert tier2._VERSION == tier3._VERSION == {
         "employment": "evaluate/v3", "consulting": "evaluate_consulting/v3",
     }
     assert harness.DEFAULT_PROMPT_VERSION == tier2._VERSION
-    assert "evaluate/v4" not in SCHEMA_BY_VERSION
+    assert "evaluate/v5" not in SCHEMA_BY_VERSION
     for version in ("evaluate/v2", "evaluate_consulting/v2", "evaluate/v3",
-                    "evaluate_consulting/v3"):
+                    "evaluate_consulting/v3", "evaluate/v4", "evaluate_consulting/v4"):
         assert plain_writing() not in load_prompt(version).system
     for track in ("evaluate", "evaluate_consulting"):
         assert load_prompt(f"{track}/v3").system == load_prompt(f"{track}/v2").system

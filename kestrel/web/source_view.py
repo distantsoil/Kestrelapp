@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, field
 
 from kestrel.db.models import ScrapeRun, Source
+from kestrel.ingest import failure_code
 from kestrel.web.retry_words import when_words
 
 BOARDS, ATS, FEEDS, GOV, SIG = "boards", "ats", "feeds", "gov", "sig"
@@ -81,6 +82,29 @@ SLOWED_REASON = "Site asked us to slow down. Retrying later."
 _RATE = re.compile(r"\b429\b|too many requests|rate.?limit|slow down", re.I)
 _MOVED = re.compile(r"\b(404|410)\b|not found|moved", re.I)
 
+# One decision: when a check stored a code, the reason on the page comes from that code, so the
+# sentence and the code beside it cannot disagree. Rows saved before codes keep the older reading
+# of the stored text (`_RATE`, `_MOVED`) because they have no code to read.
+REASON_BY_CODE = {
+    "SRC-001": "Kestrel could not use how this source is set up. Open it and check the setup.",
+    "SRC-002": SLOWED_REASON,
+    "SRC-003": "The site had a server problem. Kestrel tries again on the next check.",
+    "SRC-004": "The site took too long to answer. Kestrel tries again on the next check.",
+    "SRC-005": "The site's rules ask programs not to read this page, so Kestrel did not open it.",
+    "SRC-006": "This board needs a key of your own. Add it on the Sources page.",
+    "SRC-007": ("This source allows only a few checks a day, and today's are used. Kestrel "
+                "checks again tomorrow."),
+    "SRC-008": "Kestrel could not find this page or board at its saved address. It may have moved.",
+    "SRC-009": "Part of the last check did not finish. Kestrel tries again next check.",
+    "SRC-010": "Kestrel could not read this source. It tries again on the next check.",
+    "SRC-011": "A posting could not be saved. Kestrel tries again on the next check.",
+    "SRC-012": ("Something unexpected stopped the last check. Kestrel tries again on the next "
+                "check."),
+    "SRC-013": "",  # a saved flag, handled before any run is read
+    "SRC-014": ("No posting from the last check could be saved. Kestrel tries again on the next "
+                "check."),
+}
+
 REMOVED_KEY = "_removed"  # config marker: the source was removed and Undo can bring it back
 
 
@@ -140,13 +164,19 @@ def type_label(src: Source) -> str:
     return _SIGNAL_TYPE.get(src.kind, own)
 
 
+def check_tone(status: str | None) -> str:
+    """The color of a check that did not finish well, from its own status only, never from its
+    text or from how many checks failed before it: a failed check is red (it counts toward the
+    switch-off after three), anything else amber. The Runs page reads a failed search red and a
+    partial one amber the same way, so the dot, the bar and Runs agree (D-ERR-24)."""
+    return "b" if status == "failed" else "w"
+
+
 def run_char(run: ScrapeRun) -> str:
     """One check as a sparkline bar: g healthy, w slowed or partly done, b failed."""
     if run.status == "ok":
         return "g"
-    if run.error and _RATE.search(run.error):
-        return "w"
-    return "b" if run.status == "failed" else "w"
+    return check_tone(run.status)
 
 
 @dataclass
@@ -170,8 +200,10 @@ class SourceView:
     enabled: bool
     removable: bool
     sites: list[dict] = field(default_factory=list)
+    bodies: list[dict] = field(default_factory=list)  # new roles with no description
     model_used: str = ""
     unreadable: int = 0
+    code: str = ""  # the SRC code of the last problem, "" when none (#174, D-ERR-20)
 
     @property
     def search_text(self) -> str:
@@ -204,19 +236,53 @@ def _health(src: Source, runs: list[ScrapeRun], sites: list[dict] | None) -> tup
     if src.kind in KEYED_BOARDS and latest is not None and latest.status != "ok":
         if _key_problem(src.kind, err):  # no key yet, or the board refused it: say so, plainly
             return "b", err.split(": ", 1)[-1].rstrip(".") + ".", err
-    if latest is not None and latest.status != "ok" and _RATE.search(err):
+    code = failure_code.stored_code(latest.counts) if latest is not None else None
+    if latest is not None and code and REASON_BY_CODE.get(code) and latest.status != "ok":
+        return check_tone(latest.status), REASON_BY_CODE[code], err
+    # A row saved before codes: its text is read only to word a partial check; a failed one is
+    # red below whatever its text says, as on Runs.
+    if latest is not None and latest.status == "partial" and _RATE.search(err):
         return "w", SLOWED_REASON, err
-    if src.consecutive_failures or (latest is not None and latest.status == "failed"):
+    partial = latest is not None and latest.status == "partial"
+    if (src.consecutive_failures and not partial) or (
+            latest is not None and latest.status == "failed"):
         if _MOVED.search(err):
             return "b", ("This company page moved. Kestrel could not find it at the saved "
                          "address."), err
         return "b", "Kestrel could not read this source. It tries again on the next check.", err
-    if latest is not None and latest.status == "partial" and err:
+    if partial and (err or src.consecutive_failures):
         return "w", "Part of the last check did not finish. Kestrel tries again next check.", err
     quiet = [s["label"] for s in (sites or []) if s["count"] == 0]
     if quiet:
         return "w", f"{' and '.join(quiet)} found nothing this check.", ""
     return "g", "", ""
+
+
+def body_lines(src: Source, counts: dict | None) -> list[dict]:
+    """Per source (per board for a search) the share of the last run's new roles that had no
+    description, with its sample size, and the plain warning when it jumped (issue 182). The
+    state and the sentence come from one reading (`empty_bodies.Reading`)."""
+    from kestrel.analytics.run_summary import _SITE_WORDS
+    from kestrel.ingest import empty_bodies as eb
+
+    bodies = counts.get(eb.COUNTS_KEY) if isinstance(counts, dict) else None
+    if not isinstance(bodies, dict):
+        return []
+    out: list[dict] = []
+    for key, raw in bodies.items():
+        e = eb.clean_entry(raw)  # rebuilt from our own schema, never trusted as stored (D-SEC-20)
+        if e is None or not isinstance(key, str) or not 0 < len(key) <= 40:
+            continue
+        new, empty = e["new"], e["empty"]
+        reading = eb.Reading(new, empty, e["state"], None)
+        if key == eb.WHOLE_SOURCE:
+            label = str(src.name or "This source")
+        else:
+            label = str(_SITE_WORDS.get(key) or key.replace("_", " ").title())
+        note = reading.warning(label)
+        out.append({"label": label, "text": reading.share_text, "state": reading.state,
+                    "warn": note.sentence if note else None})
+    return out
 
 
 def build_view(
@@ -247,6 +313,11 @@ def build_view(
         detail = ""
     chars = [run_char(r) for r in reversed(done[:10])]
     spark = "m" * (10 - len(chars)) + "".join(chars)
+    code = ""
+    if _no_boards(src):  # a saved flag, so the cause is known without a run
+        code = failure_code.NO_BOARDS
+    elif src.enabled and key in ("w", "b") and latest is not None:
+        code = failure_code.stored_code(latest.counts) or ""  # an old run has none
     return SourceView(
         src=src, id=src.id, name=src.name, group=group_of(src), origin=origin,
         origin_label=ORIGINS[origin][0], type_line=f"{line} · {detail}" if detail else line,
@@ -255,8 +326,9 @@ def build_view(
         open_n=counts.get("fetched") if latest is not None else None,
         new_n=int(counts.get("new") or 0), spark=spark, enabled=bool(src.enabled),
         removable=src.origin in ("custom", "suggested"), sites=sites or [],
+        bodies=body_lines(src, counts),
         model_used=_run_model.label_of(counts) or "",
-        unreadable=int(counts.get("unreadable") or 0),
+        unreadable=int(counts.get("unreadable") or 0), code=code,
     )
 
 

@@ -51,11 +51,17 @@
 
   function patch(oldRegion, newRegion) {
     $$('[data-live]', newRegion).forEach(function (n) {
-      var o = $('[data-live="' + n.getAttribute('data-live') + '"]', oldRegion);
+      var key = n.getAttribute('data-live');
+      var o = $('[data-live="' + key + '"]', oldRegion);
       if (!o) return;
       // Stop was pressed and the server has not said so yet: the card keeps its own words.
       if (n.getAttribute('data-live') === 'step' && o.closest('[data-stopping]') &&
           !$('[data-stopping]', newRegion)) return;
+      // The step line is two spans (text and clock). When both sides have them each is patched
+      // by its own key, so the clock ticking never redraws the step text (D-UI-691).
+      // A clock that appeared or went away changes the shape, so that one swaps whole.
+      if (key === 'step' && $('[data-live="step-main"]', o) && $('[data-live="step-main"]', n) &&
+          !!$('[data-live="step-clock"]', o) === !!$('[data-live="step-clock"]', n)) return;
       if (o.innerHTML !== n.innerHTML) o.innerHTML = n.innerHTML;
       if (o.className !== n.className) o.className = n.className;
       var tid = n.getAttribute('data-testid');
@@ -203,7 +209,10 @@
     var acts = $('.rn-acts', card), title = $('h3', card), step = $('[data-live="step"]', card);
     card.setAttribute('data-stopping', '');
     stopPending = true;
-    card.__kback = { title: title && title.textContent, step: step && step.textContent };
+    // The step's own child nodes are kept (not its text), so Keep running puts the two spans
+    // back exactly and the clock never redraws the whole line (D-UI-692).
+    card.__kback = { title: title && title.textContent,
+                     step: step && Array.prototype.slice.call(step.childNodes) };
     $('.rn-acts__ask', acts).hidden = true;
     $('.rn-acts__main', acts).hidden = true;
     var span = $('.rn-acts__stop', acts), btn = $('.is-stopping', span);
@@ -228,7 +237,7 @@
     $('.rn-acts__stop', acts).hidden = true;
     $('.rn-acts__main', acts).hidden = false;
     if (title) title.textContent = card.__kback.title;
-    if (step) step.textContent = card.__kback.step;
+    if (step && card.__kback.step) step.replaceChildren.apply(step, card.__kback.step);
     card.__kback = null;
   }
   function onStopClickCapture(e) {

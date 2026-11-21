@@ -306,6 +306,8 @@ def test_a_group_pages_25_at_a_time_and_not_a_fit_opens_in_its_own_box(live):
 
 
 def test_keep_it_anyway_and_hide_company_with_undo(live):
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
     _base, _browser, ids, _sig = live
     ctx, page, errors = _page(live, "light", 1680)
     try:
@@ -326,10 +328,203 @@ def test_keep_it_anyway_and_hide_company_with_undo(live):
         # action's Undo, picked by its text, after its effect shows.
         undo = page.locator(".k-toast", has_text="hidden. Its roles leave Pipeline.").locator(
             ".k-toast__undo")
-        undo.wait_for(state="visible")
+        try:
+            undo.wait_for(state="visible")
+        except PlaywrightTimeoutError as exc:
+            # Evidence for #238: every toast on screen tells the alternate answers ("was already
+            # hidden", "no company to hide", an error note) and an evicted or never-raised toast
+            # apart. A list refresh landing while this request is in flight detaches the button
+            # that issued it, and its HX-Trigger toast then never reaches the document (D-TEST-799).
+            toasts = page.evaluate(
+                "[...document.querySelectorAll('.k-toast')].map(t => t.textContent.trim())")
+            raise AssertionError(f"no hide-company Undo; toasts on screen: {toasts}") from exc
         page.wait_for_function("id => !document.querySelector('#row-' + id)", arg=str(ids["b"]))
         undo.click()
         page.wait_for_selector(f"#row-{ids['b']}")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+# Issue #239: a list refresh that lands while a row action's request is in flight replaces the
+# row, so the button that sent the request is no longer on the page when its answer arrives. The
+# answer's HX-Trigger events (the toast with Undo, pl-gone, pipelineRefresh) must still reach the
+# page (D-UI-870). The race is made deterministic: the action's request is held by a route
+# intercept, the refresh is fired and awaited until the issuing button is detached, and only then
+# is the request let through. Nothing waits for the list to settle before the toast is looked for.
+
+_TOASTS = "[...document.querySelectorAll('.k-toast')].map(t => t.textContent.trim())"
+
+
+def _held(page, pattern: str) -> list:
+    """Hold every request matching `pattern` until the test lets it through."""
+    held: list = []
+    page.route(pattern, lambda route: held.append(route))
+    return held
+
+
+def _race(page, button, held: list, path: str) -> None:
+    """Press `button`, keep its request held, refresh the list until the button is detached, then
+    let the request through."""
+    button.evaluate("el => { window.__k239 = el; }")
+    with page.expect_request(lambda r: path in r.url and r.method == "POST"):
+        button.click()
+    for _ in range(2000):  # the route callback runs on a later Playwright call; not a sleep
+        if held:
+            break
+        page.wait_for_timeout(5)
+    page.evaluate("htmx.trigger(document.body, 'pipelineRefresh')")
+    page.wait_for_function("() => window.__k239 && !window.__k239.isConnected")
+    assert len(held) == 1
+    held.pop().continue_()
+
+
+def _toast_with(page, text: str):
+    """The toast holding `text`; on a timeout, every toast on screen is in the message."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    toast = page.locator(".k-toast", has_text=text)
+    try:
+        toast.first.wait_for(state="visible")
+    except PlaywrightTimeoutError as exc:
+        raise AssertionError(f"no toast {text!r}; toasts on screen: {page.evaluate(_TOASTS)}") \
+            from exc
+    return toast
+
+
+def _open_menu(page, rid) -> None:
+    row = page.locator(f"#row-{rid}")
+    row.hover()
+    row.locator("summary").click()
+
+
+# Every frame's vertical offset of the newest toast, from the frame it is added until it has
+# rested at 0 for three frames: it slides in. Sampling until rest, not a fixed frame count, because
+# a loaded machine renders fewer frames per second (the owner's Windows gate on f7b54697 stopped
+# at 40 frames with the toast still 13px from rest). The cap only stops a toast that never rests.
+_TOAST_FRAMES = """() => { window.__k239y = []; window.__k239done = false;
+  new MutationObserver(muts => { muts.forEach(m => m.addedNodes.forEach(n => {
+    if (!(n.classList && n.classList.contains('k-toast'))) return;
+    let rest = 0, left = 1200;
+    const step = () => { const y = new DOMMatrix(getComputedStyle(n).transform).m42;
+      window.__k239y.push(y); rest = y === 0 ? rest + 1 : 0;
+      if (rest < 3 && --left > 0) requestAnimationFrame(step); else window.__k239done = true; };
+    step(); })); }).observe(document.body, {childList: true, subtree: true}); }"""
+
+# The toast fits the window and its own text and Undo are not clipped or on top of each other.
+_TOAST_FIT = """el => { const b = el.getBoundingClientRect();
+  const u = el.querySelector('.k-toast__undo');
+  const clipped = [...el.querySelectorAll('*')].filter(c => c.offsetParent !== null &&
+    c.children.length === 0 && c.scrollWidth > c.clientWidth + 1).map(c => c.textContent.trim());
+  const kids = [...el.children].filter(c => c.offsetParent !== null && c !== u)
+    .map(c => c.getBoundingClientRect());
+  const ub = u && u.getBoundingClientRect();
+  const over = ub ? kids.filter(k => k.width && k.left < ub.right - 1 && ub.left < k.right - 1 &&
+    k.top < ub.bottom - 1 && ub.top < k.bottom - 1).length : 0;
+  return {inside: b.left >= 0 && b.right <= innerWidth + 0.5 && b.bottom <= innerHeight + 0.5,
+          clipped, over}; }"""
+
+
+@pytest.mark.parametrize("theme,width", [("light", 1680), ("dark", 1680), ("light", 390)])
+def test_hide_company_keeps_its_toast_and_undo_when_a_refresh_lands_mid_request(
+        live, theme, width):
+    """Named cases 1 and 5: the #239 repro, then Undo from that toast brings the company back.
+    The toast that arrives after the race slides in and fits, light, dark and narrow."""
+    _base, _browser, ids, _sig = live
+    ctx, page, errors = _page(live, theme, width)
+    try:
+        held = _held(page, "**/decide/hide-company")
+        _open_menu(page, ids["a"])
+        page.evaluate(_TOAST_FRAMES)
+        _race(page, page.locator(f"#row-{ids['a']} [data-testid=hide-company]"), held,
+              "/decide/hide-company")
+        toast = _toast_with(page, "hidden. Its roles leave Pipeline.")
+        undo = toast.locator(".k-toast__undo")
+        undo.wait_for(state="visible")
+        assert toast.count() == 1, page.evaluate(_TOASTS)
+        page.wait_for_function("() => window.__k239done", timeout=30_000)
+        ys = page.evaluate("window.__k239y")
+        assert ys[0] > 1 and ys[-1] == 0, ys  # slid up from below and came to rest
+        # No snap: it moves up a little each frame and never jumps back down.
+        assert all(b <= a for a, b in zip(ys, ys[1:], strict=False)), ys
+        assert len([y for y in ys if 0 < y < ys[0]]) >= 3, ys  # frames in between, not one jump
+        fit = toast.evaluate(_TOAST_FIT)
+        assert fit == {"inside": True, "clipped": [], "over": 0}, fit
+        _shot(page, f"239-hide-toast-{theme}-{width}")
+        # The answer's pipelineRefresh arrived too: the company's roles leave the list.
+        page.wait_for_function("id => !document.querySelector('#row-' + id)", arg=str(ids["b"]))
+        page.unroute("**/decide/hide-company")
+        undo.click()
+        page.wait_for_selector(f"#row-{ids['b']}")
+        page.wait_for_selector(f"#row-{ids['a']}")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_keep_it_anyway_keeps_its_toast_when_a_refresh_lands_mid_request(live):
+    """Named case 2: Keep it anyway from Not a fit, with the same mid-request refresh."""
+    _base, _browser, _ids, _sig = live
+    ctx, page, errors = _page(live, "light", 1680)
+    try:
+        page.click("[data-testid=not-fit-show]")
+        page.wait_for_selector("#not-fit-box [data-testid=keep-anyway]")
+        first = page.locator("#not-fit-box .pl-row:has([data-testid=keep-anyway])").first
+        held = _held(page, "**/decide/keep-anyway")
+        _race(page, first.locator("[data-testid=keep-anyway]"), held, "/decide/keep-anyway")
+        toast = _toast_with(page, "Kept. Kestrel will score it with the AI.")
+        assert toast.count() == 1, page.evaluate(_TOASTS)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_save_for_later_and_save_view_keep_their_toasts_when_a_refresh_lands_mid_request(live):
+    """Named case 3: the other actions inside the refreshed list whose answers raise a toast
+    (Save for later with its Undo, and Save as a view) go through the same delivery."""
+    _base, _browser, ids, _sig = live
+    ctx, page, errors = _page(live, "light", 1680)
+    try:
+        held = _held(page, "**/decide/save")
+        _open_menu(page, ids["a"])
+        _race(page, page.locator(f"#row-{ids['a']} [data-testid=save-role]"), held,
+              "/decide/save")
+        saved = _toast_with(page, "Saved for later. Find it under Saved.")
+        saved.locator(".k-toast__undo").wait_for(state="visible")
+        assert saved.count() == 1, page.evaluate(_TOASTS)
+        # The answer's own pipelineRefresh arrived too: the row now offers Remove from Saved.
+        # (It also replaces the form, so the view name is typed only after it lands.)
+        page.wait_for_selector(f"#row-{ids['a']} [data-testid=unsave-role]", state="attached")
+        page.unroute("**/decide/save")
+
+        held = _held(page, "**/pipeline/views")
+        page.click("[data-testid=more-filters]")
+        page.fill("#pl-mf input[name=view_name]", "Invented test view")
+        _race(page, page.locator("[data-testid=save-view]"), held, "/pipeline/views")
+        view = _toast_with(page, "Saved the view Invented test view.")
+        assert view.count() == 1, page.evaluate(_TOASTS)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_a_row_action_with_no_refresh_shows_exactly_one_toast(live):
+    """Named case 4: on the normal path htmx delivers the toast itself and the re-delivery stays
+    out of it, so the toast is not doubled, even after the answer's own list refresh lands."""
+    _base, _browser, ids, _sig = live
+    ctx, page, errors = _page(live, "light", 1680)
+    try:
+        _open_menu(page, ids["a"])
+        page.evaluate("""() => { window.__k239done = 0;
+          document.body.addEventListener('htmx:afterSettle', e => {
+            if (e.target && e.target.id === 'pipeline-list') window.__k239done += 1; }); }""")
+        page.click(f"#row-{ids['a']} [data-testid=hide-company]")
+        toast = _toast_with(page, "hidden. Its roles leave Pipeline.")
+        # The answer's own pipelineRefresh has replaced the list: any second delivery has run.
+        page.wait_for_function("() => window.__k239done >= 1")
+        page.wait_for_function("id => !document.querySelector('#row-' + id)", arg=str(ids["b"]))
+        assert toast.count() == 1, page.evaluate(_TOASTS)
+        assert page.locator(".k-toast").count() == 1, page.evaluate(_TOASTS)
         assert errors == []
     finally:
         ctx.close()
@@ -486,17 +681,24 @@ def test_i_applied_in_the_side_panel_with_quick_pick_undo_and_edit_date(live, th
     answer redraws the panel; Edit date saves; Undo puts the shortlisted role back as it was."""
     from datetime import date
 
+    from kestrel.services.pursuit_board import FOLLOW_UP_DAYS
+
     _base, _browser, ids, _sig = live
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
     ctx, page, errors = _page(live, theme, 1680)
     try:
         page.click(f"#row-{ids['a']} .pl-title__t")
         block = page.locator("#pl-panel [data-testid=panel-applied]")
         block.get_by_test_id("applied-form").wait_for()
         assert page.get_by_test_id("panel-on-list").count() == 1  # shortlisted, not applied
+        # D-TEST-582: the dates come from the server's clock, as the page rendered them; this
+        # test's own date.today() was read at another moment (or, under the stress run's
+        # boundary clock, from another clock) and named a different day around midnight.
+        today = date.fromisoformat(block.get_by_test_id("applied-on-date").input_value())
+        yesterday = block.get_by_test_id("pick-yesterday").get_attribute("data-oa-pick")
+        assert yesterday == (today - timedelta(days=1)).isoformat()
         block.get_by_test_id("pick-yesterday").click()
         assert block.get_by_test_id("applied-on-date").input_value() == yesterday
-        follow = (date.today() + timedelta(days=6)).isoformat()
+        follow = (date.fromisoformat(yesterday) + timedelta(days=FOLLOW_UP_DAYS)).isoformat()
         assert block.get_by_test_id("applied-follow-date").input_value() == follow
         overflow = page.evaluate(
             "() => Array.from(document.querySelectorAll('#pl-panel [data-testid=panel-applied] *'))"
@@ -510,7 +712,7 @@ def test_i_applied_in_the_side_panel_with_quick_pick_undo_and_edit_date(live, th
         assert block.get_by_test_id("repost-note").is_visible()
         block.get_by_test_id("applied-edit-open").click()
         block.get_by_test_id("applied-edit-form").wait_for(state="visible")
-        three_ago = (date.today() - timedelta(days=3)).isoformat()
+        three_ago = (today - timedelta(days=3)).isoformat()
         block.get_by_test_id("applied-edit-date").fill(three_ago)
         block.get_by_test_id("applied-edit-save").click()
         block.get_by_test_id("applied-undo").click()  # waits while the save is on its way

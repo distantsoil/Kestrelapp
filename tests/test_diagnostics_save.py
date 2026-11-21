@@ -132,6 +132,7 @@ def test_a_failed_reveal_says_where_the_file_is(downloads, stub_build):
         desktop_bridge.set_reveal_handler(None)
 
 
+@pytest.mark.real_downloads_dir
 def test_downloads_dir_prefers_the_known_folder_then_home_then_exports(tmp_path, monkeypatch):
     known = tmp_path / "D" / "Downloads"
     known.mkdir(parents=True)

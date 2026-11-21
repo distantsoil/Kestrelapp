@@ -167,7 +167,7 @@ async def test_teamtailor_feeds_switched_off_is_a_partial_run_with_a_plain_sente
 
 @respx.mock
 @pytest.mark.parametrize(
-    "status, phrase", [(403, "refuses automated reads"), (429, "rate limiting")]
+    "status, phrase", [(403, "is rate limiting or unavailable"), (429, "rate limiting")]
 )
 async def test_teamtailor_403_and_429_are_partial_not_failures(status, phrase):
     json_route = respx.get(_JSON_URL).mock(return_value=Response(status))

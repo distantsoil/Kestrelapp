@@ -393,6 +393,17 @@ def test_settings_hosted_flow(monkeypatch):
     assert "sk-or-secret9" not in r.text
     assert "OPENROUTER_API_KEY=sk-or-secret9" in paths.dotenv_path().read_text()
 
+    # Before the disclosure is ticked, Test sends nothing (D-REL-41 round 2: the pause holds for a
+    # button press too) and says so.
+    with respx.mock(assert_all_called=False) as untouched:
+        untouched.get(url__regex=r".*").mock(return_value=Response(500))
+        r = client.post("/settings/hosted/test", data={"backend": "frontier"})
+    assert r.status_code == 200 and "Nothing was sent" in r.text
+    assert not untouched.calls
+    # Tick the disclosure through the real form, so online models are in use.
+    r = client.post("/settings/hosted/mode", data={"action": "on", "ack": ["off", "on"]})
+    assert r.status_code == 200 and "Disclosure acknowledged" in r.text
+
     # Test it against a mocked provider: key status and a model list appear.
     with respx.mock:
         respx.get("https://openrouter.ai/api/v1/key").mock(

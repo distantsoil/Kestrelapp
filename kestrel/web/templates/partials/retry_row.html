@@ -17,10 +17,10 @@
         {% else %}<b class="k-muted">No role attached</b>{% endif %}
         <span>{% if opp and opp.org_name %}{% if opp.org_id %}<a href="/orgs/{{ opp.org_id }}">{{ opp.org_name }}</a>{% else %}{{ opp.org_name }}{% endif %}{% endif %}{% if row.hidden %} <em>(hidden)</em>{% endif %}</span>
       </div>
-      <span class="k-pill k-pill--info rt-step" data-testid="rt-step">{{ row.step_label }}</span>
       <span class="rt-why" title="{{ row.reason }}" data-testid="rt-why">{{ row.reason }}</span>
+      <span class="k-pill k-pill--info rt-step" data-testid="rt-step">{{ row.step_label }}</span>
       <span class="rt-when">{{ row.when }}</span>
-      <span class="rt-tries">{{ 'Not sent' if row.on_hold else row.tries }}</span>
+      <span class="rt-tries">{{ 'Not sent' if row.not_sent else row.tries }}</span>
     </div>
     {% if row.queued %}
     <div class="rt-wait" data-testid="retry-queued" role="status"><span class="rt-spin" aria-hidden="true"></span><span>Trying again…</span></div>

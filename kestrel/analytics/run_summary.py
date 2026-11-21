@@ -76,6 +76,7 @@ from kestrel.db.models import (
     Source,
     Task,
 )
+from kestrel.ingest import failure_code
 from kestrel.web.fit import (
     GOOD,
     MAYBE,
@@ -89,6 +90,7 @@ from kestrel.web.fit import (
 from kestrel.web.words import words
 
 APP_RUN_NAME = "desktop"  # runlog.APP_RUN_NAME
+CUT_OFF_CODE = "RUN-003"  # a search the app closed on, in the live feed (#174)
 # Stamped by POST /api/worker/resume: the window never reaches back past it (R3).
 RESUMED_KEY = "worker.resumed_at"
 # The Stop press, tied to the run it stopped ({"run_id": N}): what lets the Runs card say Stopping.
@@ -181,9 +183,31 @@ def search_label(name: str | None, kind: str | None, config: dict | None) -> str
     return f"{search_term(name, config)} on {board_label(kind, config)}"
 
 
-def problem_words(error: str | None, status: str | None) -> str:
+# One decision: a search that stored a code is described by that code, so the words and the code
+# beside them agree. A search from before codes has none and keeps the reading of its text.
+WORDS_BY_CODE = {
+    "SRC-001": "has a setup problem",
+    "SRC-002": "was rate-limited",
+    "SRC-003": "returned a server error",
+    "SRC-004": "timed out",
+    "SRC-005": "was not read because the site's rules ask programs not to",
+    "SRC-006": "needs a key of your own",
+    "SRC-007": "reached its daily limit",
+    "SRC-008": "could not be found at its saved address",
+    "SRC-009": "stopped before it finished",
+    "SRC-010": "could not be read",
+    "SRC-011": "could not save a posting",
+    "SRC-012": "hit an unexpected problem",
+    "SRC-013": "has no job boards left",
+    "SRC-014": "could not save any posting",
+}
+
+
+def problem_words(error: str | None, status: str | None, code: str | None = None) -> str:
     """What went wrong with a search, in a few words (R4): a 429 is a rate limit, a 5xx a
     server error. Never the raw error text, which can carry a URL or an org name."""
+    if code in WORDS_BY_CODE:
+        return WORDS_BY_CODE[code]
     e = (error or "").lower()
     if "429" in e or "too many requests" in e or "rate limit" in e or "rate-limit" in e:
         return "was rate-limited"
@@ -392,7 +416,7 @@ async def run_summary(
                 continue
             # The run closed with this search unfinished: the app stopped mid-search (R11).
             out["searches_cut_off"] += 1
-            events.append({"at": sr_start, "tone": "warn",
+            events.append({"at": sr_start, "tone": "warn", "code": CUT_OFF_CODE,
                            "text": f"Search for '{term}' on {board} was cut off"})
             continue
         out["searches_done"] += 1
@@ -405,11 +429,12 @@ async def run_summary(
         last_scrape_end = max(last_scrape_end or "", sr_end)
         w = words(strack)
         if status in ("failed", "partial"):
-            why = problem_words(error, status)
+            why = problem_words(error, status, failure_code.stored_code(counts))
             out["searches_failed" if status == "failed" else "searches_partial"] += 1
             label = board if kind != "jobspy" else f"{term} on {board}"
             out["problems"].append({"name": label, "why": why})
             events.append({"at": sr_end, "tone": "bad" if status == "failed" else "warn",
+                           "code": failure_code.stored_code(counts),
                            "text": f"Search for '{term}' on {board} {why}; it is retried "
                                    "next run"})
         if status != "failed" or new:
@@ -666,13 +691,15 @@ def step_words(summary: dict[str, Any]) -> str:
 
 
 def elapsed_words(secs: int | None) -> str:
-    """"just started", "4 min so far", "1 hr 5 min so far": whole minutes, so the line changes
-    once a minute."""
+    """"12 sec so far", "4 min so far", "1 hr 5 min so far": the real time since the run began
+    (D-UI-690). Seconds show until the first minute, so a working run never reads "just
+    started"; the Runs poll (every 5 s) carries the change and only this clock redraws."""
     if secs is None:
         return ""
+    secs = max(0, int(secs))
     m = secs // 60
     if m < 1:
-        return "just started"
+        return f"{secs} sec so far"
     return f"{m} min so far" if m < 60 else f"{m // 60} hr {m % 60} min so far"
 
 
@@ -681,6 +708,14 @@ def stage_line(summary: dict[str, Any], *, elapsed: int | None = None) -> str:
     the search being run and the roles found, or the failures. While the run is going it also
     says how many tasks are on another try and how long the run has been going (#92); both come
     from rows the worker already writes, and the line is one text, so the card never moves."""
+    main, clock = stage_parts(summary, elapsed=elapsed)
+    return f"{main} · {clock}" if clock else main
+
+
+def stage_parts(summary: dict[str, Any], *, elapsed: int | None = None) -> tuple[str, str]:
+    """`stage_line` in two pieces: the step text and the running clock. The page draws them as
+    two spans so the clock ticks without the step text redrawing (D-UI-691). The clock is empty
+    unless the run is active and its start is known."""
     s = summary
     line = step_words(s)
     stage = s.get("stage")
@@ -691,12 +726,13 @@ def stage_line(summary: dict[str, Any], *, elapsed: int | None = None) -> str:
     elif stage == "full_review" and s["failed"]:
         line += f" · {s['failed']} failed"
     elif line == "Idle":
-        return ""
+        return "", ""
+    clock = ""
     if s.get("active") and elapsed is not None:
         if s.get("retrying"):
             line += f" · {s['retrying']} retrying"
-        line += f" · {elapsed_words(elapsed)}"
-    return line
+        clock = elapsed_words(elapsed)
+    return line, clock
 
 
 def rail_line(summary: dict[str, Any]) -> str | None:
@@ -727,11 +763,27 @@ def added_for(summary: dict[str, Any], track: str) -> dict[str, int]:
     }
 
 
+def _now() -> datetime:
+    """This module's own clock; tests patch it (D-TEST-2)."""
+    return datetime.now(UTC)
+
+
 def seconds_since(ts: str | None, now: datetime | None = None) -> int | None:
     dt = _parse(ts)
     if dt is None:
         return None
-    return max(0, int(((now or datetime.now(UTC)) - dt).total_seconds()))
+    return max(0, int(((now or _now()) - dt).total_seconds()))
+
+
+def elapsed_since(ts: str | None, now: datetime | None = None) -> int | None:
+    """Whole seconds since `ts` for the Runs clock, or None when the start is unknown or lies
+    in the future (a backward clock correction, a copied database): a frozen "0 sec so far"
+    would look stalled, so such a run shows no clock until its start is in the past (D-UI-693)."""
+    dt = _parse(ts)
+    if dt is None:
+        return None
+    secs = int(((now or _now()) - dt).total_seconds())
+    return secs if secs >= 0 else None
 
 
 def ago_words(secs: int | None) -> str:
@@ -789,9 +841,12 @@ def view(summary: dict[str, Any], *, now: datetime | None = None) -> dict[str, A
     total = int(s.get("to_rate") or 0)
     s["recent_events"] = [{**e, "hhmm": hhmm(e.get("at"))} for e in s.get("recent_events") or []]
     n_problems = len(s.get("problems") or [])
+    step_main, step_clock = stage_parts(s, elapsed=elapsed_since(s.get("started_at"), now))
     s.update(
         step=stage_line(s),
-        step_detail=stage_line(s, elapsed=seconds_since(s.get("started_at"), now)),
+        step_detail=f"{step_main} · {step_clock}" if step_clock else step_main,
+        step_main=step_main,
+        step_clock=step_clock,
         headline=step_words(s),
         shown_groups=group_list(s),
         last_activity_words=ago_words(secs),

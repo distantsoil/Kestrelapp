@@ -15,7 +15,7 @@ import html
 
 import structlog
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from starlette.background import BackgroundTask
 
 from kestrel import paths
@@ -36,10 +36,18 @@ async def page(request: Request):
         "query": dict(request.query_params),
         "data_dir": str(paths.data_dir()),
         "config_dir": str(paths.config_dir()),
-        "has_profile": backup_service.export_profile() is not None,
+        **_profile_state(),
         "profile_bak": str(paths.config_dir() / backup_service.PROFILE_BAK),
     }
     return templates().TemplateResponse(request, "backup.html", ctx)
+
+
+def _profile_state() -> dict[str, object]:
+    data, why = backup_service.export_profile_why()
+    return {
+        "has_profile": data is not None,
+        "profile_refused": backup_service.profile_not_exported(why) if why else "",
+    }
 
 
 @router.get("/backup/download", dependencies=[LOCAL_DOWNLOAD])
@@ -48,6 +56,12 @@ async def download_backup():
     thread; the temp copy is deleted after the bytes have gone out."""
     try:
         archive = await asyncio.to_thread(backup_service.create_backup_to_temp)
+    except backup_service.DatabaseRefused as exc:
+        return HTMLResponse(
+            f'<div class="warnbox">Could not build the backup: '
+            f"{html.escape(backup_service.database_refused_reason(exc))}.</div>",
+            status_code=409,
+        )
     except OSError as exc:
         log.warning("backup_build_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(
@@ -69,14 +83,21 @@ async def download_backup():
 async def export_profile():
     """Just profile.yml. There is no separate service for the document masters, so the profile
     goes alone; the masters travel inside the full backup's database."""
-    p = backup_service.export_profile()
-    if p is None:
+    data, why = backup_service.export_profile_why()
+    if data is None and why:
+        return HTMLResponse(
+            f"<p>{html.escape(backup_service.profile_not_exported(why))}</p>", status_code=404)
+    if data is None:
         return HTMLResponse(
             "<p>No profile.yml yet. Kestrel is running on the shipped example profile, which is "
             "fiction and is not exported. Create config/profile.yml first.</p>",
             status_code=404,
         )
-    return FileResponse(p, media_type="application/yaml", filename=backup_service.PROFILE_NAME)
+    return Response(
+        data, media_type="application/yaml",
+        headers={"Content-Disposition":
+                 f'attachment; filename="{backup_service.PROFILE_NAME}"'},
+    )
 
 
 @router.post("/backup/import-profile", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])

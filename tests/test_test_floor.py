@@ -625,3 +625,97 @@ def test_a_note_that_was_already_on_the_base_does_not_cover_a_new_fix(release_re
     _commit(release_repo, "fix: new thing", {APP: "x = 5\n"})
     problems = tf.changelog_problems(base, repo=release_repo)
     assert len(problems) == 1 and "new thing" in problems[0]
+
+
+# ---- real-time limits: a small constant ceiling on real elapsed time (D-PROC-22) -----------------
+
+TIMED_TESTS = '''\
+import time
+from time import perf_counter
+
+
+def test_direct_ceiling():
+    started = time.monotonic()
+    work()
+    assert time.monotonic() - started < 1.5
+
+
+def test_named_ceiling():
+    started = time.perf_counter()
+    work()
+    took = time.perf_counter() - started
+    assert took <= 0.5
+
+
+def test_wall_clock_and_reversed():
+    t0 = time.time()
+    work()
+    assert 2 > time.time() - t0
+    assert 4.9 >= perf_counter() - t0
+
+
+def test_bounds_that_are_fine():
+    grace = 0.3
+    started = time.monotonic()
+    work()
+    took = time.monotonic() - started
+    assert grace <= took < grace + CANCEL_WAIT_S + 1.0   # relative to the code's own setting
+    assert time.monotonic() - started < 5.0              # a wide plain ceiling
+    assert took >= 0.2                                   # a floor, not a ceiling
+    assert took < limit                                  # a name, not a constant
+    assert len(calls) < 3                                # not a time at all
+    assert clock.now() - before < 1.0                    # a fake clock, not the real one
+'''
+
+
+def _realtime(changed):
+    found = tf.quality_findings("tests/test_timed.py", TIMED_TESTS, changed)
+    return [(f.line, f.warning) for f in found if f.rule == "real-time limit"]
+
+
+def test_a_small_constant_ceiling_on_real_time_is_found_in_every_form():
+    assert _realtime(None) == [(8, False), (15, False), (21, False), (22, False)]
+
+
+def test_bounds_relative_to_a_setting_wide_ceilings_floors_and_fake_clocks_are_not_flagged():
+    lines = {line for line, _warning in _realtime(None)}
+    assert lines.isdisjoint(range(25, 40))
+
+
+def test_an_old_line_warns_and_a_line_the_branch_changed_fails():
+    assert _realtime({15}) == [(8, True), (15, False), (21, True), (22, True)]
+    assert _realtime(set()) == [(8, True), (15, True), (21, True), (22, True)]
+
+
+def test_the_message_names_the_limit_and_both_fixes():
+    finding = next(f for f in tf.quality_findings("tests/test_timed.py", TIMED_TESTS, None)
+                   if f.rule == "real-time limit")
+    text = str(finding)
+    assert text.startswith("RULE real-time limit: tests/test_timed.py:8: ")
+    assert "under 1.5 s" in text
+    assert "relative to the code's own setting" in text and "fake clock" in text
+    old = next(f for f in tf.quality_findings("tests/test_timed.py", TIMED_TESTS, set())
+               if f.rule == "real-time limit")
+    assert str(old).startswith("WARNING real-time limit: ")
+
+
+def test_the_quality_lint_fails_a_changed_line_and_only_warns_on_an_old_one(monkeypatch):
+    monkeypatch.setattr(tf, "_read", lambda path: TIMED_TESTS)
+    monkeypatch.setattr(tf, "_show", lambda base, path: "an older version")  # not a new file
+    problems, warnings = [], []
+    tf._quality_lint({"tests/test_timed.py": {15}}, problems, warnings, base="abc")
+    assert [p.split(": ")[1] for p in problems] == ["tests/test_timed.py:15"]
+    assert sorted(w.split(": ")[1] for w in warnings) == [
+        "tests/test_timed.py:21", "tests/test_timed.py:22", "tests/test_timed.py:8"]
+
+
+def test_the_quit_grace_file_passes_the_lint_as_it_stands():
+    """The file that taught the lesson: its wide ceiling and its setting-relative bounds are
+    fine; no line in it fails."""
+    path = tf.ROOT / "tests" / "test_quit_grace.py"
+    found = [f for f in tf.quality_findings("tests/test_quit_grace.py",
+                                            path.read_text(encoding="utf-8"), set())
+             if f.rule == "real-time limit"]
+    assert all(f.warning for f in found)
+    source = path.read_text(encoding="utf-8")
+    assert "CANCEL_WAIT_S + 1.0" in source  # the setting-relative form the message recommends

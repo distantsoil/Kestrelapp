@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from kestrel import paths
+from kestrel.config import get_settings
 from kestrel.db.engine import make_async_engine
 from kestrel.db.models import (
     DocMaster,
@@ -444,7 +445,7 @@ def test_build_stories_enqueues_one_task_and_the_worker_runs_it_with_the_notes(m
         engine = make_async_engine(paths.db_path())
         try:
             sm = async_sessionmaker(engine, expire_on_commit=False)
-            return await drain_story_builds(sm, object(), object())
+            return await drain_story_builds(sm, object(), get_settings())
         finally:
             await engine.dispose()
 
@@ -511,7 +512,7 @@ def test_a_build_killed_mid_run_is_retried_and_a_dead_one_says_why(monkeypatch):
         engine = make_async_engine(paths.db_path())
         try:
             sm = async_sessionmaker(engine, expire_on_commit=False)
-            return await drain_story_builds(sm, object(), object())
+            return await drain_story_builds(sm, object(), get_settings())
         finally:
             await engine.dispose()
 

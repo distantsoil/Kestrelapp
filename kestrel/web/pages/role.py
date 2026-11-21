@@ -67,8 +67,9 @@ from kestrel.web import correction_view as cvw
 from kestrel.web import pipeline_view as pv
 from kestrel.web import role_view as rv
 from kestrel.web.auth import release_credit_hold
+from kestrel.web.csp import frame_safe
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import authored_error, plain_error
 from kestrel.web.fit import EMPTY_POSTING_STAGE_REASON, fit_word_for_verdict
 from kestrel.web.pages.pipeline import _events, _toast
 from kestrel.web.queries import (
@@ -430,9 +431,26 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
                   and getattr(ev, "score", None) is not None)
         unscored = not scored
         detail["twin"] = (await scored_twins(s2, [opp])).get(opp.id) if unscored else None
+        from kestrel.web.unscored import role_state
+
+        # Why it has no score and what moves it forward (the Pipeline row's own reading).
+        detail["unscored_state"] = await role_state(s2, opp.id) if unscored else None
+        from kestrel.web.unscored import vector_failures, vector_note
+
+        # Its embed task died: it is scored without a vector, and the page says so (round 4).
+        why_vector = (await vector_failures(s2, [opp.id])).get(opp.id)
+        detail["vector_failure"] = (vector_note(why_vector, scored=scored)
+                                    if why_vector else None)
         detail["empty_posting"] = (opp.stage == "t1_pass"
                                    and opp.stage_reason == EMPTY_POSTING_STAGE_REASON)
         detail["posting_url"] = safe_web_url(opp.url)
+        detail["blocked_note"] = None
+        if detail["empty_posting"] and opp.source_id is not None:
+            from kestrel.db.models import Source
+            from kestrel.web.pipeline_view import blocked_note
+
+            detail["blocked_note"] = blocked_note(
+                await s2.scalar(select(Source.kind).where(Source.id == opp.source_id)))
         # Any scoring task, held or not: the role is Being scored then (issue #90).
         detail["queued"] = bool((await s2.execute(
             select(scoring_task_exists()).where(Opportunity.id == opp_id))).scalar())
@@ -1374,6 +1392,12 @@ async def add_story(request: Request, opp_id: int):
             route["scoring_routes"] = [
                 await online_route(s, settings, tier) for tier in ("tier1", "tier2")
             ]
+            from kestrel.learning.correction_lines import dialog_digest, lines_for
+
+            # The lines this role's score would send, listed in the dialog and bound to it by
+            # their digest (issue #178, D-PRIV-670).
+            route["correction_lines"] = await lines_for(s, [opp_id])
+            route["corrections_digest"] = await dialog_digest(s, [opp_id])
         verdict = gate(route, form)
         if verdict is None and route is not None:
             from kestrel.services.online_consent import approval_covers, approval_for
@@ -1384,6 +1408,7 @@ async def add_story(request: Request, opp_id: int):
                     "Nothing was sent. The model or online service changed since the dialog "
                     "opened. Press the button again to see what would be sent."
                 )
+
         if verdict == "ask":
             return _answer(
                 None,
@@ -1405,6 +1430,18 @@ async def add_story(request: Request, opp_id: int):
             )
         if verdict:
             return _answer({"k-toast": _toast(verdict, tone="warn")})
+        # The lines the dialog listed, read again in this session, which queues (D-PRIV-674).
+        from kestrel.learning.correction_lines import confirm_corrections
+        from kestrel.services.online_consent import read_approval
+
+        approval = read_approval(form.get("online_approval")) if rescore else None
+        confirmed = None
+        if approval:
+            confirmed = await confirm_corrections(s, [opp_id], form.get("corrections_digest"))
+            if confirmed is None:
+                return _answer({"k-toast": _toast(
+                    "Nothing was sent. Your corrections changed since the dialog opened. Press "
+                    "the button again to see what would be sent.", tone="warn")})
         first = next((t for t in (situation, action, result) if t), "")
         title = re.split(r"(?<=[.!?])\s", first, maxsplit=1)[0][:60].rstrip(" .") or "My story"
         story = Story(
@@ -1425,7 +1462,7 @@ async def add_story(request: Request, opp_id: int):
 
             release_credit_hold(request)
             res = await enqueue_rescore(
-                s, [opp_id], online_approval=form.get("online_approval"), score_stubs=True
+                s, [opp_id], online_approval=approval, score_stubs=True, corrections=confirmed
             )
             queued = bool(res.queued)
             # A task held for the person's OK is not a score on its way: never promise one.
@@ -1493,7 +1530,10 @@ async def research(request: Request, opp_id: int):
             added = await research_jobs.enqueue(s, opp, kind, settings,
                                                confirmed_online=latest_route is not None)
         except ValueError as exc:
-            return _answer({"k-toast": _toast(str(exc), tone="warn")})
+            log.info("research_not_queued", kind=kind, error=type(exc).__name__)
+            said = authored_error(exc, research_jobs.ENQUEUE_REFUSALS,
+                                  research_jobs.ENQUEUE_FALLBACK)
+            return _answer({"k-toast": _toast(said, tone="warn")})
     cards = await _cards_oob(request, opp_id, company=True, orgtab=True)
     return _answer(
         {"k-toast": _toast("Queued. Progress is on the Organization tab." if added
@@ -1549,9 +1589,25 @@ async def deeper_dialog(request: Request, opp_id: int):
                 "cost": _cost_line(preview.model, preview.prompt_tokens_estimate),
                 "payload": "\n\n".join(f"[{m['role']}]\n{m['content']}" for m in preview.messages),
                 "sends": settings.llm.hosted_mode.disclosure_terms()["sends"]["frontier"],
+                # The resume lines this payload carries (D-SCORE-25), counted from the payload
+                # itself so the list says what is actually sent.
+                "digest_lines": _digest_line_count(preview.messages),
             }
         )
     return templates().TemplateResponse(request, "partials/role_deeper.html", ctx)
+
+
+def _digest_line_count(messages: list[dict]) -> int:
+    """How many resume lines (skills groups and bullets) the payload's RESUME_DIGEST block holds;
+    0 when it has none."""
+    from kestrel.pipeline.context import RESUME_DIGEST_HEADER
+
+    for m in messages:
+        text = str(m.get("content") or "")
+        if RESUME_DIGEST_HEADER in text:
+            block = text.split(RESUME_DIGEST_HEADER, 1)[1].split("\n\n", 1)[0]
+            return sum(1 for ln in block.splitlines() if ln.startswith("- "))
+    return 0
 
 
 @router.post("/opportunities/{opp_id}/role/deeper/send", response_class=HTMLResponse)
@@ -1606,7 +1662,8 @@ async def preview(request: Request, opp_id: int, render_id: int):
         if catalog is not None:
             cfg = dict(render.config or {})
             cfg["redact_orgs"] = bool(cfg.get("redact_orgs") or settings.confidential_mode)
-            doc_html = render_html(resolve(catalog, cfg))
+            # Its stylesheets as links: the frame has the page's policy (D-SEC-59).
+            doc_html = frame_safe(render_html(resolve(catalog, cfg)))
     ctx = {
         "render": render,
         "master": master,
@@ -1712,17 +1769,30 @@ async def _run_letter_task(task) -> dict[str, Any]:
 
 
 async def run_letter_drafts(
-    *, stop=None, task_id: int | None = None, worker_id: str = "pipeline-letters"
+    *, stop=None, task_id: int | None = None, worker_id: str = "pipeline-letters",
+    settings=None,
 ) -> int:
     """Run queued cover letter and outline drafts (all, or one task). Only the serve worker calls
     this (after the tiers have drained, and never while paused), every cycle, so a draft
     interrupted by a quit or crash resumes after the restart. A request never runs one."""
     from kestrel.docs import letter_task
+    from kestrel.pipeline.worker import local_engine_ready
+    from kestrel.services.setting_overrides import load_settings_with_db
     from kestrel.web.app import is_paused
+
+    if settings is None:  # the worker cycle passes its own; a caller without them reads them
+        async with sessionmaker()() as s:
+            settings = await load_settings_with_db(s)
+    if not await local_engine_ready(settings, letter_task.TIER):
+        return 0  # a local draft waits for Ollama instead of failing (D-WORKER-6 amended)
+    from kestrel.pipeline.worker import engine_lost_for
+
+    def held() -> bool:  # checked before every lease (round 6)
+        return is_paused() or engine_lost_for(settings, letter_task.TIER)
 
     return await letter_task.drain(
         sessionmaker(), _run_letter_task, _letter_check, stop=stop, task_id=task_id,
-        worker_id=worker_id, paused=is_paused,
+        worker_id=worker_id, paused=held,
     )
 
 
@@ -2047,7 +2117,7 @@ async def _letter_ctx(
     from kestrel.web.redact import confidential
 
     letter = await letter_store.letter_for(s, row.id)
-    assert letter is not None  # every caller passes a row from _owned_letter / letter_store
+    assert letter is not None  # row came from _owned_letter  # noqa: S101
     extras = dict(letter.extras or {})
     kind, stored = str(letter.kind or row.template or "cover_letter"), str(letter.body_md or "")
     found = await _letter_basis(s, settings, opp, extras.get("basis"))
@@ -2131,7 +2201,8 @@ async def _letter_ctx(
         "used": used, "unresolved": unresolved, "located": located,
         "unverified": bool(unresolved or located), "banned": banned,
         "style_flags": [f for f in kept if f.get("kind") == "style"],
-        "preview_html": letter_html(header, body, kind, preview=True), "tab": tab, "saved": saved,
+        "preview_html": frame_safe(letter_html(header, body, kind, preview=True)), "tab": tab,
+        "saved": saved,
         "extras": {k: extras.get(k) for k in ("assumptions", "exclusions", "commercial",
                                               "too_few_exclusions")}
         if kind == "engagement_outline" else {},
@@ -2228,7 +2299,7 @@ async def cover_letter_dialog(request: Request, opp_id: int):
         opp = await s.get(Opportunity, opp_id)
         if opp is None:
             return HTMLResponse("", status_code=404)
-        return await _entry(request, s, opp, shell=True, show_failed=True)
+        return await _entry(request, s, opp, shell=True, show_failed=True)  # noqa: S604  kwarg named shell, not a subprocess
 
 
 @router.get("/opportunities/{opp_id}/role/cover-letter/status", response_class=HTMLResponse)
@@ -2407,7 +2478,7 @@ async def cover_letter_save(request: Request, opp_id: int, render_id: int):
             return _fragment(request, "role_letter_draft", ctx,
                              {"k-toast": _toast(_EMPTY_LETTER, tone="warn")})
         letter = await letter_store.letter_for(s, row.id)
-        assert letter is not None  # _owned_letter checked it
+        assert letter is not None  # _owned_letter checked  # noqa: S101
         refused = save_refusal(text, letter.kind)
         if refused:
             ctx = await _letter_ctx(s, settings, opp, row, tab="edit", typed=text)
@@ -2556,7 +2627,7 @@ async def _ensure_pdf(s, settings, opp, row: DocRender):
     from kestrel.web.redact import confidential
 
     letter = await letter_store.letter_for(s, row.id)
-    assert letter is not None  # _owned_letter checked it
+    assert letter is not None  # _owned_letter checked it  # noqa: S101
     kind = str(letter.kind or row.template or "cover_letter")
     conf, mapping = await confidential(s)  # the PDF hides the current employer too
     body = redact_text(str(letter.body_md or ""), mapping, enabled=conf) or ""
@@ -2612,8 +2683,9 @@ async def cover_letter_download(opp_id: int, render_id: int):
     """The PDF of the saved text, made from the same HTML the preview shows. It is made again
     when the text changed since the last one. Download goes through the computer's Save dialog
     (D-UI-12)."""
-    from fastapi.responses import FileResponse, PlainTextResponse
+    from fastapi.responses import PlainTextResponse
 
+    from kestrel.web.attachment import pdf_download, pdf_not_served
     from kestrel.web.errors import fixed_reason
 
     async with sessionmaker()() as s:
@@ -2630,4 +2702,7 @@ async def cover_letter_download(opp_id: int, render_id: int):
             return PlainTextResponse(
                 f"Could not make the PDF: {fixed_reason(exc)}", status_code=503)
         name = row.filename or path.name
-    return FileResponse(path, media_type="application/pdf", filename=name)
+    data, why = paths.read_servable_why(path, paths.documents_dir())  # a link is refused
+    if data is None:
+        return PlainTextResponse(pdf_not_served(why), status_code=404)
+    return pdf_download(data, name)

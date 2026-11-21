@@ -18,6 +18,7 @@ from sqlalchemy import select
 from kestrel import paths
 from kestrel.services import profile_edit as pe
 from tests import profile_seed
+from tests.page_source import as_written
 
 
 def _soup(html: str) -> BeautifulSoup:
@@ -326,7 +327,7 @@ def test_kinds_of_work_checks_have_room():
 
 def test_the_preview_keeps_the_printed_paper_white(client):
     pv = client.post(f"/documents/{client.master_id}/preview", data={})
-    assert "html{background:#fff}" in _soup(pv.text).iframe["srcdoc"]
+    assert "html{background:#fff}" in as_written(_soup(pv.text).iframe["srcdoc"])
     src = (Path(__file__).parents[1] / "kestrel" / "web" / "pages" / "documents.py").read_text()
     assert "printed paper" in src.split("html{background:#fff}")[0][-600:]
 

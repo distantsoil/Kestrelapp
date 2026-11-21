@@ -4,7 +4,7 @@
    change swap this whole panel so every step's state is current after a save. #}
 <div id="system-panel">
   <h2>System</h2>
-  <p class="muted" style="margin-top:0">How Kestrel runs on this machine: {{ st.hardware_line }}.
+  <p class="muted u-mt-0">How Kestrel runs on this machine: {{ st.hardware_line }}.
     Everything here acts on this machine only (Ollama pulls and builds, the preflight check).</p>
   {% if message %}<div class="card msg muted" role="status">{{ message }}</div>{% endif %}
   {% if st.low_spec_warning %}
@@ -17,7 +17,7 @@
   {% endif %}
 
   <div class="steps">
-    <div class="step" style="grid-template-columns:26px minmax(0,1fr)">
+    <div class="step u-gtc-26px-fill">
       <span class="ic {% if st.choice_explicit %}ok{% else %}now{% endif %}">{% if st.choice_explicit %}&#10003;{% else %}1{% endif %}</span>
       <div>
         <div><b>1. How will Kestrel run?</b></div>
@@ -49,37 +49,37 @@
 
   {% include "partials/setup_steps.html" %}
 
-  <details class="setup-details" data-testid="system-terminal-details" style="margin-top:1rem">
+  <details class="setup-details u-mt-1" data-testid="system-terminal-details">
     <summary>Show details</summary>
     <p class="quiet">The same setup from a terminal, on Windows, macOS or Linux: <span class="mono">kestrel setup</span> (Local),
       <span class="mono">kestrel setup --hosted</span> or <span class="mono">--hosted --free</span> (Hosted),
       and either followed by <span class="mono">kestrel provider set-key</span> for Both.</p>
   </details>
 
-  <h2 style="margin-top:1.6rem" id="restart-onboarding">Restart onboarding</h2>
-  <p class="muted" style="margin-top:0">Walk through the setup guide again, from how Kestrel thinks
+  <h2 class="u-mt-16" id="restart-onboarding">Restart onboarding</h2>
+  <p class="muted u-mt-0">Walk through the setup guide again, from how Kestrel thinks
     to your first search. Pick one.</p>
   <div class="restart" data-testid="restart-onboarding">
     {% call lo.fence(request) %}
-    <form method="post" action="/onboarding/restart" class="panel" style="padding:.8rem 1rem">
+    <form method="post" action="/onboarding/restart" class="panel u-p-08-1">
       <input type="hidden" name="choice" value="keep">
       <b>Keep my details</b>
-      <p class="muted" style="margin:.3rem 0 .6rem">Opens step 1 with everything you entered
+      <p class="muted u-m-03-0-06">Opens step 1 with everything you entered
         already filled in. Change what you like; nothing is deleted.</p>
       <button class="btn primary" type="submit">Restart with my details</button>
     </form>
-    <form method="post" action="/onboarding/restart" class="panel" style="padding:.8rem 1rem"
+    <form method="post" action="/onboarding/restart" class="panel u-p-08-1"
           x-data="{ typed: '' }">
       <input type="hidden" name="choice" value="clear">
       <b>Clear everything and start over</b>
-      <p class="muted" style="margin:.3rem 0 .6rem">Deletes every opportunity, pursuit, document,
+      <p class="muted u-m-03-0-06">Deletes every opportunity, pursuit, document,
         search, label and setting, and your profile. A backup zip is written first, beside the data
         folder, and is never deleted. Models already in Ollama stay, so nothing is downloaded again.</p>
-      <label style="display:block"><input type="checkbox" name="keep_keys" value="on" checked>
+      <label class="u-d-block"><input type="checkbox" name="keep_keys" value="on" checked>
         Keep my API keys</label>
-      <label style="display:block; margin-top:.4rem">Type <span class="mono">RESET</span> to confirm
-        <input type="text" name="confirm" x-model="typed" autocomplete="off" style="width:8rem"></label>
-      <button class="btn danger" type="submit" style="margin-top:.6rem" :disabled="typed !== 'RESET'">Clear everything</button>
+      <label class="u-d-block u-mt-04">Type <span class="mono">RESET</span> to confirm
+        <input type="text" name="confirm" x-model="typed" autocomplete="off" data-k-style="width:8rem"></label>
+      <button class="btn danger u-mt-06" type="submit" :disabled="typed !== 'RESET'">Clear everything</button>
     </form>
     {% endcall %}
   </div>

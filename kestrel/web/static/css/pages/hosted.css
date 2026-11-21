@@ -1,0 +1,227 @@
+/* Settings > Online models (#224, D-UI-825 to D-UI-829). Page styles on tokens.css and
+   components.css: token colors only (tests/test_ui_tokens.py), every class prefixed ho-. The look
+   follows the redesigned Models page. Folds use the shared details[data-k-fold] motion; the
+   OS reduced-motion setting and Settings > Reduce motion turn every animation here off. */
+
+.ho-wrap { min-width: 0; }
+.ho-page { display: flex; flex-direction: column; gap: var(--sp-3); padding: 12px 8px 26px;
+  min-width: 0; max-width: 920px; }
+.ho-page, .ho-page * { box-sizing: border-box; }
+.ho-page .k-scene { margin: 0; padding: 4px 0 10px; }
+.ho-panel { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+.ho-panel > .k-localonly { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0;
+  border: 0; padding: 0; margin: 0; }
+
+/* ----------------------------------------------------------------------- type and helpers */
+.ho-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ho-card :is(h2, h3) { white-space: normal; }
+.ho-h2 { margin: 0; font-size: var(--fs-lg); font-weight: 800; line-height: 1.3; }
+.ho-h3 { margin: 0; font-size: var(--fs-md); font-weight: 800; line-height: 1.3; }
+.ho-small { font-size: 13px; }
+.ho-block { display: block; }
+.ho-full { flex-basis: 100%; margin: 0; }
+.ho-grow { flex: 1 1 auto; min-width: 0; }
+.ho-line { margin: 0; }
+.ho-card p { margin: 0; overflow-wrap: anywhere; }
+.ho-card a:not(.k-btn) { color: var(--link-ink); font-weight: 600; }
+.ho-lede { margin: 0; }
+.ho-banner { margin: 0; padding: 10px 14px; border-radius: var(--r-md); background: var(--tint-warn);
+  border: 1px solid var(--tint-warn-line); color: var(--ink); animation: ho-in .3s var(--ease) backwards; }
+.ho-chips { align-items: center; }
+.ho-chips .k-pill { white-space: normal; }
+.ho-msg { margin: 0; padding: 10px 14px; border-radius: var(--r-md); border: 1px solid var(--line);
+  background: var(--paper); overflow-wrap: anywhere; animation: ho-in .3s var(--ease) backwards; }
+.ho-msg--ok { background: var(--good-bg); border-color: var(--good-bg); color: var(--ink); }
+.ho-msg--warn { background: var(--tint-warn); border-color: var(--tint-warn-line); color: var(--ink); }
+.ho-note { margin: 0; display: flex; gap: 8px; align-items: flex-start; font-size: 13px;
+  overflow-wrap: anywhere; }
+.ho-note .k-ic { flex: none; width: 16px; height: 16px; margin-top: 2px; }
+.ho-note--warn { padding: 8px 12px; border-radius: var(--r-sm); background: var(--tint-warn);
+  border: 1px solid var(--tint-warn-line); color: var(--ink); }
+.ho-note--warn .k-ic { color: var(--warn-ink); }
+@keyframes ho-in { from { opacity: 0; transform: translateY(-4px); } }
+
+/* --------------------------------------------------------------- folds (details/summary) */
+.ho-fold > summary { list-style: none; cursor: pointer; }
+.ho-fold > summary::-webkit-details-marker { display: none; }
+.ho-head { display: flex; align-items: center; gap: 12px; min-height: 44px; border-radius: var(--r-sm); }
+.ho-head--sub { min-height: 40px; }
+.ho-head:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.ho-sum { color: var(--muted); font-size: 13px; font-weight: 600; text-align: right; }
+.ho-chev { flex: none; width: 20px; height: 20px; color: var(--muted);
+  transition: transform .22s var(--ease); }
+.ho-fold[open] > summary .ho-chev { transform: rotate(180deg); }
+.ho-fold.is-folding > summary .ho-chev { transform: rotate(0deg); }
+.ho-body { display: flex; flex-direction: column; gap: 10px; padding-top: 12px; min-width: 0; }
+/* Chromium skips style work inside a closed <details>, so content that already played the shared
+   fold-in would keep that animation and appear at once when opened again. Clearing it while the
+   fold closes lets every later open play it from the start. */
+.ho-panel details[data-k-fold].is-folding > :not(summary) { animation: none; }
+
+/* ------------------------------------------------------------------------- the diagram */
+.ho-flow { margin: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; }
+.ho-flow svg { display: block; width: 100%; height: auto; overflow: visible; }
+.ho-flow__wide { max-width: 640px; }
+.ho-flow .ho-flow__narrow { display: none; max-width: 300px; }
+.ho-f-box { fill: var(--soft); stroke: var(--line); }
+.ho-f-pill { fill: var(--paper); stroke: var(--line); }
+.ho-f-ic { fill: none; stroke: var(--brand); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.ho-f-lock { fill: none; stroke: var(--good-ink); stroke-width: 2; stroke-linecap: round; }
+.ho-f-t { fill: var(--ink); font-size: 15px; font-weight: 700; font-family: var(--font); }
+.ho-f-s, .ho-f-note { fill: var(--muted); font-size: 12.5px; font-family: var(--font); }
+.ho-f-note { font-weight: 700; }
+.ho-f-k { fill: var(--ink); font-size: 13.5px; font-weight: 600; font-family: var(--font); }
+.ho-f-line { fill: none; stroke: var(--line); stroke-width: 2.2; stroke-dasharray: 6 7; }
+.ho-f-line--on { stroke: var(--brand); animation: ho-flow 1.4s linear infinite; }
+.ho-f-arrow { fill: none; stroke: var(--brand); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+@keyframes ho-flow { from { stroke-dashoffset: 26; } to { stroke-dashoffset: 0; } }
+.ho-facts { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap;
+  gap: 8px 20px; justify-content: center; font-size: 14px; font-weight: 600; }
+.ho-facts li { display: flex; gap: 6px; align-items: flex-start; min-width: 0; }
+.ho-facts .k-ic { flex: none; width: 16px; height: 16px; margin-top: 2px; color: var(--good-ink); stroke-width: 2.6; }
+/* The disclosure macro draws a warnbox; inside this page it reads as one calm block. */
+.ho-disc .warnbox { margin: 0; padding: 14px 16px; border-radius: var(--r-md); background: var(--bg);
+  border: 1px solid var(--line); color: var(--ink); line-height: 1.65; font-size: 14px;
+  overflow-wrap: anywhere; }
+.ho-status { font-size: 13.5px; }
+
+/* ------------------------------------------------------------------- forms and actions */
+.ho-form { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ho-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 0;
+  padding-top: 12px; border-top: 1px solid var(--line); min-width: 0; }
+.ho-foot--minor { border-top: 0; padding-top: 4px; }
+.ho-inline { display: inline-flex; margin: 0; }
+.ho-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; }
+.ho-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; min-width: 0; }
+.ho-check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; min-width: 0;
+  padding: 4px 0; overflow-wrap: anywhere; }
+.ho-check input[type="checkbox"] { flex: none; width: 18px; height: 18px; margin: 2px 0 0;
+  accent-color: var(--brand); }
+.ho-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600;
+  min-width: 0; }
+.ho-field :is(input, select), .ho-keyrow .key-row-input input { min-height: 38px; max-width: 100%;
+  min-width: 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--paper); color: var(--ink); font: inherit; font-weight: 500; font-size: 14px;
+  transition: border-color var(--dur-1); }
+.ho-field :is(input, select):hover, .ho-keyrow .key-row-input input:hover { border-color: var(--brand-2); }
+.ho-panel .sr-only, .ho-page .sr-only { position: absolute; width: 1px; height: 1px; padding: 0;
+  margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.ho-field input { width: 100%; }
+.ho-set { border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 12px;
+  margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ho-set legend { padding: 0 4px; font-size: 13px; }
+.ho-sub { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 4px;
+  display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ho-connect { border-top: 1px solid var(--line); padding-top: 6px; }
+.ho-picks { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.ho-pick { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--paper); min-width: 0;
+  transition: border-color var(--dur-1), box-shadow var(--dur-1); }
+.ho-pick:hover { border-color: var(--brand); }
+.ho-pick:has(input:checked) { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand); }
+.ho-pick input { flex: none; width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--brand); }
+.ho-pick__t { min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
+.ho-pick__t .k-pill { white-space: normal; }
+.ho-pick__s { display: block; font-size: 12.5px; }
+
+/* ------------------------------------------------------------------------------ keys */
+.ho-keyrow { border-top: 1px solid var(--line); padding: 12px 0 2px; display: flex;
+  flex-direction: column; gap: 8px; min-width: 0; }
+.ho-keyrow:first-of-type { border-top: 0; }
+.ho-keyrow .key-row { margin: 0; display: grid; grid-template-columns: minmax(0, 200px) minmax(0, 1fr);
+  gap: 10px 14px; align-items: center; }
+.ho-keyrow .key-row-head { min-width: 0; overflow-wrap: anywhere; }
+.ho-keyrow .key-row-head .k-pill { white-space: normal; }
+.ho-keyrow .key-row-input { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.ho-keyrow .key-row-input input { flex: 1 1 auto; min-width: 0; min-height: 38px; border-radius: var(--r-sm); }
+.ho-btns { display: inline-flex; gap: 8px; flex: none; }
+.ho-bal { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 0; font-size: 14px; }
+.ho-bal .ho-check { padding: 0; }
+/* The toggletip: a <details> whose summary is the (i) button, so it works without script. */
+.ho-tipbtn { display: inline-grid; place-items: center; width: 28px; height: 28px;
+  border-radius: 50%; border: 1px solid var(--line); background: var(--paper); color: var(--muted);
+  cursor: pointer; transition: background var(--dur-1), transform .1s; }
+.ho-tip > summary:active .ho-tipbtn { transform: scale(.94); }
+.ho-tip[open] .ho-tipbtn { background: var(--soft); color: var(--ink); }
+.ho-tip { display: block; }
+.ho-tip > summary { display: inline-flex; align-items: center; gap: 8px; list-style: none; cursor: pointer;
+  border-radius: var(--r-sm); }
+.ho-tip > summary::-webkit-details-marker { display: none; }
+.ho-tip > summary:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.ho-tip > summary:hover .ho-tipbtn { background: var(--soft); }
+.ho-tipbody { margin: 6px 0 0; padding: 10px 12px; max-width: 520px; border-radius: var(--r-sm);
+  background: var(--soft); color: var(--ink); font-size: 13px; line-height: 1.45; }
+
+/* ------------------------------------------------------------------ where each step runs */
+.ho-lanes { display: grid; grid-template-columns: 112px repeat(6, minmax(0, 1fr));
+  grid-template-rows: repeat(3, 40px); margin: 4px 0; position: relative;
+  background:
+    linear-gradient(var(--line), var(--line)) 112px 20px / calc(100% - 112px) 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) 112px 60px / calc(100% - 112px) 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) 112px 100px / calc(100% - 112px) 1px no-repeat; }
+.ho-lane { grid-column: 1; display: flex; align-items: center; font-size: 13px; font-weight: 600;
+  color: var(--muted); white-space: nowrap; }
+.ho-node { display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; min-width: 0; animation: ho-in .32s var(--ease) backwards; }
+.ho-nd { width: 12px; height: 12px; border-radius: 50%; background: var(--brand);
+  box-shadow: 0 0 0 4px var(--paper); flex: none; }
+.ho-r3 .ho-nd { background: var(--good-ink); }
+.ho-nl { font-size: 11.5px; font-weight: 700; white-space: nowrap; color: var(--ink);
+  background: var(--paper); padding: 0 3px; border-radius: 4px; }
+.ho-r1 { grid-row: 1; } .ho-r2 { grid-row: 2; } .ho-r3 { grid-row: 3; }
+.ho-c1 { grid-column: 2; } .ho-c2 { grid-column: 3; } .ho-c3 { grid-column: 4; }
+.ho-c4 { grid-column: 5; } .ho-c5 { grid-column: 6; } .ho-c6 { grid-column: 7; }
+/* Narrow window: the same map as three short lines, one per place. */
+.ho-lanes-sm { display: none; list-style: none; margin: 4px 0; padding: 0; flex-direction: column; gap: 6px; }
+.ho-lanes-sm li { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 13px; }
+.ho-lanes-sm b { min-width: 104px; color: var(--muted); }
+.ho-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.ho-tag { padding: 1px 8px; border-radius: var(--r-pill); background: var(--soft); color: var(--ink);
+  font-weight: 600; font-size: 12.5px; }
+.ho-tiers { display: flex; flex-direction: column; }
+.ho-tier { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, .8fr) minmax(0, 1.2fr);
+  gap: 10px 14px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line); }
+.ho-tier:first-child { border-top: 0; }
+.ho-tier__name { min-width: 0; overflow-wrap: anywhere; }
+.ho-tier__be select, .ho-tier__m input { width: 100%; }
+.ho-where { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; padding: 2px 10px;
+  border-radius: var(--r-pill); background: var(--good-bg); color: var(--good-ink); font-size: 12.5px;
+  font-weight: 700; max-width: 100%; transition: background var(--dur-2), color var(--dur-2); }
+.ho-where--on { background: var(--chip-i-bg); color: var(--chip-i-ink); }
+.ho-where .k-ic { flex: none; width: 14px; height: 14px; }
+
+/* --------------------------------------------------------------------------- advanced */
+.ho-scroll { overflow-x: auto; max-width: 100%; }
+.ho-table { width: 100%; border-collapse: collapse; font-size: 13.5px; table-layout: fixed; }
+.ho-table :is(th, td) { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left;
+  vertical-align: top; overflow-wrap: anywhere; }
+.ho-table th { color: var(--muted); font-weight: 700; font-size: 12.5px; }
+.ho-url { display: block; overflow-wrap: anywhere; }
+.ho-back { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.ho-back span { min-width: 0; flex: 1 1 260px; }
+
+/* ------------------------------------------------------------------------ narrow window */
+@media (max-width: 640px) {
+  .ho-flow .ho-flow__wide { display: none; }
+  .ho-flow .ho-flow__narrow { display: block; }
+  .ho-facts { flex-direction: column; align-items: flex-start; }
+  .ho-sum { display: none; }
+  .ho-lanes { display: none; }
+  .ho-lanes-sm { display: flex; }
+  .ho-tier { grid-template-columns: minmax(0, 1fr); }
+  .ho-keyrow .key-row { grid-template-columns: minmax(0, 1fr); }
+  .ho-keyrow .key-row-input { flex-wrap: wrap; }
+  .ho-keyrow .key-row-input input { flex-basis: 100%; }
+  .ho-page { padding: 8px 0 20px; }
+}
+
+/* ----------------------------------------------------------------------- reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .ho-page *, .ho-panel *, .ho-page *::before, .ho-page *::after {
+    animation: none !important; transition: none !important; }
+}
+
+/* #224 r2: the legacy-row warning carries its fix (POST /settings/hosted/switch mode=local). */
+.ho-legacy { flex-wrap: wrap; align-items: center; }
+.ho-legacy__text { margin: 0; flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.ho-legacy__fix { margin: 0; flex: none; }

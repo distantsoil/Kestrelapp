@@ -12,7 +12,7 @@
     {%- for key, label in (('structure', 'Structure'), ('specificity', 'Specific numbers'), ('relevance', 'Answered it'), ('length', 'Length')) %}
     {%- set v = sc.get(key) %}
     {%- if v is number %}
-    <span>{{ label }}</span><span class="pp-rub__tr"><i class="{{ 'is-mid' if v < 3.5 }}" style="width: {{ (v / 5 * 100)|round(1) }}%"></i></span><b>{{ '%.1f'|format(v) }}</b>
+    <span>{{ label }}</span><span class="pp-rub__tr"><i class="{{ 'is-mid' if v < 3.5 }}" data-k-style="width: {{ (v / 5 * 100)|round(1) }}%"></i></span><b>{{ '%.1f'|format(v) }}</b>
     {%- endif %}
     {%- endfor %}
   </div>

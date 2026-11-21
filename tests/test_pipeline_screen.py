@@ -114,6 +114,9 @@ def test_a_failed_role_says_why_and_a_removed_one_says_it_was_removed():
 
 
 def test_a_removed_role_comes_back_to_scoring_failed_when_it_fails_again():
+    from datetime import datetime
+
+    from kestrel.db.base import iso
     from kestrel.db.models import Quarantine
     from kestrel.services import retry_removal
 
@@ -122,8 +125,13 @@ def test_a_removed_role_comes_back_to_scoring_failed_when_it_fails_again():
     async def go(s):
         s.add(Quarantine(opportunity_id=ids["e"], tier=2, error="invalid JSON",
                          created_at="2026-01-01T00:00:00Z"))
-        await retry_removal.mark(s, ids["e"])
-        s.add(Quarantine(opportunity_id=ids["e"], tier=2, error="invalid JSON again"))
+        removed_at = await retry_removal.mark(s, ids["e"])
+        # The later failure is stamped after the Remove, not left to the clock: two reads of a
+        # coarse or slowed clock can return the same instant, and "newer" is strictly later
+        # (D-TEST-587).
+        later = iso(datetime.fromisoformat(removed_at) + timedelta(seconds=1))
+        s.add(Quarantine(opportunity_id=ids["e"], tier=2, error="invalid JSON again",
+                         created_at=later))
         await s.commit()
 
     _db(go)
@@ -809,8 +817,12 @@ def test_a_healthy_row_has_no_warning_and_the_warning_names_what_is_wrong():
     ev.legitimacy = {"status": "reject"}
     assert pv.warning_text(opp, ev).startswith("This may not be a real opening.")
     stale = NS(legitimacy=None, needs_review=False, tier=2, prompt_version="evaluate/v0")
+    from kestrel.config import load_settings
+    from kestrel.learning.score_age import versions_for
+
     assert "older scoring instructions" in pv.warning_text(
-        NS(ghost_score=0.0, seen_count=1, liveness="live", track="employment"), stale)
+        NS(ghost_score=0.0, seen_count=1, liveness="live", track="employment"), stale,
+        versions=versions_for(load_settings()))
 
 
 def test_the_pipeline_sheet_and_templates_obey_the_rules():

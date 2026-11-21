@@ -18,7 +18,7 @@ from datetime import date
 
 import structlog
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel import paths
@@ -27,6 +27,8 @@ from kestrel.interview import prep_state
 from kestrel.interview.notes import save_notes
 from kestrel.interview.render import PAPER_CSS, pack_pages
 from kestrel.web import prep_view as pv
+from kestrel.web.attachment import pdf_download, pdf_not_served
+from kestrel.web.csp import frame_css_url
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import fixed_reason, plain_error
 
@@ -312,7 +314,7 @@ async def preview(request: Request, opportunity_id: int):
         pack = await pv.latest_pack(s, opportunity_id) if sh["opp"] is not None else None
     ctx = {
         "opp_id": opportunity_id, "pack": pack, "model": model, "pages": pack_pages(model)
-        if model else [], "paper_css": PAPER_CSS,
+        if model else [], "paper_css_url": frame_css_url(PAPER_CSS),
         "file_name": _file_name(sh["org_name"], sh["when"]["date"]),
     }
     return templates().TemplateResponse(request, "partials/pp_preview.html", ctx)
@@ -366,7 +368,11 @@ async def download(prep_pack_id: int):
         row = await s.get(PrepPack, prep_pack_id)
         sh = await pv.shell_ctx(s, row.opportunity_id) if row is not None else None
     path = paths.stored_prep_pdf(row.pdf_path) if row is not None else None  # confined
-    if path is None or not path.exists():
-        return HTMLResponse('<div class="warnbox">PDF not found.</div>', status_code=404)
+    data, why = (paths.read_servable_why(path, paths.prep_packs_dir()) if path is not None
+                 else (None, paths.stored_file_why(row.pdf_path if row is not None else None)))
+    if path is None or data is None:
+        said = ("PDF not found." if why == paths.LEFT_OUT_MISSING
+                else pdf_not_served(why))
+        return HTMLResponse(f'<div class="warnbox">{_esc(said)}</div>', status_code=404)
     name = _file_name(sh["org_name"], sh["when"]["date"]) if sh else path.name
-    return FileResponse(path, media_type="application/pdf", filename=name)
+    return pdf_download(data, name)

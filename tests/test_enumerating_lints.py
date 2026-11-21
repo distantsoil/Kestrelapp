@@ -616,8 +616,6 @@ SAFE_ALLOW: dict[tuple[str, str], str] = {
     ("partials/opp_rows.html", "swap"): _SWAP,
     ("partials/pl_views.html", "swap"): _SWAP,
     ("partials/pp_icons.html", "EXTRA[name]"): _ICON,
-    ("partials/pp_preview.html", "paper_css"): "the document stylesheet built from the person's "
-    "look choices (a closed set of values), inside a style tag",
     ("partials/pp_preview.html", "p"): "the prep pack page markup rendered by Kestrel's own "
     "template for the PDF",
     ("partials/profile_help.html", "body"): "help text written in the code",

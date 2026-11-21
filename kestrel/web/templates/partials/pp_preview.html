@@ -11,7 +11,7 @@
   </div>
   <div id="pp-pdf-status" aria-live="polite"></div>
   <div class="pp-preview__scroll" id="pp-pages" data-file="{{ file_name }}">
-    <style>{{ paper_css|safe }}</style>
+    <link rel="stylesheet" href="{{ paper_css_url }}">
     {%- for p in pages %}
     <div class="pp-sheet-wrap"><div class="pdfpg">{{ p|safe }}</div></div>
     {%- else %}

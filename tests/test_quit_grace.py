@@ -66,8 +66,12 @@ async def test_quit_is_prompt_when_nothing_is_running(sm, _bounds):
 
     worker = asyncio.create_task(idle_worker())
     started = time.monotonic()
-    await app_mod._graceful_worker_shutdown(worker, stop, grace_s=5.0)
-    assert time.monotonic() - started < 1.0  # the grace is a ceiling, not a delay
+    # The grace is a ceiling, not a delay: with a 30 s grace an idle worker must still be stopped
+    # in a few seconds. The bound is wide because the lease release after it is a database write
+    # that can take over a second when the stress run loads four workers at once; waiting out the
+    # grace would take 30 s and still fail it.
+    await app_mod._graceful_worker_shutdown(worker, stop, grace_s=30.0)
+    assert time.monotonic() - started < 5.0
 
 
 def test_the_grace_is_a_setting_with_a_few_second_default_and_a_clamp():
@@ -210,8 +214,8 @@ def test_the_lifespan_lets_the_online_lane_finish_its_call_on_quit(monkeypatch):
     monkeypatch.setattr(app_mod, "_online_lane", lane)
     with TestClient(app_mod.build_app(worker=True)) as c:
         assert c.get("/health").status_code == 200
-        deadline = time.time() + 5
-        while "lane-started" not in events and time.time() < deadline:
+        deadline = time.monotonic() + 5
+        while "lane-started" not in events and time.monotonic() < deadline:
             time.sleep(0.01)
     assert events == ["lane-started", "lane-finished"]
 

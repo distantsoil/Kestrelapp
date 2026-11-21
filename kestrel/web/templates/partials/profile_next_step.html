@@ -4,6 +4,7 @@
    the same ask-first panel the other online actions use, in place; nothing is queued until it is
    confirmed. The forms swap this block in place; without script they redirect back. #}
 {% import "partials/online_ask.html" as online_ask %}
+{% from "partials/correction_lines.html" import correction_lines %}
 {% if rescoring == 'confirm' and ask %}
 <form class="k-form-inline" method="post" action="/api/profile/score-again" data-testid="score-again-ask-form"
       hx-post="/api/profile/score-again" hx-target="closest [data-testid=thin-profile-notice]" hx-swap="innerHTML">
@@ -11,8 +12,10 @@
   <input type="hidden" name="back" value="{{ back }}">
   <input type="hidden" name="tab" value="{{ tab|default('') }}">
   <input type="hidden" name="online_approval" value='{{ ask.approval_json }}'>
+  <input type="hidden" name="corrections_digest" value="{{ ask.corrections_digest }}">
   {% if ask.problem %}<p role="alert" data-testid="score-again-problem">{{ ask.problem }}</p>{% endif %}
   {{ online_ask.ask(ask.route, 'score-again', 'score these roles again') }}
+  {{ correction_lines(ask.correction_lines, 'score-again') }}
   <button class="k-btn k-btn--sm" type="submit" data-consent-send data-testid="score-again-send">Score again</button>
 </form>
 {% elif rescoring and rescoring != 'confirm' %}

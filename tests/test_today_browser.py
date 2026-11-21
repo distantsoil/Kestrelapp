@@ -747,3 +747,111 @@ def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(li
         assert not errors, errors
     finally:
         ctx.close()
+
+
+def _queue_first_run_break() -> None:
+    from kestrel.services import onboarding as ob
+
+    async def go():
+        engine = make_async_engine(paths.db_path())
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        async with sm() as s:
+            await ob.mark_first_run_break(s)
+            await s.commit()
+        await engine.dispose()
+        forget_engine()
+
+    with ThreadPoolExecutor(1) as pool:
+        pool.submit(asyncio.run, go()).result()
+
+
+@pytest.mark.parametrize("theme,width,height", [("light", 1280, 900), ("dark", 1280, 900),
+                                                ("light", 390, 760)])
+def test_first_run_break_opens_before_the_tour_and_animates_out(live, theme, width, height):
+    """D-UI-249: on the first Today after the wizard, the notice is the open modal and the tour
+    waits; "Got it, show me around" sinks it out (an animation, not a snap), the tour starts, and
+    the notice does not come back on reload. Nothing in it overlaps or is clipped."""
+    _queue_first_run_break()
+    ctx, page, errors = _page(live, theme, width, "/?tour=1", height=height)
+    try:
+        page.wait_for_function("document.querySelector('#td-break') && "
+                               "document.querySelector('#td-break').open", timeout=5000)
+        page.wait_for_timeout(700)  # the rise-in and the staggered steps have played
+        # A local Tier 2 will queue the first-run story build, so the fourth step is shown.
+        assert page.locator("#td-break .sf-break__steps li").count() == 4
+        assert page.get_by_test_id("first-run-stories-step").inner_text().endswith(
+            "Drafting interview stories from your best matches")
+        _shot(page, f"first-run-break-{theme}-{width}")
+        # The illustration is drawn and moving: its posed elements change between two moments.
+        assert page.evaluate("document.querySelectorAll('#td-break .sf-break__art *').length") > 50
+        assert page.evaluate("document.querySelector('#td-break').__art.running()") is True
+        arm = "document.querySelector('#td-break [data-fra=arm]')"
+        first = page.evaluate(f"{arm}.getAttribute('points')")
+        page.wait_for_timeout(1800)
+        assert page.evaluate(f"{arm}.getAttribute('points')") != first
+        assert page.evaluate("document.querySelector('#td-tour').hidden") is True
+        box = page.evaluate(_BOX1, "#td-break")
+        assert box["l"] >= 0 and box["r"] <= width and box["tp"] >= 0 and box["bt"] <= height
+        parts = page.evaluate(_BOXES, "#td-break h2, #td-break .sf-sub, #td-break li, "
+                                      "#td-break .sf-muted, #td-break .k-btn")
+        assert len(parts) == 8
+        for i, a in enumerate(parts):
+            assert box["l"] <= a["l"] and a["r"] <= box["r"] + 0.5, a
+            for b in parts[i + 1:]:
+                assert not _overlaps(a, b), (a, b)
+        assert page.evaluate("[...document.querySelectorAll('#td-break *')].every("
+                             "e => e.scrollWidth <= e.clientWidth + 1 || "
+                             "getComputedStyle(e).overflow === 'visible')") is True
+        page.get_by_test_id("first-run-break-dismiss").click()
+        # It animates out rather than vanishing in the same frame.
+        assert page.evaluate("document.querySelector('#td-break').classList.contains("
+                             "'is-closing') && document.querySelector('#td-break').open") is True
+        page.wait_for_function("!document.querySelector('#td-break').open", timeout=3000)
+        # The close event follows the close itself; the loop stops on it.
+        page.wait_for_function("!document.querySelector('#td-break').__art.running()",
+                               timeout=2000)
+        page.wait_for_selector("#td-tour.is-on", timeout=5000)
+        page.reload()
+        page.wait_for_selector('[data-testid="td-card"], .td-empty')
+        page.wait_for_selector("#td-tour.is-on", timeout=5000)
+        assert page.locator("#td-break").count() == 0
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("how", ["escape", "app_reduce_motion"])
+def test_first_run_break_closes_by_escape_and_under_the_app_reduce_motion_setting(live, how):
+    """Escape dismisses it for good (the POST is sent even where the browser closes the dialog
+    at once), and with Settings > Reduce motion on, Got it closes it immediately instead of
+    waiting for an animation that never runs. Either way the tour starts."""
+    _queue_first_run_break()
+    ctx, page, errors = _page(live, "light", 1280, "/?tour=1")
+    try:
+        page.wait_for_function("document.querySelector('#td-break')?.open", timeout=5000)
+        posts = []
+        page.on("request", lambda r: r.method == "POST" and "first-run-break" in r.url
+                and posts.append(r.url))
+        still = closed_at_once = None
+        if how == "escape":
+            page.keyboard.press("Escape")
+        else:
+            # With the app's Reduce motion on from the start, the art is one still pose: no loop.
+            page.evaluate("document.documentElement.setAttribute('data-reduce-motion', '1')")
+            still = page.evaluate("window.KestrelFirstRunArt.mount(document.querySelector("
+                                  "'#td-break .sf-break__art').cloneNode()).running()")
+            page.get_by_test_id("first-run-break-dismiss").click()
+            closed_at_once = page.evaluate("document.querySelector('#td-break').open") is False
+        # Escape measures neither; reduce motion must show a still art and an instant close.
+        assert (still, closed_at_once) == ((None, None) if how == "escape" else (False, True))
+        page.wait_for_function("!document.querySelector('#td-break').open", timeout=3000)
+        page.wait_for_selector("#td-tour.is-on", timeout=5000)
+        page.evaluate("document.querySelector('[data-testid=first-run-break-dismiss]').click()")
+        page.wait_for_timeout(300)
+        assert len(posts) == 1
+        page.reload()
+        page.wait_for_selector('[data-testid="td-card"], .td-empty')
+        assert page.locator("#td-break").count() == 0
+        assert errors == []
+    finally:
+        ctx.close()

@@ -20,7 +20,7 @@ import httpx
 import structlog
 
 from kestrel import paths
-from kestrel.config import Settings, get_settings
+from kestrel.config import ONLINE_CONSENT_HOW, Settings, get_settings
 from kestrel.llm import profiles
 from kestrel.llm.client import OllamaClient
 from kestrel.llm.profiles import check_model_fit, ollama_needed
@@ -51,6 +51,8 @@ class CheckResult:
     detail: str = ""
     remediation: str = ""
     blocking: bool = False
+    # The CHK code of a warning or failure (error_codes, #174); "" on a pass or a note.
+    code: str = ""
 
 
 @dataclass
@@ -96,26 +98,32 @@ def _model_present(model: str, tags: list[str]) -> bool:
 # ------------------------------------------------------------------------------------ checks
 def _check_python(rep: DoctorReport) -> None:
     v = sys.version_info
-    ok = (v.major, v.minor) == (3, 12)
-    rep.add(
-        "Python 3.12",
-        PASS if ok else FAIL,
-        f"running {v.major}.{v.minor}.{v.micro}",
-        ""
-        if ok
-        else "Kestrel targets Python 3.12; recreate the venv with `uv venv --python 3.12`.",
-        blocking=not ok,
-    )
+    running = f"running {v.major}.{v.minor}.{v.micro}"
+    if (v.major, v.minor) == (3, 12):
+        rep.add("Python 3.12", PASS, running)
+    else:
+        rep.add(
+            "Python 3.12",
+            FAIL,
+            running,
+            "Kestrel targets Python 3.12; recreate the venv with `uv venv --python 3.12`.",
+            blocking=True,
+            code="CHK-001",
+        )
 
 
 def _check_uv(rep: DoctorReport) -> None:
     found = shutil.which("uv")
-    rep.add(
-        "uv present",
-        PASS if found else WARN,
-        found or "not on PATH",
-        "" if found else "Install uv: https://docs.astral.sh/uv/ (only needed for development).",
-    )
+    if found:
+        rep.add("uv present", PASS, found)
+    else:
+        rep.add(
+            "uv present",
+            WARN,
+            "not on PATH",
+            "Install uv: https://docs.astral.sh/uv/ (only needed for development).",
+            code="CHK-002",
+        )
 
 
 def _check_config(rep: DoctorReport) -> None:
@@ -129,6 +137,7 @@ def _check_config(rep: DoctorReport) -> None:
             f"{_why(exc)}",
             "Fix config/settings.yml.",
             blocking=True,
+            code="CHK-003",
         )
         return
     try:
@@ -144,6 +153,7 @@ def _check_config(rep: DoctorReport) -> None:
             "A Tier 0 rule references an unknown symbol or a generator expression. "
             "Use only the whitelisted helpers (SPEC.md 6.1).",
             blocking=True,
+            code="CHK-003",
         )
         return
     except Exception as exc:
@@ -153,6 +163,7 @@ def _check_config(rep: DoctorReport) -> None:
             f"{_why(exc)}",
             "Fix config/filters.yml.",
             blocking=True,
+            code="CHK-003",
         )
         return
     rep.add("Config valid", PASS, "settings.yml + filters.yml load; all Tier 0 rules evaluate")
@@ -170,6 +181,7 @@ def _check_profile(rep: DoctorReport) -> None:
             "profile.yml exists but could not be read; roles are scored against an empty profile",
             "Fix or remove config/profile.yml, or open Profile in Kestrel and choose Start fresh "
             "(your file is kept as profile.yml.broken-<time>).",
+            code="CHK-029",
         )
     elif profile.exists():
         rep.add("Profile configured", PASS, str(profile))
@@ -180,6 +192,7 @@ def _check_profile(rep: DoctorReport) -> None:
             WARN,
             "no profile.yml: roles are scored against an empty profile",
             "Finish setup (or copy config/profile.example.yml to config/profile.yml and edit it).",
+            code="CHK-004",
         )
 
 
@@ -197,6 +210,7 @@ def _check_ollama(rep: DoctorReport, client: OllamaClient) -> bool:
                 WARN,
                 f"{_why(exc)} (tier routing unknown: settings not read)",
                 "Fix the Settings layer row; start Ollama only if a tier runs locally.",
+                code="CHK-005",
             )
             return False
         rep.add(
@@ -205,6 +219,7 @@ def _check_ollama(rep: DoctorReport, client: OllamaClient) -> bool:
             f"{_why(exc)}",
             "Start Ollama (https://ollama.com/download), then retry.",
             blocking=True,
+            code="CHK-005",
         )
         return False
 
@@ -219,6 +234,7 @@ def _check_models_present(rep: DoctorReport, client: OllamaClient, s: Settings) 
             f"{_why(exc)}",
             "Could not list Ollama models.",
             blocking=True,
+            code="CHK-027",
         )
         return set()
     # Only LOCAL-backend tiers are expected in Ollama. The external Tier 3 frontier (OpenRouter) is
@@ -248,6 +264,7 @@ def _check_models_present(rep: DoctorReport, client: OllamaClient, s: Settings) 
             "missing: " + ", ".join(sorted(missing)),
             "; ".join(rem),
             blocking=True,
+            code="CHK-006",
         )
     else:
         rep.add("Models present", PASS, "all configured models found: " + ", ".join(sorted(wanted)))
@@ -267,12 +284,13 @@ def _check_num_ctx(rep: DoctorReport, client: OllamaClient, s: Settings, present
                 f"{model} not built",
                 "run `kestrel models build`",
                 blocking=True,
+                code="CHK-028",
             )
             continue
         try:
             actual = client.effective_num_ctx(model)
         except Exception as exc:
-            rep.add(f"num_ctx {tier}", FAIL, f"{_why(exc)}", blocking=True)
+            rep.add(f"num_ctx {tier}", FAIL, f"{_why(exc)}", blocking=True, code="CHK-027")
             continue
         if actual is None:
             rep.add(
@@ -281,6 +299,7 @@ def _check_num_ctx(rep: DoctorReport, client: OllamaClient, s: Settings, present
                 f"{model}: num_ctx not set (Ollama default applies)",
                 f"rebuild {model} with PARAMETER num_ctx (need >= {req})",
                 blocking=True,
+                code="CHK-007",
             )
         elif actual < req:
             rep.add(
@@ -289,6 +308,7 @@ def _check_num_ctx(rep: DoctorReport, client: OllamaClient, s: Settings, present
                 f"{model}: num_ctx {actual} < required {req}",
                 f"raise PARAMETER num_ctx to >= {req} and rebuild",
                 blocking=True,
+                code="CHK-007",
             )
         else:
             rep.add(f"num_ctx {tier}", PASS, f"{model}: num_ctx {actual} >= required {req}")
@@ -328,7 +348,8 @@ def _check_needle(rep: DoctorReport, client: OllamaClient, s: Settings, present:
     for model, budget in sorted(by_model.items()):
         if model not in present:
             rep.add(
-                f"needle {model}", FAIL, "not built", "run `kestrel models build`", blocking=True
+                f"needle {model}", FAIL, "not built", "run `kestrel models build`", blocking=True,
+                code="CHK-028",
             )
             continue
         try:
@@ -351,7 +372,7 @@ def _check_needle(rep: DoctorReport, client: OllamaClient, s: Settings, present:
                 rep.add(f"needle {model}", WARN,
                         f"filled ~{budget} tok; the model sent an empty reply; context not "
                         "verified",
-                        _NOT_READY)
+                        _NOT_READY, code="CHK-027")
             elif len(out) >= NEEDLE_REPLY_TOKENS * 3:
                 # About the whole budget used and no code in it: the model answered at length
                 # (a model that talks first), which says nothing about its context window, and
@@ -360,13 +381,14 @@ def _check_needle(rep: DoctorReport, client: OllamaClient, s: Settings, present:
                         f"filled ~{budget} tok; the model answered at length instead of repeating "
                         "the code; context not verified",
                         "the model talks before it answers; use an instruct build that answers "
-                        "briefly (not a thinking build), then run the check again")
+                        "briefly (not a thinking build), then run the check again", code="CHK-027")
             else:
                 rep.add(
                     f"needle {model}", FAIL,
                     f"filled ~{budget} tok; LOST the code near the start (model got: {out[:60]!r})",
                     f"effective context is below {budget}; rebuild with a larger num_ctx",
                     blocking=True,
+                    code="CHK-008",
                 )
         except httpx.TimeoutException as exc:
             # A timeout is evidence the model was COLD, not evidence its context is short. The
@@ -379,16 +401,17 @@ def _check_needle(rep: DoctorReport, client: OllamaClient, s: Settings, present:
                 WARN,
                 f"timed out loading the model ({_why(exc)}); context not verified",
                 f"{_NOT_READY}; or set OLLAMA_KEEP_ALIVE=2h so it stays resident",
+                code="CHK-027",
             )
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code >= 500:  # the server answered "not now": still loading
                 rep.add(f"needle {model}", WARN,
                         f"the model server answered {exc.response.status_code}; context not "
-                        "verified", _NOT_READY)
+                        "verified", _NOT_READY, code="CHK-027")
             else:
-                rep.add(f"needle {model}", FAIL, f"{_why(exc)}", blocking=True)
+                rep.add(f"needle {model}", FAIL, f"{_why(exc)}", blocking=True, code="CHK-027")
         except Exception as exc:
-            rep.add(f"needle {model}", FAIL, f"{_why(exc)}", blocking=True)
+            rep.add(f"needle {model}", FAIL, f"{_why(exc)}", blocking=True, code="CHK-027")
 
 
 # The thinking check expects the one word "hi" in a few tokens (D-LLM-9). A model that thinks
@@ -431,12 +454,14 @@ def _check_thinking(
                     "this model thinks before answering, so Kestrel's answers get cut off "
                     f"(asked for one word, got {raw.strip()[:50]!r}; {shown})",
                     THINK_REMEDY,
+                    code="CHK-009",
                 )
         except (httpx.TimeoutException, httpx.HTTPStatusError) as exc:
             # A 5xx or a timeout says nothing about thinking: warn, never fail (as the needle test).
-            rep.add(name, WARN, f"could not check ({_why(exc)}); thinking not verified")
+            rep.add(name, WARN, f"could not check ({_why(exc)}); thinking not verified",
+                    code="CHK-027")
         except Exception as exc:
-            rep.add(name, WARN, f"{_why(exc)}")
+            rep.add(name, WARN, f"{_why(exc)}", code="CHK-027")
 
 
 _PROBE_SCHEMA = {
@@ -477,7 +502,7 @@ def _check_schema(
             data, ok = None, False
             raw = f"{_why(exc)}"
         except Exception as exc:
-            rep.add(f"schema honored {model}", WARN, f"{_why(exc)}")
+            rep.add(f"schema honored {model}", WARN, f"{_why(exc)}", code="CHK-027")
             continue
         if ok:
             rep.add(f"schema honored {model}", PASS, "JSON matched the probe schema")
@@ -489,6 +514,7 @@ def _check_schema(
                 "This model ignores response_format with thinking off (Ollama issue 14645). "
                 "Pick another base in models.yml and re-run `kestrel setup`.",
                 blocking=True,
+                code="CHK-010",
             )
 
 
@@ -502,15 +528,17 @@ def _check_browser(rep: DoctorReport) -> None:
         found = render.detect_browser()
         bad_path = render.browser_path_warning()
     except Exception as exc:  # a probe error is not a missing browser; say so and move on
-        rep.add("Browser (PDF)", WARN, f"probe failed: {exc}", render.browser_remediation())
+        rep.add("Browser (PDF)", WARN, f"probe failed: {exc}", render.browser_remediation(),
+                code="CHK-027")
         return
     note = f"; {bad_path}" if bad_path else ""
     if found:
         label, where = found
-        rep.add("Browser (PDF)", WARN if bad_path else PASS, f"{label}: {where}{note}")
+        rep.add("Browser (PDF)", WARN if bad_path else PASS, f"{label}: {where}{note}",
+                code="CHK-030")
     else:
         rep.add("Browser (PDF)", WARN, f"no Edge, Chrome, or Playwright Chromium found{note}",
-                render.browser_remediation())
+                render.browser_remediation(), code="CHK-011")
 
 
 def _check_mcp_port(rep: DoctorReport, s: Settings) -> None:
@@ -534,28 +562,38 @@ def _check_mcp_port(rep: DoctorReport, s: Settings) -> None:
                 f"Another process holds {s.mcp.port}; change settings.mcp.port so Kestrel's MCP "
                 "server does not collide with (or get shadowed by) another MCP server.",
                 True,
+                code="CHK-012",
             )
 
 
 def _check_ollama_env(rep: DoctorReport, s: Settings) -> None:
-    need = max(s.concurrency.tier1, s.concurrency.tier2, s.concurrency.embed)
-    par = os.environ.get("OLLAMA_NUM_PARALLEL")
-    if par and par.isdigit() and int(par) >= need:
-        rep.add("OLLAMA_NUM_PARALLEL", PASS, par)
-    else:
-        rep.add(
-            "OLLAMA_NUM_PARALLEL",
-            WARN,
-            par or "unset",
-            f"set OLLAMA_NUM_PARALLEL >= {need} or requests serialize (SPEC.md 6.6)",
-        )
-    keep = os.environ.get("OLLAMA_KEEP_ALIVE")
-    rep.add(
-        "OLLAMA_KEEP_ALIVE",
-        PASS if keep else WARN,
-        keep or "unset",
-        "" if keep else "set OLLAMA_KEEP_ALIVE=2h to avoid reloading weights between tiers",
-    )
+    """The two rows come from the same reading and verdict as Settings > This computer's Ollama
+    speed settings (kestrel.services.ollama_env, #181): where Ollama reads them on this OS, not
+    Kestrel's own process environment, which a separate Ollama never shares. Each row's status
+    and its sentence come from one verdict."""
+    from kestrel.services import ollama_env
+
+    try:
+        a = ollama_env.assess(s, None, s.llm.ollama_native_url)
+    except (OSError, RuntimeError, ValueError, ollama_env.EnvChangeFailed) as exc:
+        log.warning("doctor_ollama_env_unreadable", error_type=type(exc).__name__)
+        for name in ollama_env.NAMES:
+            rep.add(name, INFO, "could not be read", "worth checking in Settings > This computer")
+        return
+    if not a.shown:
+        for name in ollama_env.NAMES:
+            rep.add(name, INFO, a.hidden_reason)
+        return
+    for row in a.rows:
+        if row.verdict == "ok":
+            rep.add(row.name, PASS, row.value or "")
+        else:
+            # The code, the detail and the sentence are one decision: this WARN branch is the
+            # one place a row gets CHK-013 (an Ollama setting could be better).
+            rep.add(row.name, WARN, f"{row.name}={row.value or 'unset'}",
+                    f"{row.sentence} Set it in Settings > This computer > Ollama speed "
+                    f"settings ({row.name}={row.target}), then restart Ollama.",
+                    code="CHK-013")
 
 
 def _host_of(value: str) -> str | None:
@@ -636,6 +674,7 @@ def _check_local_ai_settings(rep: DoctorReport, s: Settings) -> None:
                 local_backend.base_url,
                 "Your text goes to another address, not this computer. "
                 "Set llm.backends.local.base_url to http://127.0.0.1:11434 for local inference.",
+                code="CHK-014",
             )
 
     # 2. Ollama listens only on loopback (OLLAMA_HOST unset or loopback).
@@ -659,6 +698,7 @@ def _check_local_ai_settings(rep: DoctorReport, s: Settings) -> None:
             ollama_host,
             "Ollama is bound to a non-loopback address. Other devices on your network "
             "can send prompts to it. Set OLLAMA_HOST=127.0.0.1:11434 to restrict to this computer.",
+            code="CHK-015",
         )
 
     # 3. No installed model tag ends in -cloud.
@@ -685,6 +725,7 @@ def _check_cloud_model_tags(rep: DoctorReport, client: OllamaClient) -> None:
             "These models are cloud-hosted: prompts are sent to Ollama's servers. "
             "For local-only inference, use non-cloud tags "
             "(e.g. qwen3:8b instead of qwen3:8b-cloud).",
+            code="CHK-016",
         )
     else:
         rep.add(
@@ -723,19 +764,24 @@ def _check_local_ai_egress(rep: DoctorReport, watcher: object | None = None) -> 
             "Local AI: egress",
             WARN,
             f"unverified: the connection check failed ({_why(exc)})",
+            code="CHK-027",
         )
         return
+    # One branch per cause; each branch states its status, its words and its code together.
+    # A connection that was seen wins over a process that could not be listed: what was seen
+    # is certain, so CHK-017 stands even when another Ollama process could not be read.
     text = format_egress_result(result)
-    if result.unverified:
-        rep.add("Local AI: egress", WARN, text)
+    if result.error:
+        rep.add("Local AI: egress", WARN, text, code="CHK-027")
+    elif result.public_connections or result.private_connections:
+        rep.add("Local AI: egress", WARN, text, code="CHK-017")
+    elif result.unverified:
+        rep.add("Local AI: egress", WARN, text, code="CHK-027")
     elif result.clean:
         rep.add("Local AI: egress", PASS, text)
-    elif result.error:
-        rep.add("Local AI: egress", WARN, text)
     else:
-        # Private and public addresses both warn; only Ollama's own services are info (#144).
-        rep.add("Local AI: egress", WARN if (result.public_connections
-                                             or result.private_connections) else INFO, text)
+        # Only Ollama's own services were seen: a note, never a warning (#144).
+        rep.add("Local AI: egress", INFO, text)
 
 
 def _start_egress_watcher() -> object | None:
@@ -890,7 +936,12 @@ def _check_model_digests(rep: DoctorReport, client: OllamaClient) -> None:
     text = ", ".join(parts)
     if details:
         text += ": " + "; ".join(details)
-    rep.add(name, WARN if mismatches else INFO, text)
+    if mismatches:
+        # Only a digest that differs proves the CHK-018 cause; the text names it ("differ").
+        rep.add(name, WARN, text, code="CHK-018")
+    else:
+        # Not installed or not on the tested list: a note with no code (D-ERR-22).
+        rep.add(name, INFO, text)
 
 
 def _check_ingest_contact(rep: DoctorReport, s: Settings) -> None:
@@ -910,6 +961,7 @@ def _check_ingest_contact(rep: DoctorReport, s: Settings) -> None:
             "Set ingest.user_agent in settings.yml to a descriptive UA with your real contact "
             "address, e.g. 'Kestrel/1.0 (your.name@your-domain.com)'. SEC EDGAR sources and "
             "EDGAR research are skipped until it is set.",
+            code="CHK-019",
         )
 
 
@@ -944,13 +996,18 @@ def _enabled_ats_sources() -> list:
         engine.dispose()
 
 
+# What one ATS probe found. Each kind has one row shape in _check_ats_shapes.
+ATS_OK, ATS_UNREAD, ATS_EMPTY, ATS_SHAPE = "ok", "unread", "empty", "shape"
+
+
 async def _probe_ats(settings, sources) -> list[tuple[str, str, str]]:
     from kestrel.ingest.adapters import get_adapter
+    from kestrel.ingest.base import Notice, NoticeKind, ShapeError
     from kestrel.ingest.http import HttpClient
 
     if not sources:
         return []
-    out: list[tuple[str, str, str]] = []
+    out: list[tuple[str, str, str]] = []  # (source name, outcome kind, detail)
     async with HttpClient(
         user_agent=settings.ingest.user_agent,
         timeout=settings.ingest.request_timeout_s,
@@ -961,11 +1018,26 @@ async def _probe_ats(settings, sources) -> list[tuple[str, str, str]]:
                 # Cap to one result so the probe never runs a full board scrape (Workday/SR would
                 # fetch every per-job detail); shape-checking the first posting is enough.
                 postings = await get_adapter(src.kind).fetch({**src.config, "max_results": 1}, http)
-            except Exception as exc:  # a shape/HTTP problem is a WARN, never a crash
-                out.append((src.name, WARN, f"{_why(exc)}"))
+            except ShapeError:  # the adapter itself said the reply is laid out differently
+                log.info("doctor_ats_shape_error", kind=src.kind)
+                out.append((src.name, ATS_SHAPE, "the reply was laid out differently than the "
+                            "adapter reads"))
+                continue
+            # A fetch problem is a WARN, never a crash; _why logs the type and text.
+            except Exception as exc:  # noqa: BLE001 - a health check row must not raise
+                out.append((src.name, ATS_UNREAD, f"{_why(exc)}"))
+                continue
+            # Decided by kind only: Kestrel's own cap is ignored (the probe caps itself to one
+            # page), and any other notice says the board, or the probed role's page, was not
+            # fully read, so a gap in the posting comes from that, not from the layout.
+            causes = [n for n in getattr(postings, "notices", ())
+                      if isinstance(n, Notice) and n.kind is not NoticeKind.CAPPED]
+            said = " ".join(n.sentence for n in causes)
+            if not postings and causes:
+                out.append((src.name, ATS_UNREAD, said))
                 continue
             if not postings:
-                out.append((src.name, WARN, "no postings returned"))
+                out.append((src.name, ATS_EMPTY, "no postings returned"))
                 continue
             p = postings[0]
             missing = [f for f in ("title",) if getattr(p, f) is None]
@@ -973,10 +1045,14 @@ async def _probe_ats(settings, sources) -> list[tuple[str, str, str]]:
                 missing.append("url/external_id")
             if not (p.description_md or p.description_html):
                 missing.append("description")
-            if missing:
-                out.append((src.name, WARN, "missing field(s): " + ", ".join(missing)))
+            # A page that was not read explains only a missing description; the title and the
+            # address come from the list itself, so their absence is a layout finding regardless.
+            if missing == ["description"] and causes:
+                out.append((src.name, ATS_UNREAD, said))
+            elif missing:
+                out.append((src.name, ATS_SHAPE, "missing field(s): " + ", ".join(missing)))
             else:
-                out.append((src.name, PASS, f"{len(postings)} postings, shape ok"))
+                out.append((src.name, ATS_OK, f"{len(postings)} postings, shape ok"))
     return out
 
 
@@ -994,20 +1070,45 @@ def _check_ats_shapes(rep: DoctorReport, settings) -> None:
         sources = _enabled_ats_sources()
         results = asyncio.run(_probe_ats(settings, sources)) if sources else []
     except Exception as exc:
-        rep.add("ATS shapes", WARN, f"could not probe: {_why(exc)}")
+        rep.add("ATS shapes", WARN, f"could not probe: {_why(exc)}", code="CHK-027")
         return
     if not results:
         rep.add("ATS shapes", INFO, "no enabled ATS sources to verify")
         return
-    for name, status, detail in results:
-        rep.add(
-            f"ATS {name}",
-            status,
-            detail,
-            "upstream shape may have changed; check the adapter's Appendix A entry"
-            if status == WARN
-            else "",
-        )
+    for name, kind, detail in results:
+        row = f"ATS {name}"
+        if kind == ATS_OK:
+            rep.add(row, PASS, detail)
+        elif kind == ATS_SHAPE:
+            # CHK-020 needs proof that the layout changed: a posting with a missing field, or an
+            # adapter that raised ShapeError where its own sentence says the shape was wrong.
+            rep.add(
+                row,
+                WARN,
+                detail,
+                "upstream shape may have changed; check the adapter's Appendix A entry",
+                code="CHK-020",
+            )
+        elif kind == ATS_EMPTY:
+            # An empty board may simply have no openings; the layout could not be checked.
+            rep.add(
+                row,
+                WARN,
+                f"unverified: {detail}, so the layout could not be checked",
+                "Run the check again when the board lists openings. If it keeps finding "
+                "none, the board's layout may have changed.",
+                code="CHK-027",
+            )
+        else:
+            # A timeout, a refusal, a missing page or the adapter's own notice of why it stopped
+            # (any kind but its cap): the source could not be read, so no layout hint.
+            rep.add(
+                row,
+                WARN,
+                f"could not read: {detail}",
+                "Open Sources to see this source's last run, then run the check again.",
+                code="CHK-027",
+            )
 
 
 def _check_database(rep: DoctorReport) -> None:
@@ -1020,6 +1121,7 @@ def _check_database(rep: DoctorReport) -> None:
             WARN,
             "not initialized",
             "run `kestrel db upgrade` (or launch the app; migrations run at startup)",
+            code="CHK-031",
         )
         return
     # "Has a revision" is not "is up to date". A database left at an older revision by a previous
@@ -1035,6 +1137,7 @@ def _check_database(rep: DoctorReport) -> None:
             WARN,
             f"at revision {rev}, but the shipped migrations could not be read to verify it",
             "check that the migrations directory shipped (packaging/kestrel.spec datas)",
+            code="CHK-021",
         )
     elif rev != head:
         rep.add(
@@ -1044,9 +1147,14 @@ def _check_database(rep: DoctorReport) -> None:
             "run `kestrel db upgrade` (or launch the app; migrations run at startup)"
             if rev < head
             else "this database was written by a NEWER build; upgrading Kestrel is the fix",
+            code="CHK-031",
         )
     else:
         rep.add("Database", PASS, f"migrated (revision {rev})")
+
+
+# Where a person confirms what is sent to an online model, as the start of a sentence.
+_CONSENT = ONLINE_CONSENT_HOW[:1].upper() + ONLINE_CONSENT_HOW[1:]
 
 
 def _check_hosted(rep: DoctorReport, s: Settings) -> None:
@@ -1075,8 +1183,8 @@ def _check_hosted(rep: DoctorReport, s: Settings) -> None:
                 WARN,
                 f"{named}: names an external backend but will not be used until Hosted mode is "
                 "turned on",
-                "Turn on Hosted mode under Settings > Hosted after reading the disclosure, or "
-                "point the tier back at `local`.",
+                f"{_CONSENT}, or point the tier back at `local`.",
+                code="CHK-022",
             )
     if hm.enabled and not hm.acknowledged_at:
         rep.add(
@@ -1084,7 +1192,8 @@ def _check_hosted(rep: DoctorReport, s: Settings) -> None:
             WARN,
             "llm.hosted_mode.enabled is set but the disclosure was never acknowledged; hosted "
             "tiers stay off",
-            "Accept the disclosure under Settings > Hosted (it writes acknowledged_at).",
+            f"{_CONSENT} (it writes acknowledged_at).",
+            code="CHK-022",
         )
     embed = s.llm.tiers.get("embed")
     embed_backend = s.llm.backends.get(embed.backend) if embed else None
@@ -1096,6 +1205,7 @@ def _check_hosted(rep: DoctorReport, s: Settings) -> None:
             "have no hosted path, so the client refuses every embed call (few-shot and "
             "reranker off)",
             "Point llm.tiers.embed.backend back at `local` (settings.yml or the setting table).",
+            code="CHK-023",
         )
 
     # Key presence per external backend any hosted tier (not the frontier) is routed to.
@@ -1111,7 +1221,8 @@ def _check_hosted(rep: DoctorReport, s: Settings) -> None:
                 "Hosted key",
                 WARN,
                 f"{r.backend}: no key saved; calls on this backend will fail",
-                f"Add your {_backend_label(r.backend)} key in Settings > Hosted.",
+                f"Add your {_backend_label(r.backend)} key in Settings > This computer.",
+                code="CHK-022",
             )
 
     st = prov.provider_status(s)
@@ -1125,8 +1236,9 @@ def _check_hosted(rep: DoctorReport, s: Settings) -> None:
             "Tier 3 frontier",
             WARN,
             f"{where}; no key saved",
-            f"Add your {_backend_label(st.backend_name)} key in Settings > Hosted to enable "
+            f"Add your {_backend_label(st.backend_name)} key in Settings > This computer to enable "
             "deeper reads.",
+            code="CHK-022",
         )
 
 
@@ -1212,6 +1324,7 @@ def _skip_local_checks(rep: DoctorReport, client: OllamaClient, s: Settings) -> 
         f"set llm.tiers.embed.backend to `inprocess` and .model to `{_inprocess_model_id()}` "
         "(the bundled CPU model, no Ollama), or install Ollama and "
         f"`ollama pull {embed.model}`; everything else works without either",
+        code="CHK-023",
     )
 
 
@@ -1241,6 +1354,7 @@ def _check_inprocess_embed(rep: DoctorReport, s: Settings) -> None:
             f"llm.tiers.embed.model is {model!r}; the in-process engine bundles "
             f"{ipe.BUNDLED.model_id!r}, so every embed call is refused",
             f"set llm.tiers.embed.model to {ipe.BUNDLED.model_id!r}",
+            code="CHK-023",
         )
         return
     missing = ipe.missing_files()
@@ -1252,6 +1366,7 @@ def _check_inprocess_embed(rep: DoctorReport, s: Settings) -> None:
             "few-shot and reranker off",
             "a source checkout: `uv run python scripts/fetch_embed_model.py`; an installed app: "
             "reinstall Kestrel",
+            code="CHK-023",
         )
         return
     rep.add(
@@ -1325,6 +1440,7 @@ def _settings_for_doctor(rep: DoctorReport) -> Settings:
             WARN,
             f"setting-table rows not applied: {_why(exc)}",
             "run `kestrel db upgrade`; until then doctor reads settings.yml only",
+            code="CHK-024",
         )
         return get_settings()
     if overrides is None:
@@ -1338,6 +1454,7 @@ def _settings_for_doctor(rep: DoctorReport) -> Settings:
             WARN,
             f"setting-table rows not applied: {_why(exc)}",
             "fix or reset the setting under Settings; until then doctor reads settings.yml only",
+            code="CHK-024",
         )
         return get_settings()
 
@@ -1376,7 +1493,7 @@ def _run_probes(rep: DoctorReport, client: OllamaClient, s: Settings, present: s
     would fight the run's model for memory (#112). Otherwise each model's probes unload the
     others first."""
     if _run_is_active():
-        rep.add("Model probes", WARN, RUN_GOING)
+        rep.add("Model probes", WARN, RUN_GOING, code="CHK-025")
         return
     probe = _ProbeClient(client)
     _check_needle(rep, probe, s, present)
@@ -1496,6 +1613,8 @@ def format_report(rep: DoctorReport) -> str:
     lines = ["", "Kestrel preflight (doctor)", "=" * 60]
     for r in rep.results:
         lines.append(f"{icon[r.status]}  {r.name:<22} {r.detail}")
+        if r.code and r.status in (WARN, FAIL):
+            lines.append(f"         Code {r.code}")
         if r.remediation and r.status in (WARN, FAIL):
             lines.append(f"         -> {r.remediation}")
     n_fail = sum(1 for r in rep.results if r.status == FAIL)

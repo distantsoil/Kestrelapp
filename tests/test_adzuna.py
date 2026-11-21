@@ -111,6 +111,14 @@ def test_missing_pay_company_and_a_one_sided_range():
     assert (one.comp_min, one.comp_max, one.comp_interval) == (65000.0, 65000.0, "year")
 
 
+def test_adzuna_pay_has_no_stated_period_or_currency():
+    """Issue #208: Adzuna's salary fields carry neither; both are Kestrel's reading."""
+    one = to_posting(ITEMS[4])
+    assert (one.comp_interval_assumed, one.comp_currency_assumed) == (True, True)
+    no_pay = to_posting(ITEMS[2])
+    assert (no_pay.comp_interval_assumed, no_pay.comp_currency_assumed) == (False, False)
+
+
 def test_a_malformed_entry_is_skipped_not_fatal():
     assert to_posting({}) is None and to_posting("x") is None
     p = to_posting({"id": 7, "title": "Clerk"})
@@ -202,6 +210,7 @@ async def test_the_request_budget_is_capped_across_titles():
             {"max_pages": 5, "results_per_page": 1}, http)
     total = sum(r.call_count for r in respx.routes)
     assert total == 8 and "limit of requests" in got.partial_error
+    assert [n.kind for n in got.notices] == ["capped"]
 
 
 # ---------------------------------------------------------------- missing key, errors, secrecy
@@ -402,7 +411,8 @@ async def test_a_429_run_is_partial_keeps_the_page_and_never_counts_a_failure(sm
     src = await _source(sm, max_pages=3, results_per_page=2)
     async with _http() as http:
         out = await run_source(sm, src.id, http=http)
-    assert out.status == "partial" and "slow down" in out.error and out.counts["new"] == 2
+    assert out.status == "partial" and out.counts["new"] == 2
+    assert "is rate limiting requests" in out.error
     async with sm() as s:
         assert (await s.get(Source, src.id)).consecutive_failures == 0
 

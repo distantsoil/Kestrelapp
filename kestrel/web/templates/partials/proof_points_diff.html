@@ -1,0 +1,31 @@
+{# The reviewed diff (issue #208 item 6c, D-SCORE-26). Rows are named by id only; the server
+   recomputes the plan on Apply, so no text from this form is ever written. #}
+<div class="pf-pp__panel" data-testid="pf-pp-diff">
+  {% if not plan.has_resume %}
+  <p class="pf-note pf-note--warn" data-testid="pf-pp-no-resume">There is no resume to compare with yet. Import one on this tab first.</p>
+  {% elif not plan.rows %}
+  <p class="pf-note" role="status" data-testid="pf-pp-uptodate">Your proof points match your current resume. Nothing to change.</p>
+  {% else %}
+  <form hx-post="/proof-points/apply" hx-target="#pf-pp" hx-swap="outerHTML" data-testid="pf-pp-apply-form">
+    <input type="hidden" name="track" value="{{ pp_track }}">
+    <p class="k-muted">{{ plan.rows|length }} suggested change{{ '' if plan.rows|length == 1 else 's' }}{% if plan.kept %}; {{ plan.kept }} proof point{{ '' if plan.kept == 1 else 's' }} already match{{ 'es' if plan.kept == 1 else '' }} your resume{% endif %}. Uncheck anything you want to leave as it is.</p>
+    <ul class="pf-pp__rows">
+      {% for r in plan.rows %}
+      <li class="pf-pp__row pf-pp__row--{{ r.action }}" data-testid="pf-pp-row" data-action="{{ r.action }}">
+        <label class="pf-pp__pick">
+          <input type="checkbox" name="row" value="{{ r.id }}"{% if r.ticked %} checked{% endif %} data-testid="pf-pp-pick">
+          <span class="k-pill pf-pp__tag">{{ {'add': 'Add', 'fix': 'Fix', 'remove': 'Remove'}[r.action] }}</span>
+          <span class="pf-pp__why">{{ r.reason }}</span>
+        </label>
+        {% if r.old %}<p class="pf-pp__old" data-testid="pf-pp-old"><span class="k-sr-only">Now: </span>{{ r.old }}</p>{% endif %}
+        {% if r.new %}<p class="pf-pp__new" data-testid="pf-pp-new"><span class="k-sr-only">Becomes: </span>{{ r.new }}{% if r.bullet and r.bullet.role %} <span class="k-muted">({{ r.bullet.role }})</span>{% endif %}</p>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="pf-pp__tools">
+      <button type="submit" class="k-btn k-btn--sm k-btn--primary" data-testid="pf-pp-apply">Apply checked changes</button>
+      <button type="button" class="k-btn k-btn--sm" data-testid="pf-pp-cancel" hx-get="/proof-points/cancel" hx-target="closest .pf-pp__panel" hx-swap="delete swap:220ms">Cancel</button>
+    </div>
+  </form>
+  {% endif %}
+</div>

@@ -45,9 +45,9 @@
   </nav>
   {% endif %}
   {% else %}
-  <div class="ap-board" data-testid="apps-board-grid" style="--n:4">
+  <div class="ap-board" data-testid="apps-board-grid" data-k-style="--n:4">
     {% for column in columns %}
-    <section class="ap-col" data-testid="apps-col" data-col="{{ column.col.key }}" data-col-label="{{ column.col.label }}" data-status="{{ column.col.first }}" style="--cc: var(--ap-c{{ loop.index }})" aria-label="{{ column.col.label }}">
+    <section class="ap-col" data-testid="apps-col" data-col="{{ column.col.key }}" data-col-label="{{ column.col.label }}" data-status="{{ column.col.first }}" data-k-style="--cc: var(--ap-c{{ loop.index }})" aria-label="{{ column.col.label }}">
       <div class="ap-colh"><span class="ap-cdot" aria-hidden="true"></span><b>{{ column.col.label }}</b><span class="ap-cn" data-total="{{ column.total }}" data-extra="{{ column.folded_more }}">{{ column.total }}</span></div>
       <div class="ap-cap">{{ column.col.caption }}</div>
       <div class="ap-cards">

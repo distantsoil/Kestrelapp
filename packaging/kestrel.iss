@@ -34,6 +34,15 @@ UninstallDisplayName=Kestrel {#AppVersion}
 ; Must match MUTEX_NAME in kestrel/desktop/shell.py byte for byte. Without it the installer will
 ; happily overwrite files while Kestrel is running; with it the operator is told to close it first.
 AppMutex=Local\Kestrel
+; Signing: build_windows.ps1 defines KestrelSignTool (and the sign tool command) only when the
+; release job signs. Inno then signs the installer and, because SignedUninstaller defaults to
+; yes, the uninstaller too. Without the define nothing here changes.
+#ifdef KestrelSignTool
+SignTool=kestrelsign
+SignedUninstaller=yes
+; No automatic retries (the default is 2): every attempt is a billed signature.
+SignToolRetryCount=0
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

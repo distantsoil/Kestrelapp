@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from kestrel.config import Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Org, OrgSummary, Setting, Task
+from kestrel.llm.engine_cycle import engine_unreachable
 from kestrel.llm.schemas import (
     MAX_SUMMARY_SENTENCES,
     MAX_SUMMARY_TAGS,
@@ -315,6 +316,8 @@ class Outcome:
     status: str  # ok | insufficient | quarantined | skipped | error
     error: str | None = None
     out_of_credit: bool = False
+    # The call could not reach the local engine: the task waits, its try given back.
+    engine_unreachable: bool = False
     model_called: bool = False
 
 
@@ -401,6 +404,7 @@ async def summarize(
             "error",
             error=result.error or "no reply",
             out_of_credit=result.out_of_credit,
+            engine_unreachable=result.engine_unreachable,
             model_called=True,
         )
 
@@ -689,10 +693,16 @@ async def drain_org_summaries(
     from kestrel.queue.queue import REASON_CREDIT, TaskQueue
 
     get = acquire or acquire_public_excerpts
+    from kestrel.pipeline.worker import engine_lost_for, local_engine_ready
+
+    if not await local_engine_ready(settings, "tier2"):
+        return 0  # Ollama is not answering or lacks the model: nothing leased, no try spent
     queue = TaskQueue(sm)
     wid = "pipeline-org-summary"
     done = 0
     while stop is None or not stop.is_set():
+        if engine_lost_for(settings, "tier2"):
+            break  # a call this cycle could not reach Ollama: lease nothing more (round 6)
         task = await queue.lease(wid, types=[TASK_TYPE], lease_seconds=LEASE_S)
         if task is None:
             break
@@ -708,6 +718,7 @@ async def drain_org_summaries(
                     tier_goes_online,
                 )
                 from kestrel.services.setting_overrides import load_settings_with_db
+                from kestrel.services.setup_state import online_send_held
 
                 live_settings = await load_settings_with_db(s)
                 live_dest = destination_id(live_settings, "tier2")
@@ -742,7 +753,7 @@ async def drain_org_summaries(
                                    or tier_goes_online(latest, "tier2"))
                     if online_send and (
                         latest_dest != live_dest
-                        or not latest.llm.hosted_mode.active
+                        or online_send_held(latest) is not None
                         or held_for_approval(latest, ("tier2",), payload)
                     ):
                         await hold_for_confirmation(s, org_id)
@@ -759,7 +770,8 @@ async def drain_org_summaries(
 
             log.warning("org_summary_failed", task=task.id, error_type=type(exc).__name__,
                         reason=classify_model_failure(exc)[0])
-            if await queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True) == "dead":
+            if await queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True,
+                                engine_wait=engine_unreachable(exc)) == "dead":
                 await _note_dead(sm, int((task.payload or {}).get("org_id") or 0))
             continue
         finally:
@@ -772,7 +784,8 @@ async def drain_org_summaries(
             )
             break
         if outcome.status == "error":
-            status = await queue.fail(task.id, outcome.error or "error", worker_id=wid, retry=True)
+            status = await queue.fail(task.id, outcome.error or "error", worker_id=wid, retry=True,
+                                      engine_wait=outcome.engine_unreachable)
             if status == "dead":
                 await _note_dead(sm, int((task.payload or {}).get("org_id") or 0))
             continue

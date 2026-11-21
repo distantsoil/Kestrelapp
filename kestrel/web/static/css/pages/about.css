@@ -27,6 +27,9 @@
   padding: 2px 9px; white-space: nowrap; }
 .ab-vline > .k-muted { font-size: 12px; color: var(--muted); }
 .ab-copy { font-size: 13px; margin-top: 6px; }
+/* The install ID (D-INST-1): label above the value, the shared look in install_id.css. */
+.ab-iid { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ab-iid__l { font-size: 12px; font-weight: 700; color: var(--muted); }
 .ab-upd { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 230px;
   padding-left: 20px; border-left: 1px solid var(--line); }
 @container kwin (max-width: 1000px) { .ab-upd { border-left: 0; padding-left: 0; } }

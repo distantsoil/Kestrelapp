@@ -126,6 +126,7 @@ def _fake_run(table: dict[str, str | None]):
     return run
 
 
+@pytest.mark.real_hardware_detection
 def test_detect_nvidia_on_windows_reads_vram_and_ram(monkeypatch):
     monkeypatch.setattr(p.platform, "system", lambda: "Windows")
     monkeypatch.setattr(
@@ -140,6 +141,7 @@ def test_detect_nvidia_on_windows_reads_vram_and_ram(monkeypatch):
     assert p.recommend_profile(hw)[0] == "gpu_16gb"
 
 
+@pytest.mark.real_hardware_detection
 def test_detect_apple_silicon_uses_unified_memory(monkeypatch):
     monkeypatch.setattr(p.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(
@@ -153,6 +155,7 @@ def test_detect_apple_silicon_uses_unified_memory(monkeypatch):
     assert p.recommend_profile(hw)[0] == "mac_32gb"
 
 
+@pytest.mark.real_hardware_detection
 def test_detect_linux_without_gpu_never_raises(monkeypatch):
     monkeypatch.setattr(p.platform, "system", lambda: "Linux")
     monkeypatch.setattr(p.subprocess, "run", _fake_run({}))  # nothing on PATH
@@ -164,6 +167,7 @@ def test_detect_linux_without_gpu_never_raises(monkeypatch):
     assert name == "hosted_only" and "CPU" in reason and "62.5 GB RAM" in reason
 
 
+@pytest.mark.real_hardware_detection
 def test_detect_survives_a_subprocess_timeout(monkeypatch):
     def boom(cmd, **kwargs):
         raise subprocess.TimeoutExpired(cmd, 1)
@@ -229,9 +233,11 @@ def test_active_profile_round_trips_under_config_dir():
 class _Rep:
     def __init__(self):
         self.rows = []
+        self.codes = []
 
-    def add(self, name, status, detail="", remediation="", blocking=False):
+    def add(self, name, status, detail="", remediation="", blocking=False, code=""):
         self.rows.append((name, status, detail, remediation, blocking))
+        self.codes.append(code)
 
 
 class _Client:
@@ -275,6 +281,7 @@ def test_fit_check_warns_never_fails_and_names_the_profile_to_switch_to(monkeypa
     (row,) = rep.rows
     assert row[1] == "WARN" and row[4] is False
     assert "gpu_24gb" in row[2] and "12 GB VRAM" in row[2]
+    assert rep.codes == ["CHK-026"]  # the warning carries its health check code
     assert "kestrel setup --profile gpu_12gb" in row[3]
 
 

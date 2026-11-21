@@ -13,18 +13,6 @@
   <button type="button" class="k-wc-close" data-wc="close" aria-label="Close" title="Close"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6"/></svg></button>
   <span class="k-wctl__drag pywebview-drag-region" data-k-drag aria-hidden="true"></span>
 </div>
-<script>
-  // Shown at once when this window already found the desktop API on an earlier page (kept in
-  // sessionStorage by kestrel-ui.js); a plain browser tab never has the key.
-  (function () {
-    try {
-      var os = sessionStorage.getItem('kestrel-frame');
-      var w = document.getElementById('k-wctl');
-      if (w && (os === 'win' || os === 'mac' || os === 'linux')) {
-        w.hidden = false;
-        w.classList.toggle('is-mac', os === 'mac');
-        document.documentElement.setAttribute('data-k-frame', os);
-      }
-    } catch (e) { /* storage off */ }
-  })();
-</script>
+{# Shown at once when this window already found the desktop API on an earlier page: k-head.js,
+   as the parser inserts this marker (D-INST-8). #}
+<i hidden data-k-init="window-controls"></i>

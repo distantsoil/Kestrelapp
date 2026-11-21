@@ -15,6 +15,12 @@
 /* The band stays inside the content column (the art ends where the card ends), not at the window
    edge, and holds the breadcrumb, title and lede together as the mockup's horizon does. */
 .rt-page .k-scene { margin: 0; padding: 4px 0 10px; }
+/* This band's title row is the longest of any page (the title, the count and the How it works
+   button end 758px from the left at a 1280px window), and the scene of the day rotates, so a scene
+   whose ground fades in early drew under the button on some days. The art is 560px wide, the width
+   it is drawn in (its viewBox), instead of 620: the same picture, a little less wide, which keeps
+   every scene's visible edge clear of the row. */
+.rt-page .k-scene__art { width: min(560px, 70%); }
 .rt-crumb a { color: var(--link-ink); text-decoration: none; }
 .rt-crumb a:hover { text-decoration: underline; }
 .rt-lede { margin: 0; color: var(--muted); font-size: var(--fs-md); white-space: nowrap; }
@@ -27,6 +33,19 @@
 }
 .rt-banner.is-warn { background: var(--tint-warn); border-color: var(--tint-warn-line); color: var(--ink); }
 .rt-banner.is-good { background: var(--good-bg); border-color: transparent; color: var(--good-ink); }
+.rt-group {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
+  flex-wrap: wrap; margin-bottom: var(--sp-3); padding: 10px 12px; border-radius: var(--r-sm);
+  background: var(--tint-warn); border: 1px solid var(--tint-warn-line); color: var(--ink);
+  animation: rt-group-in .28s var(--ease);
+}
+.rt-group--picked { background: var(--tint-info); border-color: var(--line); }
+.rt-g-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 260px; }
+.rt-g-text b { font-size: var(--fs-md); overflow-wrap: break-word; }
+.rt-g-text span { color: var(--muted); font-size: 13px; overflow-wrap: break-word; }
+.rt-g-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rt-g-acts .k-btn { white-space: nowrap; }
+@keyframes rt-group-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 .rt-bar { display: flex; align-items: center; gap: 14px; padding: 0 0 12px; flex-wrap: nowrap; }
 .rt-all { display: inline-flex; align-items: center; gap: 9px; font-weight: 700; white-space: nowrap;
   cursor: pointer; }
@@ -47,8 +66,15 @@
 .rt-top {
   display: grid; gap: 14px; align-items: center;
   grid-template-columns: 22px minmax(0, 1.25fr) 104px minmax(0, 1.5fr) 92px 64px;
+  grid-template-areas: "cb role step why when tries";
 }
 .rt-cbw { display: grid; place-items: center; }
+.rt-top > .rt-cbw { grid-area: cb; }
+.rt-top > .rt-role { grid-area: role; }
+.rt-top > .rt-why { grid-area: why; }
+.rt-top > .rt-step { grid-area: step; }
+.rt-top > .rt-when { grid-area: when; }
+.rt-top > .rt-tries { grid-area: tries; }
 .rt-role { min-width: 0; }
 .rt-role b { display: block; overflow-wrap: anywhere; font-size: 15px; line-height: 1.3; }
 .rt-role b a { color: var(--ink); text-decoration: none; }
@@ -136,10 +162,32 @@
   grid-template-columns: minmax(0, 1.25fr) 104px minmax(0, 1.5fr) 92px; }
 .rt-hist .rt-det { grid-column: 1 / -1; margin-left: 0; }
 
-/* Narrow windows: the shared .k-layout rule stacks the help column under the list at 1300px and
-   below, as the mockup does (its .grid3 and .colr container query). */
+/* The shared .k-layout rule stacks the help column under the list at 1300px and below, as the
+   mockup does (its .grid3 and .colr container query). */
+/* Narrow windows, 780px or less of window (a browser tab; the desktop minimum is 960). The row
+   stacks: title and company, then the reason, then the step, time and tries, then the buttons. The
+   DOM order is the reading order: the reason comes first in the markup too. The buttons, notes and
+   details line up with the role, not the checkbox, so a row has one left edge. */
+@container kwin (max-width: 780px) {
+  .rt-lede { white-space: normal; }
+  .rt-page .k-scene__title { flex-wrap: wrap; row-gap: 8px; }
+  .rt-bar { flex-wrap: wrap; row-gap: 8px; }
+  .rt-chips { flex-wrap: wrap; margin-left: 0; }
+  .rt-bulk { margin-left: auto; }
+  .rt-top {
+    grid-template-columns: 22px auto minmax(0, 1fr) auto;
+    grid-template-areas: "cb role role role" ". why why why" ". step when tries";
+    row-gap: 8px;
+  }
+  .rt-top > .rt-cbw { align-self: start; padding-top: 2px; }
+  .rt-acts { flex-wrap: wrap; row-gap: 8px; }
+  .rt-acts .k-grow { display: none; }
+  .rt-hist li { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .rt-row { transition: none; }
   .rt-spin { animation-duration: 2.4s; }
   .rt-flash { animation: none; }
+  .rt-group { animation: none; }
 }

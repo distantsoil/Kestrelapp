@@ -235,17 +235,22 @@ def test_the_consulting_profile_says_yes_or_no_never_a_program_value():
 
 # --------------------------------------------- review follow-ups: every consumer agrees (O20)
 def test_a_score_from_the_old_prompt_version_says_score_again():
+    # The current versions are read once per request and passed in (round 6).
+    from kestrel.config import load_settings
+    from kestrel.learning.score_age import versions_for
+
+    now = versions_for(load_settings())
     opp = SimpleNamespace(track="employment", ghost_score=0.0, liveness=None)
     old = SimpleNamespace(tier=2, prompt_version="evaluate/v1", needs_review=False,
                           legitimacy=None)
-    assert "Score again to refresh it." in (pv.warning_text(opp, old) or "")
-    new = SimpleNamespace(tier=2, prompt_version="evaluate/v3", needs_review=False,
+    assert "Score again to refresh it." in (pv.warning_text(opp, old, versions=now) or "")
+    new = SimpleNamespace(tier=2, prompt_version="evaluate/v4", needs_review=False,
                           legitimacy=None)
-    assert pv.warning_text(opp, new) is None
+    assert pv.warning_text(opp, new, versions=now) is None
     lead = SimpleNamespace(track="consulting", ghost_score=0.0, liveness=None)
     old_c = SimpleNamespace(tier=2, prompt_version="evaluate_consulting/v1",
                             needs_review=False, legitimacy=None)
-    assert "Score again" in (pv.warning_text(lead, old_c) or "")
+    assert "Score again" in (pv.warning_text(lead, old_c, versions=now) or "")
 
 
 def test_tailoring_never_links_or_counts_an_unverified_match_as_covered():

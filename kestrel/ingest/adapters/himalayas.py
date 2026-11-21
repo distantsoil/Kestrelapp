@@ -34,7 +34,18 @@ import httpx
 import structlog
 
 from kestrel.errors import ROBOTS_SENTENCE
-from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
+from kestrel.ingest.base import (
+    AdapterError,
+    Notice,
+    PostingBatch,
+    Problem,
+    RawPosting,
+    SourceConfigError,
+    hedged_problem,
+    rate_limited_problem,
+    request_limit,
+    server_error_problem,
+)
 from kestrel.pipeline.profile import load_profile
 
 log = structlog.get_logger(__name__)
@@ -94,14 +105,17 @@ def _location(job: dict) -> str:
     return places[0]
 
 
-def _pay(job: dict) -> tuple[float | None, float | None, str | None, str | None]:
+def _pay(job: dict) -> tuple[float | None, float | None, str | None, str | None, bool]:
+    """(min, max, currency, interval, interval_assumed). A missing salaryPeriod is read as a
+    year for display, but flagged as assumed: a default is not a stated interval (#208)."""
     lo, hi = _num(job.get("minSalary")), _num(job.get("maxSalary"))
     currency = _text(job.get("currency"))
-    interval, div = _PERIOD.get(str(job.get("salaryPeriod") or "annual").lower(), (None, 1))
+    given = _text(job.get("salaryPeriod"))
+    interval, div = _PERIOD.get((given or "annual").lower(), (None, 1))
     if not (lo or hi) or not currency or interval is None:
-        return None, None, None, None
+        return None, None, None, None, False
     lo, hi = (lo or hi) / div, (hi or lo) / div
-    return lo, hi, currency.upper(), interval
+    return lo, hi, currency.upper(), interval, given is None
 
 
 def to_posting(job: dict, *, now: float | None = None) -> RawPosting | None:
@@ -116,7 +130,7 @@ def to_posting(job: dict, *, now: float | None = None) -> RawPosting | None:
     if isinstance(expiry, (int, float)) and not isinstance(expiry, bool) and expiry > 0:
         if expiry < (time.time() if now is None else now):
             return None  # the terms ask that expired jobs are removed
-    lo, hi, cur, interval = _pay(job)
+    lo, hi, cur, interval, interval_assumed = _pay(job)
     return RawPosting(
         external_id=guid or apply_link,
         url=guid or apply_link,
@@ -129,6 +143,7 @@ def to_posting(job: dict, *, now: float | None = None) -> RawPosting | None:
         is_remote=True,
         remote_hint="Remote",
         comp_min=lo, comp_max=hi, comp_currency=cur, comp_interval=interval,
+        comp_interval_assumed=interval_assumed,
         date_posted=_iso(job.get("pubDate")),
         raw={"via": SOURCE_NAME, "via_url": SOURCE_URL,
              "seniority": job.get("seniority") or [],
@@ -137,13 +152,15 @@ def to_posting(job: dict, *, now: float | None = None) -> RawPosting | None:
 
 
 def _problem(status: int) -> str:
-    if status in (403, 429):
-        return "Himalayas asked Kestrel to slow down; the rest is fetched on the next check"
+    if status == 429:
+        return rate_limited_problem("Himalayas", status)
+    if status == 403:
+        return hedged_problem("Himalayas", status)
     if status >= 500:
-        return "Himalayas had a problem on their side; the rest is fetched on the next check"
+        return server_error_problem("Himalayas", status)
     if status in (400, 404):
-        return "Himalayas rejected the search. Check the search words"
-    return f"Himalayas answered with an unexpected status ({status})"
+        return Problem("Himalayas rejected the search. Check the search words", status)
+    return Problem(f"Himalayas answered with an unexpected status ({status})", status)
 
 
 class HimalayasAdapter:
@@ -170,10 +187,7 @@ class HimalayasAdapter:
         for term in terms:
             for page in range(1, max_pages + 1):
                 if requests >= MAX_REQUESTS:
-                    batch.partial_error = batch.partial_error or (
-                        "Himalayas: stopped at the limit of requests per check; the rest is "
-                        "fetched on the next check"
-                    )
+                    batch.add(request_limit("Himalayas"))
                     return batch
                 requests += 1
                 params = {"country": "US", "sort": "recent", "page": str(page)}
@@ -210,7 +224,7 @@ class HimalayasAdapter:
             log.warning("himalayas_error", status=r.status_code)
             message = _problem(r.status_code)
             if r.status_code in (403, 429) or r.status_code >= 500:
-                batch.partial_error = message
+                batch.add(Notice.of(message))
                 return None
             raise AdapterError(message)
         try:

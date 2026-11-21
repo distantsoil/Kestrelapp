@@ -102,6 +102,19 @@ def test_himalayas_pay_periods_and_missing_pay():
     assert (f.comp_min, f.comp_max, f.comp_interval) == (1000.0, 1500.0, "week")
 
 
+def test_himalayas_a_missing_pay_period_is_assumed_never_stated():
+    """Issue #208: a missing salaryPeriod is read as a year for display, but flagged assumed."""
+    stated = him_posting(dict(JOBS[1], salaryPeriod="annual"), now=NOW)
+    assert (stated.comp_interval, stated.comp_interval_assumed) == ("year", False)
+    missing = dict(JOBS[1])
+    missing.pop("salaryPeriod", None)
+    p = him_posting(missing, now=NOW)
+    assert (p.comp_interval, p.comp_interval_assumed) == ("year", True)
+    assert p.comp_currency_assumed is False  # the board stated the currency
+    blank = him_posting(dict(JOBS[1], salaryPeriod=""), now=NOW)
+    assert blank.comp_interval_assumed is True
+
+
 def test_himalayas_locations_and_expiry():
     by_title = {j["title"]: him_posting(j, now=NOW) for j in JOBS}
     assert by_title["Sales Systems Administrator (Berlin)"].location_raw == "Germany"
@@ -139,6 +152,7 @@ async def test_himalayas_page_cap_and_request_budget():
     async with _http() as http:
         got = await HimalayasAdapter().fetch({"max_pages": 10}, http)
     assert route.call_count - before == 12 and "limit of requests" in got.partial_error
+    assert [n.kind for n in got.notices] == ["capped"]
 
 
 @respx.mock

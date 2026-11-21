@@ -157,15 +157,18 @@ async def test_2_the_scrape_is_called_with_an_explicit_board_list(monkeypatch):
 
     from kestrel.ingest.adapters.jobspy import JobSpyAdapter
 
-    seen: dict = {}
+    seen: list[dict] = []
 
     def fake_scrape(**kw):
-        seen.update(kw)
+        seen.append(kw)
         return None
 
     monkeypatch.setattr(jobspy, "scrape_jobs", fake_scrape)
     await JobSpyAdapter().fetch({"search_term": "analyst"})
-    assert seen["site_name"] == ["indeed", "glassdoor"]
+    # Glassdoor has a call of its own since D-WORKER-10 amended: every call names an explicit,
+    # non-empty board list without LinkedIn, and together they ask exactly the default boards.
+    assert seen and all(c["site_name"] and "linkedin" not in c["site_name"] for c in seen)
+    assert [s for c in seen for s in c["site_name"]] == ["indeed", "glassdoor"]
 
 
 def test_2_linkedin_is_refused_anywhere_in_the_list():

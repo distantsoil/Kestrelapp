@@ -220,10 +220,37 @@ def describe_base(ref: str, sha: str, date: str, *, stale_against: str | None, h
     return "; ".join(parts)
 
 
-def diff_base() -> tuple[str | None, str]:
+BASE_ENV = "KESTREL_DIFF_BASE"
+
+
+def override_base(ref: str, head: str) -> tuple[str | None, str]:
+    """(commit, note) for a base named by KESTREL_DIFF_BASE (D-PROC-15). Refused, with the reason
+    in the note, when the ref does not resolve, is not an ancestor of HEAD, or is HEAD itself
+    (nothing would be compared, so the run would pass on no evidence)."""
+    proc = _git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    sha = proc.stdout.strip()
+    if proc.returncode != 0 or not sha:
+        return None, f"{BASE_ENV}={ref} does not name a commit here; fetch it or unset {BASE_ENV}"
+    if sha == head:
+        return None, (f"{BASE_ENV}={ref} is HEAD itself, so nothing would be compared; name the "
+                      "commit this branch was cut from")
+    if _git("merge-base", "--is-ancestor", sha, "HEAD").returncode != 0:
+        return None, (f"{BASE_ENV}={ref} ({sha[:10]}) is not an ancestor of HEAD; merge or "
+                      f"rebase onto it first, or unset {BASE_ENV}")
+    behind = _git("rev-list", "--count", f"{sha}..HEAD").stdout.strip() or "?"
+    return sha, (f"diff base is OVERRIDDEN by {BASE_ENV}={ref} ({sha[:10]}, commit date "
+                 f"{_commit_date(sha)}; HEAD is {behind} commit(s) ahead). Only what changed "
+                 "since that commit is selected; the full gate still compares with main")
+
+
+def diff_base(override: str | None = None) -> tuple[str | None, str]:
     """(commit to diff against, note). origin/main's merge base, else main's, else None. The
-    note always says which ref was used and its commit date."""
+    note always says which ref was used and its commit date. `override` is the value of
+    KESTREL_DIFF_BASE, passed only by the stress tier run alone (D-PROC-15): every other caller
+    compares with main."""
     head = _git("rev-parse", "HEAD").stdout.strip()
+    if override:
+        return override_base(override, head)
     missing = ""
     for ref in ("origin/main", "main"):
         proc = _git("merge-base", "HEAD", ref)

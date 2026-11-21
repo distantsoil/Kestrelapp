@@ -452,7 +452,8 @@ def _wants_ctx(tracks: tuple[str, ...], pstate: pe.ProfileState) -> dict[str, An
 def _about_ctx(tracks: tuple[str, ...], pstate: pe.ProfileState) -> dict[str, Any]:
     block = pstate.tracks.get(_primary_track(tracks)) or {}
     return {
-        "a": {k: str(block.get(k) or "") for k in pe.ABOUT_TEXT},
+        "a": {k: str(block.get(k) or "") for k in (
+            *pe.ABOUT_TEXT, "phone_country", "phone_entered", "phone_e164")},
         "track_jobs": "employment" in tracks,
         "track_consulting": "consulting" in tracks,
     }
@@ -743,7 +744,7 @@ def _existing_form(track: str, section: str, pstate: pe.ProfileState) -> dict[st
     block = pstate.tracks.get(track) or {}
     out: dict[str, str] = {}
     if section == "about":
-        for k in pe.ABOUT_TEXT:
+        for k in (*pe.ABOUT_TEXT, "phone_country", "phone_entered"):
             out[k] = str(block.get(k) or "")
         for k in pe.ABOUT_LISTS:
             out[k] = "\n".join(block.get(k) or [])
@@ -811,6 +812,9 @@ async def onboarding_save_about(request: Request):
     picked = [t for t in tracks_svc.BOTH if t in form.getlist("track")]
     typed = {k: str(form.get(k) or "").strip() for k in pe.ABOUT_TEXT if k in form}
     typed.setdefault("first_name", "")
+    for extra in ("phone_country", "phone_entered", "phone_e164"):
+        if extra in form:
+            typed[extra] = str(form.get(extra) or "").strip()
     pstate = pe.load_state()
     problem: str | None = None
     if not typed["first_name"]:
@@ -823,7 +827,8 @@ async def onboarding_save_about(request: Request):
     if problem is None:
         try:
             for track in tracks:
-                values = pe.section_from_form("about", _merged(track, "about", pstate, typed))
+                values = pe.section_from_form(
+                    "about", _merged(track, "about", pstate, typed), pstate.tracks.get(track))
                 pe.save_section(track, "about", values)
             async with sessionmaker()() as s:
                 await tracks_svc.save_enabled(s, list(tracks))
@@ -837,6 +842,12 @@ async def onboarding_save_about(request: Request):
     if problem is not None:
         ctx = await _ctx(request, "about", nav_problem=problem)
         ctx["a"] = {**ctx["a"], **typed}
+        # The pin and the region the text was read under come from the server's own record, the
+        # same decision the save makes, never from the selector the failed form posted.
+        stored = pstate.tracks.get(_primary_track(tracks) if tracks else "employment") or {}
+        state = pe.phone_state(ctx["a"].get("phone"), ctx["a"].get("phone_country"), None,
+                               ctx["a"].get("phone_e164"), stored)
+        ctx["a"]["phone_pin"], ctx["a"]["phone_under"] = state.pin, state.read_under
         ctx["track_jobs"] = "employment" in picked
         ctx["track_consulting"] = "consulting" in picked
         ctx["hint"] = _hint("about", ctx)
@@ -1068,6 +1079,7 @@ async def onboarding_start_searching(request: Request):
         if not state.completed:
             state.completed = True
             state.completed_at = utcnow_iso()
+            await ob.mark_first_run_break(s)
         state.step = "searches"
         if "searches" not in state.visited:
             state.visited.append("searches")
@@ -1078,6 +1090,16 @@ async def onboarding_start_searching(request: Request):
     if request.headers.get("HX-Request"):
         return Response(status_code=200, headers={"HX-Redirect": "/?tour=1"})
     return RedirectResponse("/?tour=1", status_code=303)
+
+
+@router.post("/onboarding/first-run-break/dismiss", response_class=HTMLResponse,
+             dependencies=[LOCAL_ONLY])
+async def first_run_break_dismiss():
+    """"Show me around" on the first-run notice (D-UI-249): it never shows again."""
+    async with sessionmaker()() as s:
+        await ob.dismiss_first_run_break(s)
+        await s.commit()
+    return HTMLResponse("")
 
 
 @router.post("/onboarding/restart", dependencies=[LOCAL_ONLY])

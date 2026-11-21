@@ -15,6 +15,7 @@ from httpx import Response
 
 from kestrel.llm import providers as prov
 from kestrel.setup import default_picks, pick_reason
+from tests.page_source import as_written
 from tests.test_byok import _openrouter
 from tests.test_hosted_connect import _OR, _mock_openrouter
 from tests.test_hosted_mode import _db_settings, _fresh_app
@@ -282,7 +283,7 @@ def test_every_htmx_click_gets_busy_feedback(monkeypatch):
     life of every htmx request and the stylesheet turns that into a progress cursor."""
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     client = _fresh_app()
-    assert "htmx:beforeRequest" in client.get("/settings").text
+    assert "htmx:beforeRequest" in as_written(client.get("/settings").text)
     css = client.get("/static/css/kestrel.css").text
     assert "body.busy" in css and "cursor: progress" in css
 
@@ -422,6 +423,6 @@ def test_paid_id_outranks_its_free_twin_when_both_are_listed():
 
 def test_busy_cursor_skips_polled_partials(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    page = _fresh_app().get("/runs").text
+    page = as_written(_fresh_app().get("/runs").text)
     # Polled and self-loading partials (every, load, revealed, intersect) never show it (D-UI-203).
     assert "(every|load|revealed|intersect)" in page and 'hx-trigger="every 5s' in page

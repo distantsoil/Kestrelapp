@@ -21,7 +21,21 @@ from typing import Any
 import httpx
 import structlog
 
-from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
+from kestrel.ingest import failure_code
+from kestrel.ingest.base import (
+    SHARED_KINDS,
+    AdapterError,
+    Notice,
+    NoticeKind,
+    PostingBatch,
+    Problem,
+    RawPosting,
+    SourceConfigError,
+    hedged_problem,
+    kind_of,
+    rate_limited_problem,
+    server_error_problem,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -148,11 +162,13 @@ def to_posting(item: dict) -> RawPosting | None:
 
 
 def _problem(status: int) -> str:
-    if status in (403, 429):
-        return "Hacker News asked Kestrel to slow down; the rest is fetched on the next check"
+    if status == 429:
+        return rate_limited_problem("Hacker News", status)
+    if status == 403:
+        return hedged_problem("Hacker News", status)
     if status >= 500:
-        return "Hacker News had a problem on their side; the rest is fetched on the next check"
-    return f"Hacker News answered with an unexpected status ({status})"
+        return server_error_problem("Hacker News", status)
+    return Problem(f"Hacker News answered with an unexpected status ({status})", status)
 
 
 class _Slow(Exception):
@@ -190,7 +206,8 @@ class HnHiringAdapter:
         try:
             story = await self._thread(config, client)
             if story is None:
-                batch.partial_error = "No Who is hiring? thread was found on Hacker News yet"
+                batch.note(NoticeKind.STOPPED,
+                           "No Who is hiring? thread was found on Hacker News yet")
                 return batch
             seen: set[str] = set()
             kids = story.get("kids")
@@ -210,16 +227,21 @@ class HnHiringAdapter:
                 if posting is not None:
                     batch.append(posting)
         except _Slow as slow:
-            batch.partial_error = slow.message
+            batch.add(Notice.of(slow.message))
         except _Unreachable as gone:
             if not batch:
                 raise AdapterError(str(gone)) from gone
-            batch.partial_error = f"{gone}; the rest is fetched on the next check"
+            batch.note(NoticeKind.STOPPED, f"{gone}; the rest is fetched on the next check")
         except AdapterError as err:
             if not batch:
                 raise
             # a later item answered with an error or something unreadable: keep what was read
-            batch.partial_error = f"{err}; the rest is fetched on the next check"
+            said = err.args[0] if err.args else None
+            if isinstance(said, str) and kind_of(said) in SHARED_KINDS:  # its shared words
+                batch.add(Notice.of(said))
+            else:
+                batch.note(kind_of(said) or NoticeKind.STOPPED,
+                           f"{err}; the rest is fetched on the next check")
         return batch
 
     async def _thread(self, config: dict, client: Any) -> dict | None:
@@ -227,7 +249,9 @@ class HnHiringAdapter:
         if explicit is not None:
             story = await self._item(client, explicit)
             if not isinstance(story, dict) or story.get("type") != "story":
-                raise AdapterError("That Hacker News thread was not found")
+                raise AdapterError(
+                    "That Hacker News thread was not found", code=failure_code.NOT_FOUND
+                )
             return story
         user = await self._get(client, f"{API_BASE}/user/{USER}.json")
         if not isinstance(user, dict) or not isinstance(user.get("submitted"), list):

@@ -1,6 +1,6 @@
 # Settings reference
 
-**Card summary:** Settings lets you choose what Kestrel looks for, how it runs, and how it handles your data and privacy. Adjust appearance, alerts, scoring thresholds, and other preferences from six sections. Changes save as you make them, with Undo available for most saved choices.
+**Card summary:** Settings lets you choose what Kestrel looks for, how it runs, and how it handles your data and privacy. Adjust appearance, alerts, scoring thresholds, and other preferences from seven sections. Changes save as you make them, with Undo available for most saved choices.
 
 The defaults below describe a new install before you change settings. Platform, hardware, profile, and previous-install state can affect the value shown; those cases are marked.
 

@@ -1,0 +1,11 @@
+{# The person's own LinkedIn profile address (D-PHONE-6). Include with: li_id, li_value.
+   The page's phone.css and phone.js come from phone_field.html, which always sits beside this
+   field (onboarding and Profile > About you), so they load once, not twice.
+   phone.js normalizes it on leaving the field and on paste; the save does the same. The address
+   is never fetched, previewed or opened by Kestrel. #}
+<div class="ph-field" data-linkedin-field>
+  <input class="k-input" id="{{ li_id }}" type="text" name="linkedin_profile" value="{{ li_value }}"
+         placeholder="linkedin.com/in/your-name" autocomplete="url" inputmode="url"
+         aria-describedby="{{ li_id }}-note" data-linkedin-input>
+  <p class="ph-note" id="{{ li_id }}-note" data-linkedin-note role="status" aria-live="polite"></p>
+</div>

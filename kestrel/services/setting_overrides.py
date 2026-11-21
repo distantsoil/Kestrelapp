@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel import config as config_mod
 from kestrel.db.models import Setting
+from kestrel.services.install_id import KEY as INSTALL_ID_KEY
 from kestrel.services.updater import STATE_KEY as UPDATE_STATE_KEY
 
 # Keys that must never be overridden from the DB (chicken-and-egg with paths/logging).
@@ -49,12 +50,14 @@ TRANSIENT_KEYS = frozenset({
 # `tier0_override.` is Score this role anyway (kestrel.services.tier0_override, D-UI-74),
 # `run_model.pending.` a run's one-run model waiting for Tier 0 (kestrel.services.run_model,
 # D-UI-72), `retry_removed.` a role taken off Needs another try (kestrel.services.retry_removal,
-# D-UI-104), `saved_role.` a role kept with Save for later (kestrel.services.saved_roles, D-UI-96),
+# D-UI-104), `retry_group_dismissed.` a Needs another try group banner closed (D-UI-550),
+# `saved_role.` a role kept with Save for later (kestrel.services.saved_roles, D-UI-96),
 # `undo.pursuit.` an Applications Undo snapshot (kestrel.services.pursuit_undo),
 # `undo.correction.` a role page correction's Undo (kestrel.web.pages.role_corrections), and
 # `sources.title_variants_removed` the search variants taken out (D-TTL-2).
 NON_CONFIG_PREFIXES: tuple[str, ...] = (
     "prep_notes.", "tier0_override.", "run_model.pending.", "tier0_recheck.", "retry_removed.",
+    "retry_group_dismissed.",
     "saved_role.",
     "undo.pursuit.", "undo.applied.", "undo.correction.",
     "applied.copy.",  # the import's copy with Kestrel IDs: the person's whole file, kept a day
@@ -72,6 +75,8 @@ STATE_KEYS = frozenset({
     # run_schedule.LAST_AT_KEY, run_summary.RESUMED_KEY, generated.SEC_TITLES_KEY.
     "scheduler.last_scheduled_at", "worker.resumed_at", "worker.stop_request",
     "sources.sec_use_titles", "sources.title_variants_removed",
+    # The install ID (D-INST-1): never fetched into the config layer. Spelled only by its module.
+    INSTALL_ID_KEY,
 })
 # Sections where configuration and state rows share a prefix: only the section's own fields are
 # configuration (`ui.scheme`, `stories.merge_threshold`); anything else under them is state.
@@ -114,8 +119,15 @@ def is_config_key(key: str) -> bool:
 
 
 def overrides_from_rows(rows) -> dict[str, Any]:
-    """The nested override dict from (key, value) rows, config keys only."""
-    return nest_overrides({k: v for k, v in rows if is_config_key(k)})
+    """The nested override dict from (key, value) rows, config keys only, plus the run card's
+    own rows under config.RUN_CARD_OVERRIDE (always present, empty when neither row exists), so
+    every Settings built from the setting table knows what the card says (D-PRIV-798)."""
+    rows = list(rows)
+    nested = nest_overrides({k: v for k, v in rows if is_config_key(k)})
+    nested[config_mod.RUN_CARD_OVERRIDE] = {
+        k: v for k, v in rows if k in config_mod.RUN_CARD_KEYS
+    }
+    return nested
 
 
 def nest_overrides(flat: dict[str, Any]) -> dict[str, Any]:
@@ -152,8 +164,8 @@ async def load_settings_with_db(
 # Said when the settings changed between the check and the queueing (D-SEC-4): a fixed sentence,
 # because an exception raised in that window is not shown.
 HOSTED_CHANGED = (
-    "online models can no longer run because the settings changed; check Settings > Hosted and "
-    "try again"
+    "online models can no longer run because the settings changed; check Settings > This "
+    "computer and the Models page and try again"
 )
 
 

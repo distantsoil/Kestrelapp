@@ -64,7 +64,7 @@ async def write_with_retry[T](
             if not is_lock_error(exc):
                 raise
             now = _monotonic()
-            wait = delay * random.uniform(0.5, 1.0)
+            wait = delay * random.uniform(0.5, 1.0)  # noqa: S311  retry jitter, not security
             if now + wait >= deadline:  # no attempt may start after the deadline
                 log.warning(
                     "db_write_gave_up",

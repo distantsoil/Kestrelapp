@@ -41,6 +41,12 @@ def shell(monkeypatch):
     monkeypatch.setattr(shell, "server", _Server())
     monkeypatch.setattr(shell, "_quitting", False)
     monkeypatch.setattr(shell, "_toast_shown", False)
+    # Every flag on_closing() branches on (D-TEST-31): a startup test's thread can set the
+    # module-level _started after its own monkeypatch was undone, which sent the close down the
+    # closing-screen branch here under the stress run.
+    monkeypatch.setattr(shell, "_started", False)
+    monkeypatch.setattr(shell, "_frame_api", None)
+    monkeypatch.setattr(shell, "_hidden", False)
     # The quit here is the tray's own-loop one (stop()); the macOS shared-loop path hides the item
     # instead and is covered in test_platform.py, so this runs the same on a macOS host.
     monkeypatch.setattr(shell, "IS_MACOS", False)
@@ -51,7 +57,7 @@ def test_default_close_hides_to_the_tray(shell):
     client = _fresh_app()
     assert shell.on_closing() is False
     assert shell.window.hidden and not shell._quitting and not shell.server.should_exit
-    assert "Settings > This computer" in shell.icon.notes[0]
+    assert shell.icon.notes[0] == shell.CLOSE_TO_TRAY_BODY  # the short banner (issue #200)
     body = client.get("/settings").text
     assert "Keep running when I close the window" in body
     line = next(ln for ln in body.splitlines() if 'name="close_to_tray"' in ln)
@@ -99,15 +105,19 @@ def test_without_a_row_the_settings_default_applies(shell, monkeypatch):
     assert shell.on_closing() is True and shell._quitting
 
 
-def test_the_tray_notice_shows_once_per_launch_and_says_how_to_change_it(shell):
+def test_the_tray_notice_shows_once_per_launch_and_is_short_enough_for_a_banner(shell):
     _fresh_app()
     assert shell.on_closing() is False
     shell.window.hidden = False
     assert shell.on_closing() is False
     assert len(shell.icon.notes) == 1  # the second close of the session is quiet
     note = shell.icon.notes[0]
-    assert "keeps working in the background" in note
-    assert "Settings > This computer > Everyday options" in note and "—" not in note
+    assert "keeps working while the window is closed" in note and "tray icon" in note
+    assert "—" not in note
+    # Issue #200: a macOS banner cut the old 190-character body off; title and body stay short.
+    assert len(shell.CLOSE_TO_TRAY_BODY) <= 90 and len(shell.CLOSE_TO_TRAY_BODY_MAC) <= 90
+    assert len(shell.CLOSE_TO_TRAY_TITLE) <= 40
+    assert "menu bar" in shell.CLOSE_TO_TRAY_BODY_MAC and "tray" not in shell.CLOSE_TO_TRAY_BODY_MAC
 
 
 def test_a_failed_tray_notice_is_logged_at_warning(shell, monkeypatch):

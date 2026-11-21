@@ -36,6 +36,11 @@ from kestrel.db import migrate
 from kestrel.db.base import utcnow_iso
 from kestrel.db.engine import forget_engine, get_sessionmaker, reset_engine
 from kestrel.db.models import Notification, Setting
+
+# Imported before any test sets sys.platform to "win32": a Windows toast imports the shell
+# module, and a first import under the patched platform would leave its IS_WINDOWS True for every
+# later test in the same worker (stress run, seed 1188979310).
+from kestrel.desktop import shell as _shell_imported_first  # noqa: F401
 from kestrel.services import alert_sound, delivery
 from kestrel.services.delivery import deliver_pending
 
@@ -387,9 +392,15 @@ def test_the_windows_toast_is_silent(monkeypatch, frozen):
     fake = types.ModuleType("win11toast")
     fake.notify = lambda title, body, **kw: seen.append(kw)
     monkeypatch.setitem(sys.modules, "win11toast", fake)
+    # Import the shell before faking the platform: a first import while sys.platform says win32
+    # would freeze its IS_WINDOWS to True for every later test in this process.
+    from kestrel.desktop import shell
+
+    real = shell.IS_WINDOWS
     monkeypatch.setattr(delivery.sys, "platform", "win32")
     monkeypatch.setattr(paths, "is_frozen", lambda: frozen)
     assert delivery._toast("Run finished", "4 new") is True
+    assert shell.IS_WINDOWS is real
     assert seen[0]["audio"] == {"silent": "true"}
 
 

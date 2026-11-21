@@ -55,6 +55,7 @@
         {% else %}
           <span class="k-pill" data-fit="{{ ft.word }}">{{ ft.word|capitalize }}</span>
         {% endif %}
+        {% if v.source %}<span class="pl-tag pl-tag--src" data-testid="row-source" title="Where Kestrel found this role">{{ v.source }}</span>{% endif %}
         {% if r.rescoring and not unscored %}<span class="pl-tag pl-tag--again" data-testid="row-rescoring" data-state="{{ r.rescoring.state }}" title="{{ r.rescoring.hint }}">{{ r.rescoring.title }}</span>{% endif %}
         {% if r.rescoring and r.rescoring.state == 'approval' %}<a class="pl-tag pl-tag--ok" href="/rescore/choose?opp_ids={{ o.id }}&page=1&next=/opportunities" data-testid="row-confirm">Confirm</a>{% endif %}
         {% if r.mine and r.mine != ft.word %}<span class="pl-tag" data-mine="{{ r.mine }}" title="The word you picked">you said {{ r.mine }}</span>{% endif %}
@@ -63,21 +64,28 @@
         {% if r.saved %}<span class="pl-tag" data-testid="saved-tag">Saved</span>{% endif %}
         {% if v.near_floor %}<span class="pl-tag pl-tag--warn" data-testid="near-floor" title="The posted pay is a little under your minimum. Kestrel kept it for you to decide.">Below your minimum</span>{% endif %}
         {% if o.archived_at %}<span class="pl-tag" data-reason="{{ o.archive_reason or '' }}">hidden{% if o.archive_reason %}: {{ archive_reasons.get(o.archive_reason, o.archive_reason)|lower }}{% endif %}{% if o.stage_reason and o.stage_reason.startswith('Re-post') %} ({{ o.stage_reason|lower }}){% endif %}</span>{% endif %}
+        {% if r.id_label and not o.archived_at %}<span class="pl-tag" data-testid="row-id-label">{{ r.id_label }}</span>{% endif %}
+        {% if r.id_track %}<a class="pl-tag pl-tag--on" href="/opportunities?track={{ r.id_track }}&amp;q={{ f.q|urlencode }}" data-testid="row-id-track">On the {{ r.id_track|capitalize }} tab</a>{% endif %}
+        {% if r.id_note %}<span class="pl-tag" data-testid="row-id-note">{{ r.id_note }}</span>{% endif %}
         {% if v.warn %}<span class="pl-warn" tabindex="0" data-testid="row-warning" aria-label="{{ v.warn }}">{{ ui.icon('alert', 'k-ic--sm') }}<span class="pl-tip" role="tooltip">{{ v.warn }}</span></span>{% endif %}
       </div>
       {# The why clause: an unscored row says why it stopped (D-UI-56): the quarantine reason in
          plain words for Scoring failed, "scoring stopped" for a stuck orphan, and for a role
          taken off Needs another try, that it was (D-UI-133) with the way back. #}
-      {% set why = (r.failed_reason or ft.why) if r.scoring == 'failed' else ('scoring stopped' if r.scoring == 'stuck' else ('removed from Needs another try' if r.scoring == 'removed' else (r.hidden_why if r.scoring in ('hidden', 'empty') else ft.why))) %}
-      {% set parts = [v.org, v.place, ((v.pay ~ (' (estimate)' if v.estimate and not v.pay.endswith('est.') else '')) if v.pay else ('Pay not listed' if not unscored and not nf else '')), v.value, ('Seen ' ~ ('twice' if o.seen_count == 2 else o.seen_count ~ ' times')) if o.seen_count and o.seen_count > 1 else '', why] %}
-      <div class="pl-meta">{{ parts|select|join(' · ') }}{% if r.scoring == 'removed' %} <a href="/quarantine" data-testid="removed-undo">Undo in Needs another try</a>{% endif %}{% if r.twin and unscored %}{% if parts|select|list %} · {% endif %}The same role from another board is scored {{ '%.1f'|format(r.twin.score) }}. <a href="/opportunities/{{ r.twin.opp_id }}" data-testid="row-twin">See the scored copy</a>{% endif %}</div>
+      {% set why = (r.failed_reason or ft.why) if r.scoring in ('failed', 'dead', 'dead_final') else ('scoring stopped' if r.scoring == 'stuck' else ('removed from Needs another try' if r.scoring == 'removed' else ((r.hidden_why ~ ' ' ~ v.empty_why ~ (' ' ~ v.blocked_note if v.blocked_note else '')) if r.scoring == 'empty' and r.hidden_why == empty_posting_why else (r.hidden_why if r.scoring in ('hidden', 'empty') else (unscored_line(r.scoring) if unscored else ft.why))))) %}
+      {% set parts = [v.org, v.place, ((v.pay ~ (' (estimate)' if v.estimate and not v.pay.endswith('est.') else '')) if v.pay else ('Pay not listed' if not unscored and not nf else '')), v.value, ('Seen ' ~ ('twice' if o.seen_count == 2 else o.seen_count ~ ' times')) if o.seen_count and o.seen_count > 1 else '', '' if unscored else why] %}
+      <div class="pl-meta">{{ parts|select|join(' · ') }}</div>
+      {# An unscored row's reason, the scored copy and the one action wrap on their own line, so
+         none of them is cut off by the meta line's ellipsis. #}
+      {% set act = unscored_action(r.scoring, o.id) if unscored and r.scoring not in ('failed', 'stuck', 'dead', 'dead_final', 'approval', 'removed') else none %}
+      {% if unscored and (why or r.twin or act or r.scoring == 'removed') %}<div class="pl-why" data-testid="row-why">{% if why %}<span>{{ why }}{{ '' if why.endswith('.') else '.' }}</span>{% endif %}{% if r.twin %} <span>The same role from another board is scored {{ '%.1f'|format(r.twin.score) }}.</span> <a href="/opportunities/{{ r.twin.opp_id }}" data-testid="row-twin">See the scored copy</a>{% endif %}{% if r.scoring == 'removed' %} <a href="/quarantine" data-testid="removed-undo">Undo in Needs another try</a>{% elif act %} <a href="{{ act.href }}" data-testid="row-unscored-action">{{ act.label }}</a>{% endif %}</div>{% endif %}
     </div>
     <div class="pl-end">
       {% if nf %}
         {% if o.stage in ('t0_reject', 't1_reject') %}
           <button type="button" class="k-btn k-btn--sm" hx-post="/opportunities/{{ o.id }}/decide/keep-anyway" hx-swap="none" data-testid="keep-anyway">Keep it anyway</button>
         {% endif %}
-      {% elif unscored and r.scoring in ('failed', 'stuck') %}
+      {% elif unscored and r.scoring in ('failed', 'stuck', 'dead', 'dead_final') %}
         <span class="row-score-again" data-testid="row-score-again"><a class="k-btn k-btn--sm" href="/rescore/choose?opp_ids={{ o.id }}&page=1&next=/opportunities">Score again</a></span>
       {% elif unscored %}
         <div class="pl-score">{% if r.scoring == 'running' %}<small>scoring…</small>{% endif %}

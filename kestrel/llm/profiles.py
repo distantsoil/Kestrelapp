@@ -253,7 +253,7 @@ def system_tool_env() -> dict:
 def _run(cmd: list[str], timeout: float = 10.0) -> str | None:
     """Run a detection command; None on any failure (missing binary, non-zero exit, timeout)."""
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S603  fixed argv list, no shell
             cmd, capture_output=True, text=True, timeout=timeout, check=False,
             **no_console_window(),
         )
@@ -678,4 +678,5 @@ def check_model_fit(rep: Any, settings: Any, client: Any) -> None:
         _WARN,
         f"profile {profile_name}: {detail}; it will not fit and will spill to CPU or fail to load",
         switch,
+        code="CHK-026",
     )

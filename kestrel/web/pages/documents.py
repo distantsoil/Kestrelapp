@@ -19,6 +19,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kestrel.config import ONLINE_CONSENT_HOW
 from kestrel.db.models import (
     DocMaster,
     DocRender,
@@ -31,6 +32,7 @@ from kestrel.db.models import (
 from kestrel.docs import convert as convert_mod
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import fixed_reason, plain_error
+from kestrel.web.retry_words import is_held, plain_reason
 from kestrel.web.uploads import closing_upload
 
 router = APIRouter()
@@ -687,11 +689,21 @@ async def suggest_slot_variants(request: Request, slot_id: int):
                 log.warning("variant_suggest_failed", error_type=type(exc).__name__,
                             error=str(exc))
                 ctx["error"] = f"Could not reach the model: {plain_error(exc)}"
-    if (ctx["error"] or "").startswith("hosted send refused"):
-        ctx["error"] = ("Not sent: confidential mode is on and no current employer is chosen, "
-                        "so your employer's name would leave this machine. Choose it under "
-                        "Settings > Privacy and access, then try again.")
+    ctx["error"] = refusal_words(ctx["error"])
     return templates().TemplateResponse(request, "partials/variant_suggestions.html", ctx)
+
+
+def refusal_words(error: str | None) -> str | None:
+    """A refused online send in plain words. Only the missing-employer refusal names the
+    employer; the others (hosted turned off, an unreadable privacy setting) say their own reason
+    (D-TEST-19). Anything else passes through."""
+    if not (error or "").startswith("hosted send refused"):
+        return error
+    if is_held(error):
+        return ("Not sent: confidential mode is on and no current employer is chosen, "
+                "so your employer's name would leave this machine. Choose it under "
+                "Settings > Privacy and access, then try again.")
+    return f"{plain_reason(error)}."
 
 
 def _refused(slot_id: int, message: str) -> HTMLResponse:
@@ -772,7 +784,9 @@ async def preview(request: Request, master_id: int):
         # itself, which is exempt from theme tokens: a resume page is white in any theme.
         sheet = "<style>html{background:#fff}body{padding:.5in;min-height:11in}</style>"
         html = html.replace("<head>", "<head>" + sheet, 1) if "<head>" in html else sheet + html
-        doc_attr = escape(html, quote=True)
+        from kestrel.web.csp import frame_safe
+
+        doc_attr = escape(frame_safe(html), quote=True)  # the frame has the page's policy
         # The frame is one true-size Letter page; profile.js scales it with a transform (and
         # Enlarge scales the same frame), so the page is never re-flowed (D-UI-126).
         return HTMLResponse(
@@ -848,6 +862,11 @@ async def save_look(request: Request, master_id: int):
                 look[key] = value
             else:
                 look.pop(key, None)
+        if "show_linkedin_sent" in form:  # an older form that omits it leaves the choice alone
+            if form.get("show_linkedin"):
+                look.pop("linkedin", None)
+            else:
+                look["linkedin"] = "off"  # D-PHONE-7: absent means include when set
         master.look = look
         await s.commit()
     return HTMLResponse('<span class="saved" role="status">Look saved.</span>')
@@ -1378,7 +1397,7 @@ async def _hosted_assess_models(settings) -> tuple[str, list, list, dict, str | 
     label = next((p["label"] for p in prov.PRESETS.values() if p["backend"] == name), name)
     if not settings.llm.hosted_mode.active:
         return label, [], [], {}, (
-            f"{label} models are offered here once Hosted mode is on under Settings > Hosted."
+            f"{label} models are offered here once Hosted mode is on: {ONLINE_CONSENT_HOW}."
         )
     if not (backend.api_key or prov.secret_present(backend.api_key_env)):
         return label, [], [], {}, None
@@ -1819,9 +1838,12 @@ def _confirm_hash(markdown: str, provider: str, model: str, destination: str = "
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
-async def _import_confidential_send(markdown: str = "") -> dict | None:
+async def _import_confidential_send(markdown: str = "", settings=None) -> dict | None:
     """What the import would send online under confidential mode (D-PRIV-1), or None when it
-    stays on this machine or confidential mode is off.
+    stays on this machine or confidential mode is off. `settings`: the very object the import's
+    client is built from (the send route passes it, D-PRIV-800); read here when not given (the
+    read step, which only shows the disclosure). The send itself plans again from its client
+    (docs.imports.propose_import).
 
     {"provider", "mapping", "needs_confirm"}: with an employer marked (or inferred), the line
     text goes with that employer as a token; with none, the whole resume goes as written, which
@@ -1834,11 +1856,13 @@ async def _import_confidential_send(markdown: str = "") -> dict | None:
 
     try:
         async with sessionmaker()() as s:
-            settings = await load_settings_with_db(s)
+            if settings is None:
+                settings = await load_settings_with_db(s)
             if not settings.confidential_mode:
                 return None
             tier = load_prompt("resume_outline/v1").tier
-            plan = await plan_hosted_send(s, settings, tier)
+            # The import's client is built from these settings, so they are the sender.
+            plan = await plan_hosted_send(s, None, tier, sender=settings)
         if not plan.external:
             return None
         tcfg = settings.llm.tiers[tier]
@@ -1897,10 +1921,13 @@ async def _import_markdown(request: Request, track: _ImportLog):
         return templates().TemplateResponse(request, "partials/import_proposal.html", ctx)
     import hmac
 
-    send = await _import_confidential_send(ctx["markdown"])
+    # One settings object for the disclosure, the consent check and the client that sends
+    # (issue #218, D-PRIV-800): what is confirmed is what the sending client does.
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)  # the setting-table layer: hosted rows
+    send = await _import_confidential_send(ctx["markdown"], settings)
     ctx["confidential_send"] = send
     async with sessionmaker()() as s:
-        settings = await load_settings_with_db(s)
         route = _import_route(await online_route(
             s, settings, load_prompt("resume_outline/v1").tier,
             this_send="your resume text, every bullet, role title and date",
@@ -1940,13 +1967,13 @@ async def _import_markdown(request: Request, track: _ImportLog):
         track.done("refused", "unredacted_not_confirmed", ctx)
         return templates().TemplateResponse(request, "partials/import_proposal.html", ctx)
     try:
-        async with sessionmaker()() as s:
-            settings = await load_settings_with_db(s)  # the setting-table layer: hosted rows
-        async with httpx.AsyncClient() as http:
+        async with sessionmaker()() as s, httpx.AsyncClient() as http:
             client = LLMClient(settings, http=http)
+            # The send decides its own hiding from this client; `send` (checked above) is the
+            # person's confirmation that this text may go as written where nothing is marked.
             proposal = await _run_capped(propose_import(
                 client, ctx["markdown"], source_format=ctx["source_format"],
-                mapping=send["mapping"] if send else None,
+                session=s, unmarked_confirmed=bool(send),
             ), request)
         ctx.update({"proposal": proposal, "error": proposal.error})
         ctx["current_offer"] = _current_offer(proposal, ctx["track"])
@@ -2057,7 +2084,7 @@ async def import_accept(request: Request):
 
             return await advance_after(request, "resume")
         return HTMLResponse(
-            '<div class="panel" style="padding:1rem"><p class="covered">Created.</p>'
+            '<div class="panel u-p-1"><p class="covered">Created.</p>'
             f'<a class="btn" href="/documents?master_id={master_id}">Open it</a></div>'
         )
     except ImportRejected as exc:

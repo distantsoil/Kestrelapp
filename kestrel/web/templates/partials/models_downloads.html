@@ -33,9 +33,9 @@
     <li class="{{ 'is-ok' if r.ready else ('is-fail' if r.failed else 'is-warn') }}" data-testid="mo-dl-{{ loop.index }}">
       <span class="mo-state">{{ ui.icon('check' if r.ready else ('alert' if r.failed else 'dl')) }}</span>
       <div class="k-grow"><b>{{ r.tag }}</b><span class="k-muted">{{ r.what }}{% if r.size %} · {{ r.size }}{% endif %}</span>
-        {% if r.item %}<div class="mo-prog" role="progressbar" aria-label="Downloading {{ r.tag }}" {% if r.item.percent is not none %}aria-valuenow="{{ r.item.percent }}"{% endif %}><i style="width: {{ r.item.percent or 3 }}%"></i></div>
+        {% if r.item %}<div class="mo-prog" role="progressbar" aria-label="Downloading {{ r.tag }}" {% if r.item.percent is not none %}aria-valuenow="{{ r.item.percent }}"{% endif %}><i data-k-style="width: {{ r.item.percent or 3 }}%"></i></div>
           <span class="k-muted">{{ r.item.step }}{% if r.item.percent is not none %} · {{ r.item.percent }}%{% endif %}</span>{% endif %}
-        {% if r.failed %}<span class="mo-bad">{{ r.error or 'The download stopped.' }} Press Download to continue.</span>{% endif %}</div>
+        {% if r.failed %}<span class="mo-bad">{{ r.error or 'The download stopped.' }} Press Download to continue.</span>{% if r.code %}<span class="mo-bad-code" data-testid="mo-dl-code">Code {{ r.code }}</span>{% endif %}{% endif %}</div>
       {{ ui.pill('Ready', 'good') if r.ready else '' }}
     </li>
     {% endfor %}

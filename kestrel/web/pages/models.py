@@ -176,7 +176,14 @@ async def models(request: Request):
         track = ""
     since_days = _parse_since(request.query_params.get("since"))
     data = await _load(track or None, since_days)
-    data.update(await models_ui.page_ctx(data["rows"], data.pop("settings"), track))
+    settings = data.pop("settings")
+    data.update(await models_ui.page_ctx(data["rows"], settings, track))
+    # Online paused because the disclosure changed: link to where it is ticked again. Read from
+    # the stored rows _load loaded, never from the request (D-PRIV-795).
+    from kestrel.config import disclosure_reaccept_needed
+    from kestrel.web.announcements import REVIEW_HREF
+
+    data["reaccept_href"] = REVIEW_HREF if disclosure_reaccept_needed(settings) else ""
     ctx = {
         "title": "Models", "query": dict(request.query_params),
         "track": track, "since": since_days, "since_choices": _SINCE_CHOICES,

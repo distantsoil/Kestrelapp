@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy import select
 
 from kestrel.config import get_settings
@@ -16,7 +17,18 @@ from kestrel.db.models import Evaluation, Opportunity, Org, Quarantine, Run, Sou
 from kestrel.pipeline.profile import load_profile
 from kestrel.pipeline.tier2 import handle_t2
 from kestrel.pipeline.worker import Worker
+from kestrel.services import tracks
 from tests.pipeline_fakes import FakeLLM
+
+
+@pytest.fixture(autouse=True)
+def _both_tracks_on(monkeypatch):
+    """These runs score both tracks, so both must be switched on (D-TEST-22). The choice is a
+    process-global cache (tracks._cache) that every app startup fills from its own database: an
+    earlier test's fresh database leaves ("employment",) behind, a switched-off consulting track
+    holds every consulting task (D-UI-68) and the worker scores nothing. Set it here, restored
+    after."""
+    monkeypatch.setitem(tracks._cache, "value", tracks.BOTH)
 
 _PAD = " " + "Details follow. " * 20  # a real posting body, over the Tier 2 stub floor
 
@@ -140,14 +152,21 @@ async def test_full_pipeline_both_tracks(sm):
     assert any(q.tier == 2 for q in q2)
 
     # --- Tier 2 overrides -----------------------------------------------------------------
+    # A model blocker never forces pass on its own (D-SCORE-28): with no profile.yml there is
+    # nothing to uphold it, so the read keeps its threshold verdict and the blocker is stored as
+    # a Worth checking note with its check. tests/test_blocker_check.py covers the upheld case.
     block = (await _evals(sm, opps["VP of IT #26 [BLOCK]"].id, 2))[0]
-    assert block.verdict == "pass" and "blocker" in block.forced_by
+    assert block.verdict != "pass" and block.forced_by is None
+    assert [(b["kind"], b["check"]) for b in block.blockers] == [("location", "needs_confirming")]
 
     reject = (await _evals(sm, opps["VP of IT #27 [REJECT]"].id, 2))[0]
     assert reject.verdict == "pass" and "legitimacy_reject" in reject.forced_by
 
     suspect = (await _evals(sm, opps["VP of IT #28 [SUSPECT]"].id, 2))[0]
-    assert suspect.score == 3.5 and suspect.verdict == "consider"
+    # Round 7 (D-SCORE-31): "suspect" with no signal the data can check upholds no cap, so the
+    # stored status is clean and the score stands (the cap itself: tests/test_legitimacy_check).
+    assert suspect.score == 4.8 and suspect.legitimacy["status"] == "clean"
+    assert suspect.legitimacy["model_status"] == "suspect"
 
     diverge = (await _evals(sm, opps["VP of IT #29 [DIVERGE]"].id, 2))[0]
     assert diverge.needs_review is True
@@ -334,3 +353,21 @@ async def test_a_long_running_task_keeps_its_lease_renewed(sm, monkeypatch):
         beat.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await beat
+
+
+async def test_a_finished_run_with_deep_reads_queues_the_one_first_run_story_build(sm):
+    """D-STORY-700: the run's end asks for the first run's story build once, after its Tier 2
+    reads; a second run adds nothing."""
+    from kestrel.services import onboarding as ob
+
+    await _seed(sm)
+    async with sm() as s:
+        assert await ob.mark_first_run_break(s)
+        await s.commit()
+    settings = get_settings()
+    await Worker(sm, FakeLLM(settings), settings).run(track="employment", limit=5)
+    await Worker(sm, FakeLLM(settings), settings).run(track="employment", limit=5)
+    async with sm() as s:
+        builds = (await s.execute(select(Task).where(Task.type == "build_stories"))).scalars().all()
+        assert len(builds) == 1
+        assert not await ob.first_run_stories_due(s)

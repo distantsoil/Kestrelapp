@@ -48,9 +48,11 @@ GUARDED = [re.compile(p) for p in (
     r"^[A-Z]+ /settings/lan/",
     r"^[A-Z]+ /settings/mcp",
     r"^[A-Z]+ /settings/privacy/(access|mcp)",
+    r"^[A-Z]+ /settings/extension/key",
     r"^[A-Z]+ /settings/computer/(mode|key|free)",
     r"^[A-Z]+ /settings/(learning|scoring)/(export|reset|forget)",
     r"^[A-Z]+ /setup/mode",
+    r"^POST /setup/ollama-env/",              # sets, undoes or restarts on this machine
     r"^[A-Z]+ /onboarding/models/(mode|connect)",
     r"^[A-Z]+ /models/(online|hosted|change|network)",
     r"^[A-Z]+ /sources/[^/]+/key",
@@ -108,6 +110,8 @@ OPEN_RENDERS = {
     "GET /backup": "the Backup page: explains the buttons; its download and restore buttons are "
                    "disabled for a key holder",
     "GET /settings/hosted": "key screen: shows 'key saved', provider and model; controls disabled",
+    "GET /settings/hosted/review": "the same key screen as a whole page (D-PRIV-795); controls "
+    "disabled the same way",
     "GET /settings/mcp": "the MCP switch card: shows the state; the switch is disabled",
     "GET /settings/privacy/access": "the Access card: shows the state; the switch is disabled",
     "GET /settings/privacy/mcp": "the MCP card: shows the state; the controls are disabled",
@@ -193,10 +197,23 @@ def unguarded(routes) -> list[str]:
 
 
 @pytest.fixture(scope="module")
-def route_table():
+def route_table(tmp_path_factory):
+    """Built in a data home of its own: a module fixture is set up before the function-scoped
+    data home isolation, so without this it would read whatever home the previous test on the
+    worker left (a stress order once handed it a deliberately broken settings.yml)."""
+    import os
+
     from kestrel.web.app import build_app
 
-    return _table(build_app(worker=False).routes)
+    before = os.environ.get("KESTREL_DATA_HOME")
+    os.environ["KESTREL_DATA_HOME"] = str(tmp_path_factory.mktemp("route_table_home"))
+    try:
+        return _table(build_app(worker=False).routes)
+    finally:
+        if before is None:
+            os.environ.pop("KESTREL_DATA_HOME", None)
+        else:
+            os.environ["KESTREL_DATA_HOME"] = before
 
 
 @pytest.fixture(autouse=True)
@@ -370,7 +387,8 @@ def test_the_expected_classes_are_all_discovered(route_table):
         "POST /settings/hosted/tiers", "POST /settings/hosted/model", "POST /settings/hosted/test",
         "POST /settings/hosted/balance", "POST /settings/mcp", "POST /settings/lan/bind",
         "POST /settings/lan/secret", "POST /settings/privacy/access",
-        "POST /settings/privacy/access/rotate", "POST /settings/learning/reset",
+        "POST /settings/privacy/access/rotate", "POST /settings/extension/key",
+        "POST /settings/extension/key/new", "POST /settings/learning/reset",
         "POST /settings/scoring/forget", "POST /models/online/key", "POST /models/online/connect",
         "POST /models/change/{tier}", "POST /models/hosted/overrides",
         "POST /settings/computer/key", "POST /settings/computer/mode",
@@ -402,9 +420,11 @@ def test_every_guarded_route_refuses_a_key_holder_and_changes_nothing(
     """The invariant: a valid key is not enough. 403, one plain sentence, no change, no network."""
     auth.set_cached_key(KEY)
     app = _app(monkeypatch, tunnel=True)
-    before = _data_fingerprint()
     checked = 0
     with _client(app, peer) as c:
+        # Taken once the app has started: startup writes the install ID (D-INST-1), which no
+        # refused request may change.
+        before = _data_fingerprint()
         for method, path in _guarded_requests(route_table):
             r = c.request(method, _fill(path), headers={"X-Kestrel-Key": KEY, **headers})
             assert r.status_code == 403, f"{method} {path} answered {r.status_code}"
@@ -842,6 +862,12 @@ def test_a_key_holder_view_never_shows_a_balance_or_asks_a_provider(monkeypatch,
         calls.append("reading")
         return hb.Reading(ok=True, remaining=4.2, usage=1.0)
 
+    from kestrel.services import setup_state
+
+    async def in_use(*a, **kw):  # online models in use, so this computer's views read it
+        return None
+
+    monkeypatch.setattr(setup_state, "online_not_in_use_now", in_use)
     monkeypatch.setattr(hb, "eligible_backend", lambda *a, **kw: (
         "or", types.SimpleNamespace(api_key="k", api_key_env="K", base_url="u")))
     monkeypatch.setattr(hb, "_reading", reading)
@@ -987,8 +1013,8 @@ def test_run_now_in_another_mode_is_local_only_and_never_releases_the_credit_hol
         path, data, query, monkeypatch):
     auth.set_cached_key(KEY)
     credit = _hold_credit()
-    before = _data_fingerprint()
     with _client(_app(monkeypatch, tunnel=True), LAN_PEER) as c:
+        before = _data_fingerprint()  # after startup, which writes the install ID (D-INST-1)
         r = c.post(path + query, headers=KEY_H, data=data)
     assert (r.status_code, r.text) == (403, LOCAL_ONLY_CHANGE), path
     assert credit.any_held(), "a key holder released the hold on the online key"

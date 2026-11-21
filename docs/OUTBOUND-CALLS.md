@@ -62,9 +62,9 @@ code audit the same day, which found more than the two exceptions first written 
 
 | Purpose | Destination | Sent |
 |---|---|---|
-| Model calls | `openrouter.ai`, `api.openmodel.ai`, `api.anthropic.com`, `api.openai.com`, or a service address the person enters | What the approval screen lists for that step (role text, profile, and resume text only for Assess and Suggest) and the person's key |
-| Key check and model list | The same | The key only, when it is saved or the picker opens |
-| OpenRouter balance | `openrouter.ai` | The key only, about every 5 minutes, only in Hosted mode with OpenRouter |
+| Model calls | `openrouter.ai`, `api.openmodel.ai`, `api.anthropic.com`, `api.openai.com`, or a service address the person enters | What the approval screen lists for that step (role text, profile, and resume text only for Assess and Suggest) and the person's key. Only while online models are in use: switched on, the disclosure ticked as it reads now, and On this computer not chosen. Work already queued for an online model waits in the queue otherwise. A deeper read the person confirms for one role carries its own confirmation |
+| Key check and model list | The same | The key only: the key check when it is saved; Settings > Online models' Test (the key check and model list) only while online models are in use; the model list when a picker opens, held about a day, only while online models are in use (switched on, the disclosure ticked, the run card not on Local) |
+| OpenRouter balance | `openrouter.ai` | The key only, about every 5 minutes, only while online models are in use with OpenRouter |
 
 Embeddings never go online; they run inside Kestrel.
 
@@ -156,6 +156,7 @@ installer). `{*}` stands for a part that comes from the person, a posting or a s
 - `developer.adzuna.com`: link. Adzuna key sign-up.
 - `developer.usajobs.gov`: link. USAJobs key sign-up.
 - `docs.astral.sh`: reference. Help text in the setup check.
+- `docs.ollama.com`: link. Ollama's FAQ, a source under Show details in Ollama speed settings.
 - `docs.openmodel.ai`: reference. A code comment.
 - `docs.python.org`: reference. A license notice.
 - `efts.sec.gov`: call. SEC EDGAR search, consulting track and company research.
@@ -167,6 +168,7 @@ installer). `{*}` stands for a part that comes from the person, a posting or a s
 - `huggingface.co`: build. The bundled embedding model, fetched when the installer is built.
 - `kestrelapp.co`: call. The daily update check (and links to the download page).
 - `ko-fi.com`: link. The donation page.
+- `learn.microsoft.com`: link. Microsoft's setx page, a source under Show details in Ollama speed settings.
 - `ntfy.sh`: call. Phone notifications, only if set in the config file.
 - `ollama.com`: link. Ollama's download page (the command-line setup can also run Ollama's install script, after asking).
 - `openrouter.ai`: call. OpenRouter models and balance, after approval (and its key page link).
@@ -176,6 +178,7 @@ installer). `{*}` stands for a part that comes from the person, a posting or a s
 - `sam.gov`: link. SAM.gov key sign-up.
 - `schemas.openxmlformats.org`: reference. An XML namespace in the Excel reader.
 - `scripts.sil.org`: reference. The font license.
+- `ss64.com`: link. The launchctl reference, a source under Show details in Ollama speed settings.
 - `teamtailor.com`: reference. An XML namespace in the Teamtailor reader.
 - `weworkremotely.com`: call. We Work Remotely's public feed.
 - `workforcenow.adp.com`: call. ADP company boards.
@@ -189,6 +192,7 @@ installer). `{*}` stands for a part that comes from the person, a posting or a s
 - `app.jobvite.com`: call. Jobvite company job feeds (XML).
 - `jobs.jobvite.com`: call. Jobvite company board pages, read once for the feed's company id.
 - `remotive.com`: call. The Remotive remote jobs API (a named robots.txt exception, 4 fetches a day).
+- `www.freedesktop.org`: link. The systemd pages, sources under Show details in Ollama speed settings.
 - `www.linkedin.com`: reference. A code comment (LinkedIn is never searched).
 - `www.openmodel.ai`: link. OpenModel's privacy policy.
 - `www.remoterocketship.com`: call. RemoteRocketship, the person's paid key.

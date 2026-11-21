@@ -4,6 +4,8 @@ shipped rows are never touched, nothing is switched on without the operator."""
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from sqlalchemy import select
 
@@ -311,7 +313,8 @@ async def test_in_app_reset_refuses_while_a_cycle_runs_and_deletes_nothing(sm, m
 
     pe.save_section("employment", "about", {"full_name": "Pat"})
     monkeypatch.setattr(reset_mod, "IDLE_WAIT_S", 0.05)
-    app_mod._cycle_idle.clear()  # a cycle is mid-flight
+    # Its own idle signal: the process-wide one may be bound to another test's loop (D-UI-861).
+    monkeypatch.setattr(app_mod, "_cycle_idle", asyncio.Event())  # a cycle is mid-flight
     try:
         with pytest.raises(reset_mod.ResetBusy):
             await reset_mod.reset_in_app(sm)

@@ -3,8 +3,23 @@ legitimacy forcing, the work-auth blocker, and the threshold-derived verdict bes
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from kestrel.config import get_settings
 from kestrel.pipeline import scoring
+from kestrel.pipeline.profile import _build, empty_block
+
+# A blocker counts only when the operator's own data upholds it (D-SCORE-22): these give the
+# blocker tests a profile and a posting that do.
+_BLOCK = empty_block("employment")
+_BLOCK["employment_terms"]["comp_floor_usd"] = 150000
+_BLOCK["geo_rules"].update(remote_ok=True, onsite_states=["OR"])
+_PROFILE = _build(_BLOCK)
+_ONSITE_FAR = SimpleNamespace(remote_type="onsite", country="US", state="NY", city="New York",
+                              location_raw="New York, NY", title="Lead", description_md="",
+                              comp_min=90000, comp_max=110000, comp_currency="USD",
+                              comp_interval="year", comp_source="posted",
+                              comp_currency_known=True, comp_interval_known=True)
 
 _EMP_DIMS = {
     "role_fit": 4.0,
@@ -49,6 +64,8 @@ def test_blocker_forces_pass_and_preserves_score():
         track="employment", dimension_scores=_EMP_DIMS, holistic=4.5, model_verdict="apply",
         blockers=[{"kind": "location", "detail": "onsite NYC"}], legitimacy_status="clean",
         work_auth_signal="not_mentioned", requires_sponsorship=False, settings=settings,
+        opp=_ONSITE_FAR,
+        profile=_PROFILE,
     )
     assert r.verdict == "pass"
     assert r.displayed_score == 4.5  # the model's score is preserved for reference
@@ -106,6 +123,8 @@ def test_verdict_disagreement_flagged():
         track="employment", dimension_scores=_EMP_DIMS, holistic=4.5, model_verdict="apply",
         blockers=[{"kind": "comp", "detail": "below floor"}], legitimacy_status="clean",
         work_auth_signal="not_mentioned", requires_sponsorship=False, settings=settings,
+        opp=_ONSITE_FAR,
+        profile=_PROFILE,
     )
     assert r.verdict_model == "apply"
     assert r.verdict == "pass"

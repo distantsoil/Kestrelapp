@@ -114,7 +114,7 @@ def test_messages_in_code_send_the_user_to_settings_not_env():
     from kestrel.llm import client as llm_client
 
     assert ".env" not in llm_client._HTTP_HINTS[401]
-    assert "Settings > Hosted" in llm_client._HTTP_HINTS[401]
+    assert "Settings > This computer" in llm_client._HTTP_HINTS[401]  # where keys live now
     from kestrel import doctor
 
     assert doctor._backend_label("frontier") == "OpenRouter"

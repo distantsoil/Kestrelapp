@@ -11,7 +11,7 @@
     <header class="k-sec-head"><span class="k-badge k-badge--good">{{ icon('analytics') }}</span><div class="k-grow"><h3>What roles like yours pay</h3><p>From the roles you are pursuing</p></div></header>
     {%- for g in groups %}
     <div class="of-grp" data-testid="of-group"><div class="of-gh"><b title="{{ g.title }}">{{ g.title }}</b><span>{{ g.span }}</span></div>
-      <div class="of-rb"><span class="tr"></span>{% if g.ok %}<span class="rg" style="left:{{ g.left }}%;width:{{ g.width }}%"></span><span class="md" style="left:{{ g.mid }}%"></span>{% endif %}{% if g.floor is not none %}<span class="fl" style="left:{{ g.floor }}%"></span>{% endif %}{% if g.target is not none %}<span class="tg" style="left:{{ g.target }}%"></span>{% endif %}</div>
+      <div class="of-rb"><span class="tr"></span>{% if g.ok %}<span class="rg" data-k-style="left:{{ g.left }}%;width:{{ g.width }}%"></span><span class="md" data-k-style="left:{{ g.mid }}%"></span>{% endif %}{% if g.floor is not none %}<span class="fl" data-k-style="left:{{ g.floor }}%"></span>{% endif %}{% if g.target is not none %}<span class="tg" data-k-style="left:{{ g.target }}%"></span>{% endif %}</div>
       <div class="of-nums">{{ g.nums }}</div></div>
     {%- else %}
     <p class="k-muted">Once you are pursuing roles, what similar roles pay appears here.</p>

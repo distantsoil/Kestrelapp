@@ -137,6 +137,24 @@ def document_text(catalog: MasterCatalog, *, redact: bool = False) -> str:
 QUARANTINE_TIER = 13  # the quarantine row's `tier` names the prompt, as P8 and P9 do
 
 
+# The missing-employer refusal (pipeline._shared.HOSTED_REFUSAL) is the only one that is about
+# the employer; the others say why the send stopped (D-TEST-19). Matches retry_words.is_held.
+_EMPLOYER_REFUSAL = "no redaction map is configured"
+
+
+def refusal_error(error: str) -> str:
+    """Plain words for a refused hosted send. Nothing was sent in every case."""
+    if _EMPLOYER_REFUSAL in error.lower():
+        return ("Not sent: confidential mode is on and tier 2 runs on a hosted model, "
+                "but no current employer is chosen, so your employer's name would "
+                "leave this machine. Choose it under Settings > Privacy and access, "
+                "run tier 2 on a local model, or turn off confidential mode.")
+    if "hosted mode was turned off" in error.lower():
+        return "Not sent: online sending was turned off before this was sent."
+    return ("Not sent: Kestrel could not read your privacy settings, so nothing left this "
+            "machine. Check Settings > Privacy and access, then try again.")
+
+
 async def assess_master(
     client, catalog: MasterCatalog, *, session=None, redact: bool = False
 ) -> Assessment:
@@ -182,16 +200,19 @@ async def assess_master(
     res: GuardResult | None = None
     if session is not None:
         hook = make_quarantine_hook(session, tier=QUARANTINE_TIER, opportunity_id=None)
-        plan = await plan_hosted_send(session, client.settings, spec.tier,
-                                      master_id=getattr(catalog.master, "id", None))
-        if plan.refuse:
+    # The one decision, from the client that sends (D-PRIV-800). Without a session a send that
+    # would go online is refused, never sent as written (D-PRIV-801).
+    plan = await plan_hosted_send(session, None, spec.tier, sender=client,
+                                  master_id=getattr(catalog.master, "id", None))
+    if plan.refuse:
+        if session is not None:
             tcfg = client.settings.llm.tiers.get(spec.tier)
             record_refusal(session, tier=QUARANTINE_TIER, opportunity_id=None,
                            model=tcfg.model if tcfg else "", reason=plan.refuse,
                            messages=messages)
-            res = GuardResult(ok=False, quarantined=True, error=plan.refuse)
-        else:
-            messages, book = encode_send(messages, plan.mapping)
+        res = GuardResult(ok=False, quarantined=session is not None, error=plan.refuse)
+    else:
+        messages, book = encode_send(messages, plan.mapping)
     if res is None:
         res = await run_guarded(
             client, tier=spec.tier, messages=messages, model_cls=model_cls,
@@ -204,10 +225,7 @@ async def assess_master(
         out.quarantined = res.quarantined
         log.warning("resume_assess_failed", quarantined=res.quarantined, error=res.error)
         if res.quarantined and res.error and res.error.startswith("hosted send refused"):
-            out.error = ("Not sent: confidential mode is on and tier 2 runs on a hosted model, "
-                         "but no current employer is chosen, so your employer's name would "
-                         "leave this machine. Choose it under Settings > Privacy and access, "
-                         "run tier 2 on a local model, or turn off confidential mode.")
+            out.error = refusal_error(res.error)
         elif res.quarantined:
             out.error = ("The model's answer could not be used, even after one retry, so no "
                          "assessment is shown. It was kept for review on the Quarantine page. "

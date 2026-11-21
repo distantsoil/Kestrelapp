@@ -92,10 +92,16 @@ def _opp_type(track: str) -> str:
     return "job_posting" if track == "employment" else "contract_posting"
 
 
-def _resolve_comp(raw: RawPosting, description: str | None, track: str) -> tuple[Comp | None, str]:
+_KNOWN_INTERVALS = frozenset({"year", "month", "week", "day", "hour"})
+
+
+def _resolve_comp(raw: RawPosting, description: str | None, track: str,
+                  country: str | None = None) -> tuple[Comp | None, str]:
     if raw.comp_min is not None or raw.comp_max is not None:
         comp = Comp(
-            raw.comp_min, raw.comp_max, raw.comp_currency or "USD", raw.comp_interval or "year"
+            raw.comp_min, raw.comp_max, raw.comp_currency or "USD", raw.comp_interval or "year",
+            currency_known=bool(raw.comp_currency) and not raw.comp_currency_assumed,
+            interval_known=raw.comp_interval in _KNOWN_INTERVALS and not raw.comp_interval_assumed,
         )
         source = "inferred" if raw.comp_is_estimate else "structured"
     else:
@@ -103,6 +109,10 @@ def _resolve_comp(raw: RawPosting, description: str | None, track: str) -> tuple
         if parsed is None:
             return None, "none"
         comp, source = parsed, "parsed"
+        if comp.bare_dollar and country != "US":
+            # A bare "$" outside the US (or with no country) is not proof of USD (round 4).
+            comp = Comp(comp.min, comp.max, comp.currency, comp.interval, currency_known=False,
+                        interval_known=comp.interval_known)
     # Employment comp is annual (SPEC.md 4.3); annualize sub-annual intervals.
     if track == "employment" and comp.interval != "year":
         comp = Comp(
@@ -110,6 +120,8 @@ def _resolve_comp(raw: RawPosting, description: str | None, track: str) -> tuple
             to_annual(comp.max, comp.interval),
             comp.currency,
             "year",
+            currency_known=comp.currency_known,
+            interval_known=comp.interval_known,
         )
     return comp, source
 
@@ -248,7 +260,8 @@ async def _handle_reseen(session, existing, raw, description, now, *, source) ->
     if raw.location_raw:
         existing.location_raw = raw.location_raw
         existing.country, existing.state, existing.city = parse_location(raw.location_raw)
-    comp, comp_source = _resolve_comp(raw, existing.description_md, source.track)
+    comp, comp_source = _resolve_comp(raw, existing.description_md, source.track,
+                                      existing.country)
     if comp is not None:
         comp_changed = (comp.min, comp.max, comp.currency, comp.interval) != (
             existing.comp_min,
@@ -258,6 +271,8 @@ async def _handle_reseen(session, existing, raw, description, now, *, source) ->
         )
         existing.comp_min, existing.comp_max = comp.min, comp.max
         existing.comp_currency, existing.comp_interval = comp.currency, comp.interval
+        existing.comp_currency_known = comp.currency_known
+        existing.comp_interval_known = comp.interval_known
         existing.comp_source = comp_source
         if comp_changed:
             org = await session.get(Org, existing.org_id) if existing.org_id else None
@@ -303,10 +318,13 @@ async def attach_description(session: AsyncSession, opp: Opportunity, text: str)
     opp.content_hash = content_hash(opp.org_name, opp.title, body)
     opp.version = (opp.version or 1) + 1
     if opp.comp_min is None and opp.comp_max is None:
-        comp, comp_source = _resolve_comp(RawPosting(external_id="pasted"), body, opp.track)
+        comp, comp_source = _resolve_comp(RawPosting(external_id="pasted"), body, opp.track,
+                                          opp.country)
         if comp is not None:
             opp.comp_min, opp.comp_max = comp.min, comp.max
             opp.comp_currency, opp.comp_interval = comp.currency, comp.interval
+            opp.comp_currency_known = comp.currency_known
+            opp.comp_interval_known = comp.interval_known
             opp.comp_source = comp_source
             org = await session.get(Org, opp.org_id) if opp.org_id else None
             session.add(
@@ -342,7 +360,7 @@ async def normalize_and_store(
     remote = classify_remote(
         title=title, description=description, hint=raw.remote_hint, is_remote=raw.is_remote
     )
-    comp, comp_source = _resolve_comp(raw, description, source.track)
+    comp, comp_source = _resolve_comp(raw, description, source.track, country)
 
     opp = Opportunity(
         track=source.track,
@@ -365,6 +383,8 @@ async def normalize_and_store(
         comp_min=comp.min if comp else None,
         comp_max=comp.max if comp else None,
         comp_currency=comp.currency if comp else None,
+        comp_currency_known=comp.currency_known if comp else None,
+        comp_interval_known=comp.interval_known if comp else None,
         comp_interval=comp.interval if comp else None,
         comp_source=comp_source,
         description_md=description,

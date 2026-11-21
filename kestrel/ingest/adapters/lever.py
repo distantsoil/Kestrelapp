@@ -24,6 +24,7 @@ from typing import Any
 
 import httpx
 
+from kestrel.ingest import failure_code
 from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError, path_segment
 
 _BASE = "https://api.lever.co/v0/postings"
@@ -46,7 +47,9 @@ class LeverAdapter:
             data = await client.get_json(url)
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
-                raise AdapterError(f"Lever slug not found: {company}") from exc
+                raise AdapterError(
+                    f"Lever slug not found: {company}", code=failure_code.NOT_FOUND
+                ) from exc
             raise AdapterError(f"Lever fetch failed for {company}: {exc}") from exc
         postings = data if isinstance(data, list) else []
         return [self._to_posting(p, company) for p in postings if isinstance(p, dict)]

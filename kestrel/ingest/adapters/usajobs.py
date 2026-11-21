@@ -34,7 +34,20 @@ import structlog
 
 from kestrel.errors import ROBOTS_SENTENCE
 from kestrel.ingest import source_secrets
-from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
+from kestrel.ingest.base import (
+    AdapterError,
+    Notice,
+    PostingBatch,
+    Problem,
+    RawPosting,
+    SourceConfigError,
+    key_rejected_problem,
+    needs_key,
+    needs_key_sentence,
+    rate_limited_problem,
+    request_limit,
+    server_error_problem,
+)
 from kestrel.pipeline.profile import load_profile
 
 log = structlog.get_logger(__name__)
@@ -66,14 +79,8 @@ def looks_like_email(value: str) -> bool:
     return bool(name) and "@" not in host and "." in host[1:-1]
 
 
-NEEDS_KEY = (
-    "USAJobs needs your API key and email. Add them on the Sources page under Sources that "
-    "need your own key"
-)
-KEY_REJECTED = (
-    "USAJobs did not accept your API key and email. Save them again on the Sources page "
-    "under Sources that need your own key"
-)
+NEEDS_KEY = needs_key_sentence("USAJobs", "API key and email")
+KEY_REJECTED = str(key_rejected_problem("USAJobs", "API key and email", 401))
 # Both sentences above hold this phrase; the Sources card reads it to say "Needs you".
 KEY_PROBLEM_PHRASE = "API key and email"
 
@@ -235,14 +242,14 @@ def to_posting(item: dict) -> RawPosting | None:
 def _problem(status: int) -> str:
     """Kestrel's own sentence for an error status; the provider's body is never read or shown."""
     if status in (401, 403):
-        return KEY_REJECTED
+        return key_rejected_problem("USAJobs", "API key and email", status)
     if status == 429:
-        return "USAJobs asked Kestrel to slow down; the rest is fetched on the next check"
+        return rate_limited_problem("USAJobs", status)
     if status in (400, 404, 413):
-        return "USAJobs rejected the search. Check the search words and the place"
+        return Problem("USAJobs rejected the search. Check the search words and the place", status)
     if status >= 500:
-        return "USAJobs had a problem on their side; the rest is fetched on the next check"
-    return f"USAJobs answered with an unexpected status ({status})"
+        return server_error_problem("USAJobs", status)
+    return Problem(f"USAJobs answered with an unexpected status ({status})", status)
 
 
 class UsaJobsAdapter:
@@ -291,7 +298,7 @@ class UsaJobsAdapter:
         key = get_secret(key_env(config))
         email = (config.get("contact_email") or "").strip()
         if not key or not email:
-            batch.partial_error = NEEDS_KEY
+            batch.add(needs_key("USAJobs", "API key and email"))
             log.info("usajobs_needs_key", key_saved=bool(key), email_saved=bool(email))
             return batch
         headers = {"Authorization-Key": key, "User-Agent": email}
@@ -304,10 +311,7 @@ class UsaJobsAdapter:
             params = self._params(config, term)
             for page in range(1, max_pages + 1):
                 if requests >= MAX_REQUESTS:
-                    batch.partial_error = batch.partial_error or (
-                        "USAJobs: stopped at the limit of requests per check; the rest is "
-                        "fetched on the next check"
-                    )
+                    batch.add(request_limit("USAJobs"))
                     return batch
                 requests += 1
                 data = await self._get(client, headers, {**params, "Page": str(page)}, batch)
@@ -350,7 +354,7 @@ class UsaJobsAdapter:
             log.warning("usajobs_error", status=r.status_code)
             message = _problem(r.status_code)
             if r.status_code == 429 or r.status_code >= 500:
-                batch.partial_error = message
+                batch.add(Notice.of(message))
                 return None
             raise AdapterError(message)
         try:

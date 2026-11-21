@@ -51,6 +51,40 @@ _RETRY_BACKOFF_S = (30, 120, 600)
 LIVE_STATUSES: tuple[str, ...] = ("pending", "leased")
 
 
+# How long a task given back for a lost engine rests before it can be leased again: past the
+# end of the cycle that lost the engine, so that cycle's drains do not take it again.
+ENGINE_WAIT_REST_S = 30
+# The longest rest between two waits of one task (D-WORKER-6 amended, round 12): a task's rest
+# grows with how long its row says it has waited, so a call that loses its connection every time
+# never uses up its tries but asks the engine at most this often.
+ENGINE_WAIT_REST_MAX_S = 1800
+
+
+def engine_wait_rest(since: str | None, now: datetime) -> int:
+    """Seconds a waiting task rests: as long as it has waited so far (from its row), at least
+    ENGINE_WAIT_REST_S and at most ENGINE_WAIT_REST_MAX_S. An unreadable mark rests the least."""
+    try:
+        began = datetime.fromisoformat(since) if since else now
+    except ValueError:
+        began = now
+    waited = int((now - began).total_seconds())
+    return max(ENGINE_WAIT_REST_S, min(waited, ENGINE_WAIT_REST_MAX_S))
+
+
+def _waited_last() -> ColumnElement[int]:
+    """1 for a row that waits for the engine, else 0: ordered after fresh work of the same
+    priority, so one task that loses the engine every time cannot keep the rest from running."""
+    return case((func.json_extract(Task.payload, "$.wait_cause").is_not(None), 1), else_=0)
+
+
+# What a wait for the local engine writes on the task's row (D-WORKER-6 amended, round 11): the
+# cause, and when the task first waited. A failure that spends clears both; a done row's
+# are never read.
+WAIT_CAUSE_KEY = "wait_cause"
+WAIT_SINCE_KEY = "engine_wait_since"
+WAIT_KEYS = (WAIT_CAUSE_KEY, WAIT_SINCE_KEY)
+
+
 def _backoff_seconds(attempts: int) -> int:
     attempts = max(1, attempts)
     return _RETRY_BACKOFF_S[min(attempts, len(_RETRY_BACKOFF_S)) - 1]
@@ -422,7 +456,7 @@ async def _with_lock_retry[T](op: str, fn: Callable[[], Awaitable[T]]) -> T:
         except OperationalError as exc:
             if not _is_lock_error(exc) or attempt == _LOCK_RETRIES:
                 raise
-            delay = _LOCK_BASE_DELAY_S * (2**attempt) * (0.5 + random.random())
+            delay = _LOCK_BASE_DELAY_S * (2**attempt) * (0.5 + random.random())  # noqa: S311  retry jitter, not security
             log.warning("queue_lock_retry", op=op, attempt=attempt + 1, delay_s=round(delay, 3))
             await asyncio.sleep(delay)
     raise AssertionError("unreachable")
@@ -465,7 +499,7 @@ class TaskQueue:
                     sel = sel.where(Task.type.in_(types))
                 if where is not None:
                     sel = sel.where(where)
-                sel = sel.order_by(Task.priority.desc(), Task.id.asc()).limit(1)
+                sel = sel.order_by(Task.priority.desc(), _waited_last(), Task.id.asc()).limit(1)
                 task_id = (await s.execute(sel)).scalar_one_or_none()
                 if task_id is None:
                     return None
@@ -525,7 +559,8 @@ class TaskQueue:
             return res.rowcount == 1
 
     async def _fail(
-        self, task_id: int, error: str, *, worker_id: str | None = None, retry: bool = True
+        self, task_id: int, error: str, *, worker_id: str | None = None, retry: bool = True,
+        engine_wait: bool = False,
     ) -> str:
         """Record the error and either requeue (retry, if attempts remain) or dead-letter. If
         worker_id is given and no longer owns the leased task, do nothing (returns 'not_owned')."""
@@ -539,16 +574,39 @@ class TaskQueue:
             task.updated_at = utcnow_iso()
             if task.payload and DEFERRED_KEY in task.payload:
                 task.payload = {k: v for k, v in task.payload.items() if k != DEFERRED_KEY}
-            if retry and task.attempts < task.max_attempts:
+            if retry and engine_wait and task.status == "leased":
+                # The task's own call could not reach Ollama (a failure typed EngineUnreachable,
+                # carried here by the drain): a wait for the engine, not a task failure. The one
+                # try this lease charged is given back, only while the row is still leased (so
+                # once per lease), the wait is written on the row, and the task rests a short
+                # while. A failure the caller will not retry is never given back.
                 task.status = "pending"
                 task.worker_id = None
                 task.lease_until = None
-                # Back off before it is claimable again (issue #153); "Try again" clears
-                # retry_at and runs it now (rescore._upgrade_waiting).
-                task.retry_at = iso(utcnow() + timedelta(seconds=_backoff_seconds(task.attempts)))
+                task.attempts = max(0, (task.attempts or 0) - 1)
+                now = utcnow()
+                payload = dict(task.payload or {})
+                payload[WAIT_CAUSE_KEY] = "engine"
+                payload.setdefault(WAIT_SINCE_KEY, iso(now))
+                task.payload = payload
+                # The rest grows with the wait on the row (round 12), never with a count.
+                rest = engine_wait_rest(payload[WAIT_SINCE_KEY], now)
+                task.retry_at = iso(now + timedelta(seconds=rest))
             else:
-                task.status = "dead"
-                task.retry_at = None
+                if task.payload and any(k in task.payload for k in WAIT_KEYS):
+                    task.payload = {k: v for k, v in task.payload.items() if k not in WAIT_KEYS}
+                if retry and task.attempts < task.max_attempts:
+                    task.status = "pending"
+                    task.worker_id = None
+                    task.lease_until = None
+                    # Back off before it is claimable again (issue #153); "Try again" clears
+                    # retry_at and runs it now (rescore._upgrade_waiting).
+                    task.retry_at = iso(
+                        utcnow() + timedelta(seconds=_backoff_seconds(task.attempts))
+                    )
+                else:
+                    task.status = "dead"
+                    task.retry_at = None
             await s.commit()
             return task.status
 
@@ -602,10 +660,13 @@ class TaskQueue:
             await s.commit()
             return task.status
 
-    async def _reclaim_expired(self) -> int:
-        """Return expired leases to the queue; dead-letter those already out of attempts."""
+    async def _reclaim_expired(self, types: tuple[str, ...] | None = None) -> int:
+        """Return expired leases to the queue; dead-letter those already out of attempts. With
+        `types`, only tasks of those types (the worker's per-cycle sweep, D-WORKER-7)."""
         now = utcnow_iso()
         expired = and_(Task.status == "leased", Task.lease_until < now)
+        if types is not None:
+            expired = and_(expired, Task.type.in_(types))
         async with self._sm() as s:
             refund = Task.type.in_(RESTART_REFUND_TYPES)
             dead = await s.execute(
@@ -735,11 +796,20 @@ class TaskQueue:
         return await self._guarded("complete", lambda: self._complete(task_id, worker_id))
 
     async def fail(
-        self, task_id: int, error: str, *, worker_id: str | None = None, retry: bool = True
+        self, task_id: int, error: str, *, worker_id: str | None = None, retry: bool = True,
+        engine_wait: bool = False,
     ) -> str:
+        """`engine_wait`: the failure was typed EngineUnreachable (llm.engine_cycle), so the task
+        waits for the engine with its try given back instead of spending it."""
         return await self._guarded(
-            "fail", lambda: self._fail(task_id, error, worker_id=worker_id, retry=retry)
+            "fail", lambda: self._fail(task_id, error, worker_id=worker_id, retry=retry,
+                                       engine_wait=engine_wait)
         )
+
+    async def wait_engine(self, task_id: int, error: str, *, worker_id: str | None = None) -> str:
+        """The task's call could not reach the local engine: pending again with the lease's try
+        given back and the wait written on its row (fail with engine_wait)."""
+        return await self.fail(task_id, error, worker_id=worker_id, retry=True, engine_wait=True)
 
     async def defer(
         self, task_id: int, note: str, *, worker_id: str | None = None, reason: str | None = None
@@ -753,8 +823,10 @@ class TaskQueue:
             "give_back", lambda: self._give_back(task_id, payload, worker_id=worker_id)
         )
 
-    async def reclaim_expired(self) -> int:
-        return await _with_lock_retry("reclaim_expired", self._reclaim_expired)
+    async def reclaim_expired(self, *, types: tuple[str, ...] | None = None) -> int:
+        return await _with_lock_retry(
+            "reclaim_expired", lambda: self._reclaim_expired(types)
+        )
 
     async def release_all_leased(self, *, keep_worker_ids: tuple[str, ...] = ()) -> int:
         return await self._guarded(

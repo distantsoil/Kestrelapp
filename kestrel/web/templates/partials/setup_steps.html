@@ -15,7 +15,7 @@
       {{ model_progress(models, s.key) }}
       {% if s.key == 'profile' and s.status != 'skip' %}
       {% call lo.fence(request) %}
-      <form method="post" action="/setup/profile" hx-post="/setup/profile" hx-target="#system-panel" hx-swap="outerHTML" style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+      <form method="post" action="/setup/profile" hx-post="/setup/profile" hx-target="#system-panel" hx-swap="outerHTML" class="u-mt-6px u-d-flex u-gap-6px u-ai-center u-fw-wrap">
         <select name="profile">
           {% for name in profile_names %}<option value="{{ name }}"{% if name == st.profile %} selected{% endif %}>{{ name }}</option>{% endfor %}
         </select>

@@ -213,6 +213,69 @@ PROOF POINTS (the only achievements you may cite; do not invent others)
 The profile schema (SPEC §4.1) carries no resume-role list and no skills list, so there is no
 EXPERIENCE SHAPE block; resume variant text belongs to P3 and is never sent at Tier 2.
 
+### `PROFILE_FULL_V4` (P2 and P2C from `evaluate/v4`, `evaluate_consulting/v4`; issue #208)
+
+`PROFILE_FULL` as above with the terms and location lines rewritten so the model cannot misread
+them (D-SCORE-24). `PROFILE_COMPACT` (Tier 1) and `PROFILE_FULL` (v3 and every other prompt that
+uses it) are unchanged and render byte for byte as before. Employment:
+
+```
+CANDIDATE
+Level: {seniority_floor} and above. Currently operating at {headline}.
+Targets: {target_titles joined}
+Hard no: {anti_titles joined}
+Pay floor: ${comp_floor_usd:,} base. The least you would accept; a stated band that tops out below it is a dealbreaker.
+Pay target: ${comp_target_usd:,}. What you would like; never a dealbreaker.
+Work modes wanted: {work_modes joined}   (line omitted when none is chosen)
+Remote: {remote line}
+Onsite or hybrid: {onsite line}
+Relocation: {yes|no|not stated}.
+Work authorization: {work_auth}
+Must have: {must_have, top 4}
+Must avoid: {must_avoid, top 4}
+
+NARRATIVE
+{narrative}
+
+PROOF POINTS (the only achievements you may cite besides the resume lines below; do not invent others)
+{for each: "- {claim} | evidence: {evidence} | metric: {metric}"}
+```
+
+`{remote line}`: `yes, from anywhere in {remote_country_allowlist joined}.` (`yes, from anywhere.`
+with no list), `no.`, or `not stated.`. `{onsite line}`: `only in {onsite_states joined}; metros
+{metro names joined}.` naming only what is listed, or `no places listed.`. The consulting build
+takes the same lines with `Day rate floor: ${day_rate_floor:,}/day. The least you would accept; a
+stated rate that tops out below it is a dealbreaker.` and `Day rate target:
+${day_rate_target:,}/day. What you would like; never a dealbreaker.` in place of the pay lines
+(Practice, Service lines, Target orgs and Excluded sectors as in `PROFILE_COMPACT`). An unset
+floor or target reads `unspecified` and keeps its sentence.
+
+### `RESUME_DIGEST` (P2 and P2C from v4; owner's option C, D-REL-27, D-SCORE-25)
+
+The operator's own resume lines, so Tier 2 sees the current resume and not only the proof points.
+Built in code from the newest active resume (consulting: capability statement, else resume) of the
+track, never by a model. Every line is the operator's text byte for byte (hard rule 2): a skills
+group's label and items as stored, and each role bullet's default variant (`doc_variant.text`,
+else the slot's first variant). Order: skills groups, then roles in document order, at most 4
+bullets per role and 20 in all. Lines are added whole until the block reaches its token cap:
+`min(900, 2500 - tokens(PROFILE_FULL_V4))`, so the profile and the digest together stay inside
+the 2500-token profile allowance (SPEC.md 8.2) and the tier's `num_ctx` never changes. A line
+that would pass the cap is left out with every line after it. Empty (no resume, nothing fits)
+renders as nothing at all. Placed right after the profile; substituted last, so text in a bullet
+is never read as a placeholder.
+
+```
+
+RESUME LINES (the candidate's own words from their current resume; you may cite them as evidence, as you cite proof points)
+Skills:
+- {group label}: {items joined ", "}
+Experience:
+- {bullet text}
+```
+
+When the read goes to an online model, the consent dialogs say these lines are sent (the
+`tier2` disclosure in Settings > Hosted, the Score again and deeper read dialogs).
+
 ### `FEW_SHOT_EXAMPLES` (Tier 2 only, once labels exist)
 
 Retrieved per `SPEC-MODULES.md` §5.3: same track, ranked by embedding similarity to the current
@@ -348,7 +411,7 @@ limits are per tier (D-LLM-1); on the reasoning-off retry the error names
 
 ## P2 — Tier 2 Six-Block Evaluation
 
-**Version:** `evaluate/v3`
+**Version:** `evaluate/v4` by default (owner, D-SCORE-32); `evaluate/v3` only when the internal setting `scoring.evaluate_version` is `v3` (D-SCORE-24, D-SCORE-29; support and the bench)
 **Model tier:** `tier2`
 **Temperature:** 0.2
 **Max tokens:** 4000
@@ -414,6 +477,28 @@ judgment of the opportunity as a whole, and it should account for interactions t
 dimensions cannot express. A role that is a perfect functional fit at a company the candidate
 would be miserable in is not a 4.0.
 ```
+
+**`evaluate/v4` (issue #208, D-SCORE-24).** The system prompt above is v3's (the prompt file is
+authoritative) with three changes: rule 2 reads "You may only reference the proof points, the
+narrative and the resume lines provided."; rule 6 counts "a proof point, a resume line, the
+narrative or the stated terms"; and a rule 8 is added:
+
+```
+8. A blocker rules the candidate out; nothing else is one. List a blocker only when the posting
+   states something that rules the candidate out against the profile: a stated pay band that
+   tops out below the pay floor, a place of work the profile excludes, a refusal of sponsorship
+   the candidate needs, a required clearance or license the candidate lacks. The pay target is
+   never a blocker. Anything that needs confirming, or that may be acceptable, is not a blocker:
+   write it in worth_checking as one plain sentence to the candidate, and leave it out of
+   blockers.
+```
+
+The user template's first line becomes `{PROFILE_FULL_V4}{RESUME_DIGEST}{OPERATOR_CORRECTIONS}`
+(shared context blocks above); everything after it is v3's. The schema adds one required
+top-level field, `"worth_checking": { "type": "array", "maxItems": 4, "items": { "type":
+"string", "maxLength": 250 } }` (an over-long list is cut to 4 and each string to 250, never
+rejected). Its lines are stored with the read (`blocks.worth_checking`) and shown under Worth
+checking on the role page and the Pipeline panel. v3 is unchanged and still loads.
 
 ### User
 
@@ -675,7 +760,10 @@ URL: {job.url}
 
 1. Compute `weighted = Σ(dimension.score × weight)`. Store both.
 2. If `abs(holistic - weighted) > 0.75`, set `needs_review = true`.
-3. If any `blocker` exists → force `verdict = pass`, preserve the model's score for reference.
+3. If any `blocker` the deterministic check upholds exists → force `verdict = pass`, preserve
+   the model's score for reference (SPEC §7.3 override 1, D-SCORE-22). A blocker the operator's
+   own data contradicts, or that needs confirming, is stored with its check result, shown under
+   Worth checking, and does not change the verdict (hard rule 4).
 4. If `legitimacy.status == "reject"` → force `verdict = pass`.
 5. If `legitimacy.status == "suspect"` → cap displayed score at 3.5, show a warning banner.
 6. If `work_auth_signal == "explicit_no_sponsorship"` and the profile requires sponsorship →
@@ -1296,7 +1384,7 @@ DESCRIPTION (first {n} tokens)
 
 ## P2C — Tier 2 Evaluation, consulting track
 
-**Version:** `evaluate_consulting/v3` · **Tier:** `tier2` · **Temp:** 0.2 · **Max tokens:** 4000
+**Version:** `evaluate_consulting/v4` by default (D-SCORE-32), `evaluate_consulting/v3` with the internal `scoring.evaluate_version: v3` · **Tier:** `tier2` · **Temp:** 0.2 · **Max tokens:** 4000
 
 ### System
 
@@ -1360,6 +1448,13 @@ Scoring dimensions, each 1.0 to 5.0:
 Then a holistic score, also 1.0 to 5.0. It is NOT the average. A perfect need at an organization
 whose buyer is unreachable is not a 4.0.
 ```
+
+**`evaluate_consulting/v4` (D-SCORE-24).** v3's system prompt with rule 2 naming "proof points,
+proof engagements and resume lines", rule 7 counting "a resume line", and a rule 9 that defines a
+blocker as P2's rule 8 does (a stated rate below the day rate floor, an excluded place or sector,
+a conflict the material shows; the day rate target is never one; anything that needs confirming
+goes in `worth_checking`). The user template starts `{PROFILE_FULL_V4}{RESUME_DIGEST}
+{OPERATOR_CORRECTIONS}` (no space; wrapped here) and the schema adds P2's `worth_checking`.
 
 ### User
 
@@ -1569,7 +1664,8 @@ COMPENSATION CONTEXT (from the practitioner's own observed corpus)
 ### Post-processing
 
 Identical structure to P2: compute `weighted`, flag `needs_review` on divergence above 0.75,
-force `pass` on any blocker or `legitimacy.status == reject`, cap at 3.5 on `suspect`, store
+force `pass` on any blocker the deterministic check upholds (P2 rule 3: `rate` checks like
+`comp` against the day-rate floor, `geography` like `location`) or `legitimacy.status == reject`, cap at 3.5 on `suspect`, store
 `verdict_model` alongside the threshold-derived `verdict`.
 
 **The top-level `legitimacy` object is authoritative for post-processing.** `blocks.g_risk` is

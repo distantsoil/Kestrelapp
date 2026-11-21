@@ -93,12 +93,15 @@ def _to_review(page, base, on_load_js):
     page.click('[data-testid="st-imp-sample"]')
     page.wait_for_selector('[data-testid="st-imp-next"]')
     page.evaluate(
-        """(body) => document.addEventListener('htmx:load', (e) => {
+        # Compiled here, inside the evaluate call: compiling it in the listener is eval from
+        # the page, which the app's Content-Security-Policy refuses (D-INST-8).
+        """(body) => { const run = new Function('add', body);
+           document.addEventListener('htmx:load', (e) => {
              const add = e.target.querySelector && e.target.querySelector('#st-imp-add');
              if (!add) return;
              window.__unticked = e.target.querySelectorAll('input.st-check:checked').length === 0;
-             new Function('add', body)(add);
-           })""",
+             run(add);
+           }); }""",
         on_load_js,
     )
     page.click('[data-testid="st-imp-next"]')

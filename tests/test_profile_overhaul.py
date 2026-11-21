@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from kestrel.services import profile_edit as pe
 from tests import profile_seed
+from tests.page_source import as_written
 
 
 @pytest.fixture
@@ -221,7 +222,8 @@ def test_the_preview_is_one_scaled_true_page_of_the_operators_own_text(client):
     doc = _soup(page["srcdoc"]).get_text(" ")
     for bullet in profile_seed.BULLETS:
         assert bullet in doc  # byte for byte from doc_variant.text (hard rule 2)
-    assert "padding:.5in" in page["srcdoc"] and "min-height:11in" in page["srcdoc"]
+    srcdoc = as_written(page["srcdoc"])  # its stylesheets are /frame-css links (D-SEC-59)
+    assert "padding:.5in" in srcdoc and "min-height:11in" in srcdoc
 
 
 def test_the_documents_tab_renders_the_preview_on_load_and_enlarge_outside_the_layout(client):

@@ -1,0 +1,87 @@
+/* Loaded last on every page (base.html). Content-Security-Policy support (D-INST-8):
+
+   1. htmx's indicator rules. htmx wrote them as a <style> element of its own, which the policy
+      refuses, so includeIndicatorStyles is off and they live here, last, where htmx put them.
+   2. The u-* classes that replaced static style= attributes in the templates (D-SEC-57). Each
+      is !important because an inline style beat every author rule; each name spells its one
+      declaration (u-mt-1 is margin-top: 1rem; 06 is .6rem). A value a template computes is a
+      data-k-style attribute instead (static/js/k-head.js). */
+
+.htmx-indicator { opacity: 0; }
+.htmx-request .htmx-indicator { opacity: 1; transition: opacity 200ms ease-in; }
+.htmx-request.htmx-indicator { opacity: 1; transition: opacity 200ms ease-in; }
+.u-ai-center { align-items: center !important; }
+.u-bs-border-box { box-sizing: border-box !important; }
+.u-cur-pointer { cursor: pointer !important; }
+.u-d-block { display: block !important; }
+.u-d-flex { display: flex !important; }
+.u-d-inline { display: inline !important; }
+.u-fb-100p { flex-basis: 100% !important; }
+.u-ff-mono { font-family: var(--mono) !important; }
+.u-fs-105 { font-size: 1.05rem !important; }
+.u-fs-fs-sm { font-size: var(--fs-sm) !important; }
+.u-fw-wrap { flex-wrap: wrap !important; }
+.u-gap-1 { gap: 1rem !important; }
+.u-gap-6px { gap: 6px !important; }
+.u-gtc-26px-fill { grid-template-columns: 26px minmax(0,1fr) !important; }
+.u-m-0-0-04 { margin: 0 0 .4rem !important; }
+.u-m-0-0-05 { margin: 0 0 .5rem !important; }
+.u-m-0-0-06 { margin: 0 0 .6rem !important; }
+.u-m-02-0 { margin: .2rem 0 !important; }
+.u-m-02-0-05 { margin: .2rem 0 .5rem !important; }
+.u-m-02-0-06 { margin: .2rem 0 .6rem !important; }
+.u-m-03-0-06 { margin: .3rem 0 .6rem !important; }
+.u-m-04-0 { margin: .4rem 0 !important; }
+.u-m-04-0-0 { margin: .4rem 0 0 !important; }
+.u-m-04-0-0-1 { margin: .4rem 0 0 1rem !important; }
+.u-m-05-0 { margin: .5rem 0 !important; }
+.u-m-05-0-0 { margin: .5rem 0 0 !important; }
+.u-m-06-0 { margin: .6rem 0 !important; }
+.u-m-06-0-0 { margin: .6rem 0 0 !important; }
+.u-m-08-0 { margin: .8rem 0 !important; }
+.u-m-12-0-03 { margin: 1.2rem 0 .3rem !important; }
+.u-m-6px-0 { margin: 6px 0 !important; }
+.u-maxh-24 { max-height: 24rem !important; }
+.u-maxw-22 { max-width: 22rem !important; }
+.u-mb-05 { margin-bottom: .5rem !important; }
+.u-mb-06 { margin-bottom: .6rem !important; }
+.u-mb-08 { margin-bottom: .8rem !important; }
+.u-mb-1 { margin-bottom: 1rem !important; }
+.u-minw-18 { min-width: 18rem !important; }
+.u-minw-22 { min-width: 22rem !important; }
+.u-minw-24 { min-width: 24rem !important; }
+.u-ml-06 { margin-left: .6rem !important; }
+.u-ml-14 { margin-left: 1.4rem !important; }
+.u-mr-1 { margin-right: 1rem !important; }
+.u-mr-12 { margin-right: 1.2rem !important; }
+.u-mt-0 { margin-top: 0 !important; }
+.u-mt-025 { margin-top: .25rem !important; }
+.u-mt-03 { margin-top: .3rem !important; }
+.u-mt-04 { margin-top: .4rem !important; }
+.u-mt-05 { margin-top: .5rem !important; }
+.u-mt-06 { margin-top: .6rem !important; }
+.u-mt-08 { margin-top: .8rem !important; }
+.u-mt-1 { margin-top: 1rem !important; }
+.u-mt-12 { margin-top: 1.2rem !important; }
+.u-mt-16 { margin-top: 1.6rem !important; }
+.u-mt-6px { margin-top: 6px !important; }
+.u-mt-8px { margin-top: 8px !important; }
+.u-o-06 { opacity: .6 !important; }
+.u-ov-auto { overflow: auto !important; }
+.u-ovx-auto { overflow-x: auto !important; }
+.u-p-0-03 { padding: 0 .3rem !important; }
+.u-p-05-08 { padding: .5rem .8rem !important; }
+.u-p-05-09 { padding: .5rem .9rem !important; }
+.u-p-06-1 { padding: .6rem 1rem !important; }
+.u-p-08 { padding: .8rem !important; }
+.u-p-08-1 { padding: .8rem 1rem !important; }
+.u-p-1 { padding: 1rem !important; }
+.u-w-100p { width: 100% !important; }
+.u-ws-normal { white-space: normal !important; }
+.u-ws-pre-wrap { white-space: pre-wrap !important; }
+.u-maxh-22 { max-height: 22rem !important; }
+
+/* An element hidden by the attribute stays hidden: an inline display lost to components.css's
+   [hidden] { display: none !important }, and a u-d-* class above would win that tie by coming
+   later, so this comes last. */
+[hidden] { display: none !important; }

@@ -1,7 +1,8 @@
 """Notification DELIVERY and BATCHING (SPEC-INTERFACES 6). The notification TABLE and
 NotificationService have existed since Phase 1; this is the layer that actually pushes them to the
-operator over a desktop toast (default on: win11toast on Windows, `osascript` on macOS,
-`notify-send` on Linux), an optional ntfy topic (phone push), and an optional generic webhook.
+operator over a desktop toast (default on: win11toast on Windows, Kestrel.app's own banner on macOS
+(osascript from source), `notify-send` on Linux), an optional ntfy topic (phone push), and an
+optional generic webhook.
 
 BATCHING IS MANDATORY and the whole point: never more than one delivered notification per minute.
 A delivery cycle collects every undelivered, still-enabled notification; if more than one is
@@ -85,14 +86,6 @@ _missing_tools_logged: set[str] = set()
 # notify-send's flag for the freedesktop "suppress-sound" hint: the pop-up makes no sound itself.
 NOTIFY_SEND_SILENT = ("--hint=boolean:suppress-sound:true",)
 
-# osascript receives the operator's text as ARGUMENTS to this fixed script, never spliced into it:
-# a title containing a quote or a backslash must not be able to change what the script does.
-_OSASCRIPT = (
-    "on run argv\n"
-    "display notification (item 2 of argv) with title (item 1 of argv)\n"
-    "end run"
-)
-
 
 def _tool_missing(name: str) -> None:
     if name not in _missing_tools_logged:
@@ -123,23 +116,23 @@ def _toast(title: str, body: str | None) -> bool:
             win11toast.notify(title, body or "", audio=silent)
         return True
     if sys.platform == "darwin":
-        tool = shutil.which("osascript")
-        if tool is None:
-            _tool_missing("osascript")
-            return False
-        # `display notification` without a `sound name` clause is silent, which is the point.
-        argv = [tool, "-e", _OSASCRIPT, title, body or ""]
-    else:
-        tool = shutil.which("notify-send")
-        if tool is None:
-            _tool_missing("notify-send")
-            return False
-        # The freedesktop hint keeps the pop-up silent (a desktop would otherwise play its own
-        # sound). "--" ends option parsing so a title beginning with "-" is text, not a flag.
-        argv = [tool, "--app-name=Kestrel", *NOTIFY_SEND_SILENT, "--", title, body or ""]
+        # Native Kestrel.app banner inside the packaged app, osascript elsewhere (D-NOTIFY-630).
+        # DENIED means the person turned Kestrel's notifications off: nothing is shown.
+        from kestrel.services import mac_notify
+
+        return mac_notify.post(title, body or "") in (
+            mac_notify.Path.NATIVE, mac_notify.Path.OSASCRIPT,
+        )
+    tool = shutil.which("notify-send")
+    if tool is None:
+        _tool_missing("notify-send")
+        return False
+    # The freedesktop hint keeps the pop-up silent (a desktop would otherwise play its own
+    # sound). "--" ends option parsing so a title beginning with "-" is text, not a flag.
+    argv = [tool, "--app-name=Kestrel", *NOTIFY_SEND_SILENT, "--", title, body or ""]
     from kestrel.llm.profiles import no_console_window, system_tool_env
 
-    subprocess.run(
+    subprocess.run(  # noqa: S603  fixed argv list, no shell
         argv, check=True, capture_output=True, timeout=10,
         **no_console_window(), **system_tool_env(),
     )

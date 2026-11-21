@@ -18,6 +18,7 @@ import pytest
 from kestrel import paths
 from kestrel.web import deps
 from kestrel.web.deps import NAV_GROUPS
+from tests.page_source import as_written
 
 _STATIC = Path(paths.web_static_dir())
 _TEMPLATES = Path(paths.web_templates_dir())
@@ -45,7 +46,7 @@ def test_rendered_sidebar_lists_the_new_items_in_order_and_loads_the_design_syst
     asyncio.run(_seed())
     with _client() as c:
         # A screen still on the legacy sheet (Today, About and Help no longer load it).
-        page = c.get("/backup").text
+        page = as_written(c.get("/backup").text)
         side = page.split('<aside class="side"')[1].split("</aside>")[0]
         names = re.findall(r'<a href="[^"]+" class="[^"]*" title="([^"]+)"', side)
         assert names == ["Today", "Pipeline", "Applications", "Profile", "Interview prep",

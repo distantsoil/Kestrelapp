@@ -8,6 +8,7 @@ plus every warning and error from anything older, in time order.
 from __future__ import annotations
 
 import logging
+import sys
 
 import pytest
 import structlog
@@ -157,13 +158,45 @@ def test_a_small_set_of_earlier_warnings_carries_no_cap_note():
 def test_an_unreadable_rotated_file_is_always_reported(monkeypatch):
     _write([_line(1)], "kestrel.log.1")
     _write([_line(i) for i in range(25_000)])
-    real = type(paths.logs_dir()).read_text
+    import os
 
-    def _read(self, *a, **k):
-        if self.name == "kestrel.log.1":
+    real = os.open
+
+    def _open(path, *a, **k):  # logs are opened by name through the shared-file walker
+        if os.path.basename(os.fspath(path)) == "kestrel.log.1":
             raise PermissionError("locked by another program")
-        return real(self, *a, **k)
+        return real(path, *a, **k)
 
-    monkeypatch.setattr(type(paths.logs_dir()), "read_text", _read)
+    monkeypatch.setattr(os, "open", _open)
     out = _tails()["logs/kestrel.log"].splitlines()
-    assert any("kestrel.log.1 unreadable" in x and "locked" in x for x in out[:3])
+    assert "# kestrel.log.1 left out: permission to read it was denied" in out[:3]
+
+
+def test_a_link_or_hard_link_in_the_log_folder_never_reaches_the_bundle(tmp_path):
+    """logs/kestrel.log.3 planted as a link to another text file, or a hard link to one, puts
+    none of that file's text in the shareable bundle; the real log is still there."""
+    import os
+
+    from tests.symlink_probe import symlink_or_skip
+
+    outside = tmp_path / "notes.txt"
+    outside.write_text("INVENTED OUTSIDE MARKER\n", encoding="utf-8")
+    _write([_line(1, "INFO", "real line")])
+    symlink_or_skip(paths.logs_dir() / "kestrel.log.3", outside)
+    os.link(outside, paths.logs_dir() / "other.log")
+    tails = _tails()
+    assert "INVENTED OUTSIDE MARKER" not in "".join(tails.values())
+    assert "real line" in tails["logs/kestrel.log"]
+
+
+@pytest.mark.skipif(sys.platform != "linux",
+                    reason="only Linux file systems accept a file name that is not UTF-8")
+def test_a_log_name_that_is_not_text_is_named_and_does_not_stop_the_bundle():
+    import os
+
+    _write([_line(1, "INFO", "real line")])
+    with open(os.path.join(os.fsencode(paths.logs_dir()), b"k\xff.log"), "wb") as fh:
+        fh.write(b"x\n")
+    tails = _tails()
+    assert "real line" in tails["logs/kestrel.log"]
+    assert any("not text" in v for v in tails.values())

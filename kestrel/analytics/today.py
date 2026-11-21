@@ -977,6 +977,17 @@ async def system_asks(
         # Parked, not pending: quarantine is never something to wait for (D-UI-37). A failed
         # score-again is named apart: its earlier score stands (D-UI-70).
         why = quarantine_why(await quarantine_kinds(session))
+        # Roles that failed the same way, said once (D-UI-555): the same groups the page's banner
+        # shows, so the count matches, and a banner the person hid is not repeated here.
+        from kestrel.web import retry_groups
+
+        shown = retry_groups.visible(
+            await retry_groups.groups_now(session), await retry_groups.dismissed_counts(session)
+        )
+        if shown:
+            top = shown[0]
+            why = (f"{top['count']} of them failed {top['step_label']} the same way: "
+                   f"{top['cause']}. {why}")
         failed = fails.scoring + fails.other
         again = fails.rescore
         if failed and again:
@@ -1012,7 +1023,9 @@ _SCHEMA_MARKS = ("schema", "invalid json", "validation", "not valid", "enum", "r
 def quarantine_kind(error: str | None) -> str:
     """Why one stored failure happened, from its error text: `length` (the reply hit its token
     or context budget), `schema` (an answer came back in the wrong shape), else `other`."""
-    text = (error or "").lower()
+    from kestrel.llm.failure_kind import split_stored
+
+    text = split_stored(error)[1].lower()  # the stored kind line is typing, not a message
     if any(m in text for m in _LENGTH_MARKS):
         return "length"
     if any(m in text for m in _SCHEMA_MARKS):

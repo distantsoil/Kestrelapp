@@ -143,6 +143,9 @@ async def test_rippling_detail_error_skips_only_that_posting():
     respx.get(f"{_BASE}/{_U3}").mock(return_value=Response(200, json=_detail(_U3)))
     postings = await _fetch()
     assert [p.external_id for p in postings] == [_U1, _U3]
+    # the skipped role is said, so the run is partial (D-ERR-24 round 8)
+    assert postings.partial_error.startswith("Rippling did not return the details of 1 of its ")
+    assert [n.kind for n in postings.notices] == ["body_unread"]
 
 
 @respx.mock

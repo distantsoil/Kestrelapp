@@ -309,6 +309,12 @@ def test_a_filter_runs_on_the_server_too(live):
             ".indexOf('\"1\"') > 0")
         wait_for_layout(page)
         assert page.locator(f'[data-testid="pcard"][data-id="{hidden}"]').count() == 1
-        assert page.locator('[data-testid="filter-count"]').inner_text() == "Showing 1 of 1"
+        # The count line updates after the cards; wait for it rather than read it once (the
+        # owner's Windows gate on 156f622d read "Showing 0 of 124" a moment too early).
+        count = page.locator('[data-testid="filter-count"]')
+        page.wait_for_function(
+            "document.querySelector('[data-testid=\"filter-count\"]').innerText.trim()"
+            " === 'Showing 1 of 1'", timeout=15_000)
+        assert count.inner_text() == "Showing 1 of 1"
     finally:
         ctx.close()

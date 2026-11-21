@@ -14,7 +14,7 @@
 
 {# Ten checks as bars: g healthy, w slowed or partly done, b failed, m not yet run. #}
 {% macro spark(chars) -%}
-<span class="src-spark" role="img" aria-label="Last 10 checks" title="Last 10 checks">{% for c in chars %}<i class="{{ c if c != 'g' else '' }}" style="height:{{ 6 if c == 'm' else (16 if c == 'g' else 20) }}px"></i>{% endfor %}</span>
+<span class="src-spark" role="img" aria-label="Last 10 checks" title="Last 10 checks">{% for c in chars %}<i class="{{ c if c != 'g' else '' }}" data-k-style="height:{{ 6 if c == 'm' else (16 if c == 'g' else 20) }}px"></i>{% endfor %}</span>
 {%- endmacro %}
 
 {% macro health_pill(v) -%}
@@ -29,7 +29,7 @@
   {{ badge(v) }}
   <div class="src-rn">
     <div class="src-nm">{{ v.name }}<span class="src-tag src-tag--{{ v.origin }}" data-testid="origin-tag">{{ v.origin_label }}</span></div>
-    <div class="src-ty{% if issue %} is-issue is-{{ v.health }}{% endif %}"{% if issue %} title="{{ v.reason }}"{% endif %} data-testid="{{ 'source-reason' if issue else 'source-type' }}">{{ v.reason if issue else v.type_line }}</div>
+    <div class="src-ty{% if issue %} is-issue is-{{ v.health }}{% endif %}"{% if issue %} title="{{ v.reason }}"{% endif %} data-testid="{{ 'source-reason' if issue else 'source-type' }}">{% if issue and v.code %}<span class="src-ty__t">{{ v.reason }}</span><span class="src-code" data-testid="source-code">Code {{ v.code }}</span>{% else %}{{ v.reason if issue else v.type_line }}{% endif %}</div>
   </div>
   <label class="k-switch src-sw"><input type="checkbox" role="switch" aria-label="{{ 'Turn off' if v.enabled else 'Turn on' }} {{ v.name }}" data-src-toggle="{{ v.id }}" data-testid="source-switch"{{ ' checked' if v.enabled }}><span class="k-switch__track" aria-hidden="true"></span></label>
   {{ health_pill(v) }}

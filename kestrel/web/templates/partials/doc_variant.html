@@ -11,7 +11,7 @@
     <textarea name="text" aria-label="Bullet text">{{ v.text }}</textarea>
     <input type="text" name="tags" value="{{ (v.tags or []) | join(', ') }}"
            placeholder="themes this bullet shows, comma separated" aria-label="Themes"
-           style="width:100%; margin-top:.25rem">
+           class="u-w-100p u-mt-025">
   </div>
   <div class="variant-actions">
     <button class="btn ghost" type="submit" title="Save">Save</button>

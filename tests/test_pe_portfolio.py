@@ -7,7 +7,10 @@ from __future__ import annotations
 import pytest
 
 from kestrel.ingest.signal_base import SourceConfigError
-from kestrel.ingest.signal_sources.pe_portfolio import PePortfolioSignalSource
+from kestrel.ingest.signal_sources.pe_portfolio import (
+    PePortfolioSignalSource,
+    _extract_companies,
+)
 
 _PORTFOLIO_HTML = """
 <html><body>
@@ -55,6 +58,36 @@ def test_validate_config_requires_firms():
     )  # ok
 
 
+FIRM = [{"name": "Example Capital", "url": "https://example-capital.test/portfolio"}]
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        "div:has(a ~ p)",  # a combinator inside :has(), refused by soupsieve 4 (D-SEC-63)
+        "a::before",  # a pseudo-element: soupsieve raises NotImplementedError
+        ",".join(["a"] * 9000),  # past soupsieve's selector limit: ValueError
+        "ul >",  # incomplete
+        "",
+        "   ",
+        42,
+    ],
+)
+def test_a_selector_the_parser_refuses_is_a_config_error_not_a_fetch_crash(selector):
+    """D-SEC-63: the Sources page and the runner stop on SourceConfigError before a fetch, so
+    a refused selector must be caught here rather than raise from soup.select mid-run."""
+    with pytest.raises(SourceConfigError, match="css_selector"):
+        PePortfolioSignalSource().validate_config({"firms": FIRM, "css_selector": selector})
+
+
+@pytest.mark.parametrize("selector", ["div a", "div > a", "div a[href]", "div:has(> a) > a"])
+def test_ordinary_selectors_still_validate_and_find_the_company(selector):
+    PePortfolioSignalSource().validate_config({"firms": FIRM, "css_selector": selector})
+    html = '<div><a href="/co/example-widgets">Example Widgets</a></div>'
+    found = _extract_companies(html, FIRM[0]["url"], selector)
+    assert [name for name, _link in found] == ["Example Widgets"]
+
+
 async def test_fetch_returns_trigger_signals_for_companies_and_passes_check_robots():
     src = PePortfolioSignalSource()
     http = _FakeHttp()
@@ -99,3 +132,13 @@ async def test_one_bad_firm_is_skipped_not_fatal():
     config = {"firms": [{"name": "Blocked Capital", "url": "https://blocked.test/portfolio"}]}
     signals = await src.fetch(config, _FailingHttp())
     assert signals == []
+
+
+@pytest.mark.parametrize("selector", ["div:has(a ~ p)", "a::before", ",".join(["a"] * 9000)])
+def test_saving_a_refused_selector_shows_a_message_not_a_server_error(selector):
+    """D-SEC-63: the Sources save path turns the refusal into the operator-facing message."""
+    from kestrel.web.pages.sources import _validate_source_config
+
+    message = _validate_source_config("pe_portfolio", {"firms": FIRM, "css_selector": selector})
+    assert message is not None
+    assert "css_selector" in message or "selector" in message

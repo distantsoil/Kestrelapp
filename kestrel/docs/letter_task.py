@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Task
 from kestrel.errors import shown_failure
+from kestrel.llm.engine_cycle import engine_unreachable
 from kestrel.queue.queue import TaskQueue
 from kestrel.services.online_consent import APPROVAL_HOLD, CONSENT_PAYLOAD_KEYS
 
@@ -118,7 +119,7 @@ async def enqueue_or_join(
     task = await live_task(s, opp_id)
     if task is None:  # it finished between the insert and the read; the newest row is the answer
         task = await latest_task(s, opp_id)
-    assert task is not None
+    assert task is not None  # noqa: S101  type narrowing, not input validation
     return task, created
 
 
@@ -225,7 +226,8 @@ async def drain(
             if is_online(task):  # the send may have happened: no automatic second one
                 await queue.fail(task.id, STOPPED_ONLINE, worker_id=worker_id, retry=False)
             else:
-                await queue.fail(task.id, STOPPED, worker_id=worker_id, retry=True)
+                await queue.fail(task.id, STOPPED, worker_id=worker_id, retry=True,
+                                 engine_wait=engine_unreachable(exc))
                 crashed.append(task.id)
             continue
         finally:

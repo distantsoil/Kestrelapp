@@ -134,7 +134,9 @@ async def seed_async(*, with_pack: bool = False, consulting: bool = False) -> di
             ))
             s.add(Contact(org_id=org.id, name="Maya Ruiz", title="VP of Operations",
                           contact_type="hiring_manager"))
-            out[company] = {"opp": opp.id, "pursuit": pur.id}
+            # The seeded day itself (D-TEST-582): a test compares against this, never against
+            # its own date.today(), which can name the next day by the time it asserts.
+            out[company] = {"opp": opp.id, "pursuit": pur.id, "day": day}
         for title, themes, used, sit, act, res, key in STORIES:
             s.add(Story(title=title, themes=themes, use_count=used, situation=sit, action=act,
                         result=res, proof_point_key=key, is_canonical=True,

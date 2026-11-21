@@ -5,12 +5,14 @@ balance endpoint for an ordinary key (their usage and cost APIs need an admin ke
 never asks for), so those providers, and every other, make **zero network calls** here and show
 what the local transmission log recorded this month instead.
 
-The one outbound request is made only when all of these hold: Hosted mode is on and acknowledged,
-the backend is OpenRouter, a key is saved, and the user did not choose "free models only" (unless
-they turned on Always show my OpenRouter balance). It carries the Authorization header and nothing
-else: no body, no query, no attribution headers, nothing about the user. The answer is cached for
-five minutes under a digest of the key (never the key itself), and a failure for one minute, so the
-sidebar's 10 second poll costs a request about every five minutes at most. The key is never logged.
+The one outbound request is made only when all of these hold: online models are in use (Hosted mode
+on, the disclosure ticked as it reads now, which names this read, and the run card not on Local;
+D-REL-41), the backend is OpenRouter, a key is saved, and the user did not choose "free models only"
+(unless they turned on Always show my OpenRouter balance). It carries the Authorization header and
+nothing else: no body, no query, no attribution headers, nothing about the user. The answer is
+cached for five minutes under a digest of the key (never the key itself), and a failure for one
+minute, so the sidebar's 10 second poll costs a request about every five minutes at most. The key is
+never logged.
 """
 
 from __future__ import annotations
@@ -98,6 +100,17 @@ def eligible_backend(settings: Settings, *, show_balance: bool) -> tuple[str, Ba
         if name in in_use and backend.provider == "openrouter" and _key_value(backend):
             return name, backend
     return None
+
+
+async def _eligible(session: AsyncSession, settings: Settings) -> tuple[str, BackendConfig] | None:
+    """`eligible_backend`, and only while online models are in use (D-REL-41): switched on, the
+    disclosure ticked as it reads now, and the run card not on Local. Every read goes through
+    here, so Local chosen with the online switch left on sends nothing."""
+    from kestrel.services import setup_state
+
+    if await setup_state.online_not_in_use_now(session, settings) is not None:
+        return None
+    return eligible_backend(settings, show_balance=await show_balance_enabled(session))
 
 
 async def show_balance_enabled(session: AsyncSession) -> bool:
@@ -250,7 +263,7 @@ async def rail_row(session: AsyncSession, settings: Settings) -> dict[str, str] 
     Never for a key holder: no balance line and no request with the saved key."""
     if viewer.is_remote():
         return None
-    eligible = eligible_backend(settings, show_balance=await show_balance_enabled(session))
+    eligible = await _eligible(session, settings)
     if eligible is not None:
         return _row_from(await _reading(*eligible))
     has_key = any(
@@ -267,7 +280,7 @@ async def rail_row_nowait(session: AsyncSession, settings: Settings) -> dict[str
     zero. The next poll finds the answer. A key holder gets no line and starts no read."""
     if viewer.is_remote():
         return None
-    eligible = eligible_backend(settings, show_balance=await show_balance_enabled(session))
+    eligible = await _eligible(session, settings)
     if eligible is not None:
         key = _cache_key(*eligible)
         reading = _fresh(key)
@@ -288,7 +301,7 @@ async def credit_left(session: AsyncSession, settings: Settings) -> str | None:
     opt-in as the rail line, so it never adds a request. Never for a key holder."""
     if viewer.is_remote():
         return None
-    eligible = eligible_backend(settings, show_balance=await show_balance_enabled(session))
+    eligible = await _eligible(session, settings)
     if eligible is None:
         return None
     reading = await _reading(*eligible)

@@ -742,3 +742,309 @@ def test_record_a_swipe_a_snooze_with_undo_and_a_tab_change(today_live):
     video("recording-tab-change", tabs)
     for name in ("recording-swipe", "recording-snooze-undo", "recording-tab-change"):
         assert (out / f"{name}.webm").stat().st_size > 0
+
+
+# ------------------------------------------------------------ the posting text
+_SIZES = [(1024, 700), (1280, 900), (960, 640), (480, 800)]
+
+
+def _long_posting(paragraphs: int = 24) -> str:
+    body = "\n\n".join(
+        f"Paragraph {i}: you will keep the dock schedule, talk to carriers and write down what "
+        f"changed so the next shift knows. Supercalifragilisticexpialidocious{'x' * 60} {i}."
+        for i in range(paragraphs))
+    return ("## About us\n\nNorthwind Parts makes brackets for builders and has done so for many "
+            "years across the region, with steady care.\n\n## The role\n\n" + body)
+
+
+def _describe_all(text: str) -> None:
+    from sqlalchemy import update
+
+    from kestrel.db.models import Opportunity
+
+    async def go(s):
+        await s.execute(update(Opportunity).values(description_md=text))
+        await s.commit()
+
+    _t(qf.run, go)
+
+
+def _geometry(page):
+    return page.evaluate("""() => {
+        const r = e => { const b = e.getBoundingClientRect();
+          return {l: b.left, r: b.right, tp: b.top, bt: b.bottom}; };
+        const card = document.querySelector('.qr-card.is-front');
+        return {card: r(card), acts: r(document.querySelector('.qr-acts')),
+                full: card.querySelector('.qr-desc__full')
+                  && !card.querySelector('.qr-desc__full').hidden
+                  ? r(card.querySelector('.qr-desc__full')) : null,
+                kids: Array.from(card.children).filter(e => !e.classList.contains('qr-stamp')
+                  && e.offsetParent !== null).map(e => ({t: e.className, ...r(e)}))};
+    }""")
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("size", _SIZES)
+def test_a_long_description_never_covers_or_moves_the_answer_buttons(live, theme, size):
+    """Invariant: collapsed or expanded, the card keeps its size, nothing runs over the facts or
+    the answer buttons, and no text overlaps or is clipped."""
+    _describe_all(_long_posting())
+    ctx, page, errors = _round(live, theme=theme, width=size[0], height=size[1])
+    try:
+        collapsed = _geometry(page)
+        _assert_card_clean(page, collapsed, size, theme, "collapsed")
+        _shoot_desc(page, "collapsed", theme, size)
+        page.click(".qr-card.is-front .qr-more")
+        wait_for_layout(page)
+        page.wait_for_timeout(350)
+        opened = _geometry(page)
+        assert opened["acts"] == collapsed["acts"] and opened["card"] == collapsed["card"]
+        assert opened["card"]["bt"] <= opened["acts"]["tp"] + 1
+        assert opened["full"] and opened["full"]["bt"] - opened["full"]["tp"] >= 40
+        # The text region itself stays inside the card and is the thing that scrolls.
+        assert opened["full"]["bt"] <= opened["card"]["bt"] + 1, (opened["full"], opened["card"])
+        assert page.evaluate(
+            "getComputedStyle(document.querySelector('.qr-card.is-front .qr-desc__full'))"
+            ".overflowY") in ("auto", "scroll")
+        assert page.evaluate(
+            "(() => { const f = document.querySelector('.qr-card.is-front .qr-desc__full');"
+            " return f.scrollHeight > f.clientHeight; })()")
+        _assert_card_clean(page, opened, size, theme, "expanded")
+        _shoot_desc(page, "expanded", theme, size)
+        assert not errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("size", [(1440, 900), (390, 844), (480, 800)])
+def test_a_card_with_no_description_says_so_and_nothing_overlaps(live, theme, size):
+    """A posting with no words shows the card with a plain note, no excerpt and no More control,
+    with no page error, and the facts and answer buttons stay clear of it."""
+    _describe_all("<br/><p>&nbsp;</p>")
+    ctx, page, errors = _round(live, theme=theme, width=size[0], height=size[1])
+    try:
+        card = page.locator(".qr-card.is-front")
+        assert card.locator(".qr-nodesc").inner_text().startswith("No description was saved")
+        assert card.locator(".qr-desc, .qr-more").count() == 0
+        geo = _geometry(page)
+        _assert_card_clean(page, geo, size, theme, "nodesc")
+        _shoot_desc(page, "nodesc", theme, size)
+        assert not errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("size", [(1440, 900), (390, 844)])
+def test_a_card_with_a_short_excerpt_is_clean_at_the_review_sizes(live, theme, size):
+    _describe_all(_long_posting(6))
+    ctx, page, errors = _round(live, theme=theme, width=size[0], height=size[1])
+    try:
+        _assert_card_clean(page, _geometry(page), size, theme, "excerpt")
+        _shoot_desc(page, "excerpt", theme, size)
+        assert not errors
+    finally:
+        ctx.close()
+
+
+def _assert_card_clean(page, geo, size, theme, where):
+    """The card's own parts (the stamps aside) never overlap, and the card text is not clipped."""
+    kids = geo["kids"]
+    for i, a in enumerate(kids):
+        for b in kids[i + 1:]:
+            assert not _overlaps(a, b), (where, a, b, theme, size)
+    for k in kids:
+        assert k["bt"] <= geo["card"]["bt"] + 1, (where, k, theme, size)
+    _assert_clean(page, (".qr-desc", ".qr-acts"), width=size[0], theme=theme, where=where)
+
+
+def _shoot_desc(page, state, theme, size):
+    out = os.environ.get("KESTREL_QR_SHOTS")
+    if out:
+        Path(out).mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(Path(out) / f"desc-{state}-{theme}-{size[0]}x{size[1]}.png"))
+
+
+def test_more_and_less_toggle_with_the_keyboard_and_the_right_names(live):
+    _describe_all(_long_posting(6))
+    ctx, page, errors = _round(live)
+    try:
+        more = page.locator(".qr-card.is-front .qr-more")
+        # The name is the visible word (WCAG 2.5.3); aria-expanded carries the state.
+        assert more.get_attribute("aria-label") is None
+        assert more.inner_text() == "More" and more.get_attribute("aria-expanded") == "false"
+        more.focus()
+        page.keyboard.press("Enter")
+        full = page.locator(".qr-card.is-front .qr-desc__full")
+        assert full.is_visible() and more.inner_text() == "Less"
+        assert more.get_attribute("aria-expanded") == "true"
+        assert more.get_attribute("aria-controls") == full.get_attribute("id")
+        # Focus moves to the text that opened, so Tab never skips it; Tab then reaches Less.
+        assert full.evaluate("f => document.activeElement === f")
+        page.keyboard.press("Tab")
+        assert more.evaluate("b => document.activeElement === b")
+        page.keyboard.press("Space")
+        assert not full.is_visible() and more.inner_text() == "More"
+        assert more.get_attribute("aria-expanded") == "false"
+        assert more.evaluate("b => document.activeElement === b")  # Less returns focus to it
+        # Toggling never answers the card (the fixture holds 3 earlier quick answers).
+        assert len(_answers()) == 3 and _count_text(page) == "1 of 10"
+        assert not errors
+    finally:
+        ctx.close()
+
+
+def test_the_collapsed_excerpt_leaves_no_blank_gap_and_opening_is_smooth(live):
+    """Issue 197: a collapsed card does not hold the description's share of the card (flex 0 1 auto,
+    1 only when open); the title, the open-posting row and the facts animate on open instead of
+    snapping; the More button uses the link color; the animations obey reduced motion."""
+    _describe_all(_long_posting(6))
+    ctx, page, errors = _round(live)
+    try:
+        desc = page.locator(".qr-card.is-front .qr-desc")
+        assert desc.evaluate("d => getComputedStyle(d).flexGrow") == "0"
+        card = page.locator(".qr-card.is-front")
+        more = card.locator(".qr-more")
+        title = card.locator(".qr-title")
+        assert "font-size" in title.evaluate("t => getComputedStyle(t).transitionProperty")
+        assert "margin-top" in card.locator(".qr-open").evaluate(
+            "t => getComputedStyle(t).transitionProperty")
+        link = page.evaluate(
+            "() => { const p = document.createElement('a'); p.className = 'k-link';"
+            " p.style.color = 'var(--link-ink)'; document.body.appendChild(p);"
+            " const c = getComputedStyle(p).color; p.remove(); return c; }")
+        assert more.evaluate("b => getComputedStyle(b).color") == link
+        more.click()
+        assert desc.evaluate("d => getComputedStyle(d).flexGrow") == "1"
+        assert card.locator(".qr-facts").evaluate(
+            "f => getComputedStyle(f).animationName") == "qr-fade"
+        # The OS reduced-motion setting turns the new motion off with the rest.
+        page.emulate_media(reduced_motion="reduce")
+        assert card.locator(".qr-facts").evaluate(
+            "f => getComputedStyle(f).animationName") == "none"
+        for sel in (".qr-title", ".qr-open"):
+            assert card.locator(sel).evaluate(
+                "t => parseFloat(getComputedStyle(t).transitionDuration)") == 0
+        assert not errors
+    finally:
+        ctx.close()
+
+
+def test_arrows_keep_their_round_meaning_except_up_and_down_inside_the_open_text(live):
+    """Left, Right and Up, Down answer as always, even with the text open; only when
+    focus is inside the open text do Up and Down scroll it instead."""
+    _describe_all(_long_posting())
+    ctx, page, errors = _round(live)
+    try:
+        page.click(".qr-card.is-front .qr-more")
+        full = page.locator(".qr-card.is-front .qr-desc__full")
+        full.focus()
+        before = full.evaluate("f => f.scrollTop")
+        page.keyboard.press("ArrowDown")
+        page.keyboard.press("ArrowDown")
+        page.wait_for_timeout(300)
+        assert full.evaluate("f => f.scrollTop") > before
+        assert len(_answers()) == 3
+        page.keyboard.press("ArrowUp")
+        page.wait_for_timeout(200)
+        # Still the first card: Up scrolled the text.
+        assert _count_text(page) == "1 of 10" and len(_answers()) == 3
+        # Focus on the More button: Down means Not sure, which saves nothing but moves on.
+        page.locator(".qr-card.is-front .qr-more").focus()
+        page.keyboard.press("ArrowDown")
+        _count_is(page, 2)
+        # The next card is closed; Right answers Yes with the text closed or open.
+        page.click(".qr-card.is-front .qr-more")
+        page.keyboard.press("ArrowRight")
+        _count_is(page, 3)
+        _wait_answers(4)
+        assert [s for _, s in _answers()][-1:] == [4.0]
+        page.locator(".qr-card.is-front").focus()
+        page.keyboard.press("ArrowUp")
+        _count_is(page, 4)
+        _wait_answers(5)
+        assert [s for _, s in _answers()][-1:] == [5.0]
+        assert not errors
+    finally:
+        ctx.close()
+
+
+def _count_text(page) -> str:
+    return page.inner_text("#qr-count")
+
+
+def test_scrolling_or_dragging_inside_the_open_text_never_swipes_the_card(live):
+    _describe_all(_long_posting())
+    ctx, page, errors = _round(live)
+    try:
+        page.click(".qr-card.is-front .qr-more")
+        page.wait_for_timeout(350)
+        box = page.locator(".qr-card.is-front .qr-desc__full").bounding_box()
+        cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        page.mouse.move(cx, cy)
+        page.mouse.wheel(0, 240)
+        page.wait_for_timeout(250)
+        assert page.locator(".qr-card.is-front .qr-desc__full").evaluate("f => f.scrollTop") > 0
+        # A press and a long sideways move inside the text selects; it does not move the card.
+        page.mouse.down()
+        page.mouse.move(cx + 220, cy, steps=5)
+        assert page.evaluate("document.querySelector('.qr-card.is-front').style.transform") == ""
+        page.mouse.up()
+        page.wait_for_timeout(400)
+        assert _count_text(page) == "1 of 10" and len(_answers()) == 3
+        # Outside the text the drag still answers.
+        card = page.locator(".qr-card.is-front").bounding_box()
+        page.mouse.move(card["x"] + 60, card["y"] + 24)
+        page.mouse.down()
+        page.mouse.move(card["x"] + 260, card["y"] + 24, steps=5)
+        page.mouse.up()
+        _count_is(page, 2)
+        _wait_answers(4)
+        assert not errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("mode", ["os", "app"])
+def test_reduced_motion_turns_the_expand_animation_off(live, mode):
+    """Both the OS setting and the app's data-reduce-motion="1" stop the expand animation; the
+    normal setting has one."""
+    _describe_all(_long_posting(6))
+    ctx, page, errors = _round(live, reduced=(mode == "os"))
+    try:
+        if mode == "app":
+            page.evaluate("document.documentElement.setAttribute('data-reduce-motion', '1')")
+        page.click(".qr-card.is-front .qr-more")
+        name = page.evaluate(
+            "getComputedStyle(document.querySelector('.qr-card.is-front .qr-desc__full'))"
+            ".animationName")
+        assert name == "none"
+        assert not errors
+    finally:
+        ctx.close()
+    ctx, page, errors = _round(live)
+    try:
+        page.click(".qr-card.is-front .qr-more")
+        assert page.evaluate(
+            "getComputedStyle(document.querySelector('.qr-card.is-front .qr-desc__full'))"
+            ".animationName") == "qr-expand"
+    finally:
+        ctx.close()
+
+
+def test_the_next_card_is_not_operable_and_an_undone_card_comes_back_closed(live):
+    _describe_all(_long_posting(6))
+    ctx, page, errors = _round(live)
+    try:
+        assert page.evaluate("document.querySelectorAll('.qr-card.is-n1')[0].inert") is True
+        page.click(".qr-card.is-front .qr-more")
+        page.keyboard.press("ArrowRight")
+        _count_is(page, 2)
+        _wait_answers(4)
+        page.click("#qr-undo")
+        _count_is(page, 1)
+        assert page.locator(".qr-card.is-front .qr-desc__full").is_hidden()
+        assert not errors
+    finally:
+        ctx.close()

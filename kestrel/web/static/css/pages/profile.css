@@ -139,6 +139,13 @@
 .pf-tb b { flex: 1; min-width: max-content; white-space: nowrap; }
 .pf-tb .k-btn { white-space: nowrap; flex: none; }
 .pf-import { margin-top: 0; min-width: 0; }
+/* Resume import: once a file is chosen its name is bold and two points larger (owner,
+   2026-11-17); the Choose file button keeps its size and weight. */
+#import-file { font-size: 13px; transition: font-size var(--dur-2) var(--ease); }
+#import-file::file-selector-button { font-size: 13px; font-weight: 400; }
+#import-file.is-chosen { font-weight: 600; font-size: 15px; color: var(--text); }
+@media (prefers-reduced-motion: reduce) { #import-file { transition: none; } }
+html[data-reduce-motion="1"] #import-file { transition: none; }
 
 /* The preview is ONE true-size Letter page (816 x 1056 CSS px) scaled with a transform and
    never re-flowed, so the card and Enlarge match line for line (D-UI-126). profile.js sets the
@@ -578,7 +585,10 @@ body:has([data-pf-savebar]):has(.pf-form[data-dirty], .pf-savebar[data-shown]) .
 /* What's true now? Collapsed rows reset align-items, so hidden content never keeps its height. */
 .pf-cr__panel { display: grid; grid-template-rows: 0fr; align-items: stretch;
   transition: grid-template-rows .32s var(--ease); }
-.pf-cr__panel > div { overflow: hidden; min-height: 0; visibility: hidden;
+/* clip, not hidden, as .pf-sugg__clip (#229): a hidden box is still scrollable, so bringing
+   Remove into view while the panel opened scrolled it, the button slid down with the growing
+   panel, and a click that started on it ended on the form. A clipped box cannot scroll. */
+.pf-cr__panel > div { overflow: clip; min-height: 0; visibility: hidden;
   transition: visibility 0s .32s; }
 .pf-cr.is-open .pf-cr__panel { grid-template-rows: 1fr; }
 .pf-cr.is-open .pf-cr__panel > div { visibility: visible; transition-delay: 0s; }
@@ -621,3 +631,40 @@ body:has([data-pf-savebar]):has(.pf-form[data-dirty], .pf-savebar[data-shown]) .
 }
 html[data-reduce-motion="1"] :is(.pf-cr, .pf-cr__panel, .pf-cr__panel > div, .pf-cr__pen,
   .pf-cr__chip span, .pf-cr-offer) { transition: none; }
+
+/* Proof points and narrative card on Documents (issue #208 item 6). The diff panel opens with a
+   short rise, folds away on Cancel, and each row keeps long resume lines wrapped. */
+.pf-pp { margin-bottom: 16px; }
+.pf-pp__warn, .pf-pp__note { margin: 8px 0 0; overflow-wrap: anywhere; }
+.pf-pp__note { transition: opacity var(--dur-2); }
+.pf-pp__note.htmx-added { opacity: 0; }
+.pf-pp__narr { display: grid; gap: 6px; margin-top: 12px; }
+.pf-pp__narr textarea { width: 100%; min-width: 0; box-sizing: border-box; font: inherit;
+  resize: vertical; }
+.pf-pp__narr .k-btn { justify-self: start; }
+.pf-pp__lbl { font-weight: 700; }
+.pf-pp__tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  margin-top: 12px; }
+.pf-pp__sub { flex: 1 1 220px; min-width: 0; }
+.pf-pp__diff:empty { display: none; }
+.pf-pp__panel { margin-top: 12px; animation: pf-pp-in var(--dur-2) ease both;
+  transition: opacity var(--dur-2), transform var(--dur-2); }
+/* Cancel (round 12): htmx marks the panel while its delete waits, so it fades out first. */
+.pf-pp__panel.is-leaving, .pf-pp__panel.htmx-swapping { opacity: 0; transform: translateY(-6px); }
+@keyframes pf-pp-in { from { opacity: 0; transform: translateY(-6px); } }
+.pf-pp__rows { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+.pf-pp__row { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+  min-width: 0; }
+.pf-pp__pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px;
+  cursor: pointer; }
+.pf-pp__why { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.pf-pp__old, .pf-pp__new { margin: 6px 0 0; overflow-wrap: anywhere; }
+.pf-pp__old { color: var(--muted); text-decoration: line-through; }
+.pf-pp__row--remove .pf-pp__tag { color: var(--bad-ink); }
+.pf-pp__row--add .pf-pp__tag, .pf-pp__row--fix .pf-pp__tag { color: var(--good-ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-pp__panel, .pf-pp__note { animation: none; transition: none; }
+}
+html[data-reduce-motion="1"] :is(.pf-pp__panel, .pf-pp__note) { animation: none;
+  transition: none; }

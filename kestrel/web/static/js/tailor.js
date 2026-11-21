@@ -157,11 +157,22 @@
     var d = frameDoc(frame);
     if (!d) { frame.srcdoc = src.value; return; }
     var next = new root.DOMParser().parseFromString(src.value, 'text/html');
-    var olds = d.head.querySelectorAll('style');
-    var news = next.head.querySelectorAll('style');
+    // The document's stylesheets are links to the app's copy of its print styles (D-SEC-59:
+    // the frame has the page's policy, which refuses a <style>). A changed sheet loads beside
+    // the old one, which goes only once the new one applies, so the page never paints bare.
+    var olds = d.head.querySelectorAll('link[rel="stylesheet"]');
+    var news = next.head.querySelectorAll('link[rel="stylesheet"]');
     if (olds.length !== news.length) { frame.srcdoc = src.value; return; }
     Array.prototype.forEach.call(news, function (s, i) {
-      if (olds[i].textContent !== s.textContent) olds[i].textContent = s.textContent;
+      var href = s.getAttribute('href');
+      if (olds[i].getAttribute('href') === href) return;
+      var fresh = d.createElement('link');
+      fresh.rel = 'stylesheet';
+      fresh.href = href;
+      var old = olds[i];
+      fresh.addEventListener('load', function () { old.remove(); });
+      fresh.addEventListener('error', function () { old.remove(); });
+      old.after(fresh);
     });
     var before = textsBySlot(d);
     Array.prototype.slice.call(d.body.attributes).forEach(function (a) { d.body.removeAttribute(a.name); });

@@ -6,7 +6,7 @@
 <section class="k-card st-card" id="st-ct" data-testid="st-ct" data-step="{{ ct_step }}">
   {{ st.head('Your contacts', 'users') }}
   {% if ct_step in ('review', 'done') %}
-  <ol class="k-steps st-steps" style="--k-steps: 3">
+  <ol class="k-steps st-steps" data-k-style="--k-steps: 3">
     {% for label in ['Choose file', 'Review', 'Done'] %}{% set n = loop.index0 %}{% set at = 1 if ct_step == 'review' else 2 %}
     <li class="k-step{% if ct_step == 'done' or n < at %} is-done{% elif n == at %} is-now{% endif %}"{% if n == at and ct_step != 'done' %} aria-current="step"{% endif %}><span class="k-step__n">{% if ct_step == 'done' or n < at %}{{ st.sic('check', 'k-ic--sm') }}{% else %}{{ loop.index }}{% endif %}</span><span class="k-step__label">{{ label }}</span></li>
     {% endfor %}

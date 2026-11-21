@@ -195,9 +195,15 @@ class StoryModel:
         monkeypatch.setattr(stories_mod, "consolidate_stories", fake)
 
 
-def _run_lane(monkeypatch, stop: asyncio.Event, watchdog_s: float = 1.2) -> None:
+def _run_lane(
+    monkeypatch, stop: asyncio.Event, watchdog_s: float = 1.2, until=None
+) -> None:
     """Run the online lane until `stop` is set (by a fake or the watchdog), so a drain that has
-    nothing to do still gets a pass and then exits."""
+    nothing to do still gets a pass and then exits.
+
+    `until` (an async predicate over a session) stops the lane as soon as the state the test
+    asserts is in the database, and `watchdog_s` is then only a generous upper bound: a loaded
+    machine that needs longer than a fixed wall-clock window still reaches that state."""
     app_mod = _app()
 
     async def wait(stop_event, seconds: float) -> None:
@@ -210,7 +216,16 @@ def _run_lane(monkeypatch, stop: asyncio.Event, watchdog_s: float = 1.2) -> None
 
     async def drive() -> None:
         async def watch() -> None:
-            await asyncio.sleep(watchdog_s)
+            if until is None:
+                await asyncio.sleep(watchdog_s)
+            else:
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + watchdog_s
+                while loop.time() < deadline and not stop.is_set():
+                    async with get_sessionmaker()() as s:
+                        if await until(s):
+                            break
+                    await asyncio.sleep(0.05)
             stop.set()
 
         w = asyncio.create_task(watch())
@@ -583,7 +598,15 @@ def test_i5_local_to_online_letter_is_taken_by_the_lane_and_held(ids, monkeypatc
     _go_online("tier3")
     model = LetterModel(monkeypatch)
     stop = asyncio.Event()
-    _run_lane(monkeypatch, stop)
+
+    async def held(s) -> bool:
+        stmt = select(Task).where(Task.type == "letter_draft").order_by(Task.id.desc()).limit(1)
+        row = (await s.execute(stmt)).scalars().first()
+        return row is not None and row.status == "pending" and row.last_error == APPROVAL_HOLD
+
+    # Waits for the held row itself (a generous bound, never a fixed 1.2 s window that a loaded
+    # machine can miss), then checks that nothing was sent on the way.
+    _run_lane(monkeypatch, stop, watchdog_s=30.0, until=held)
     assert model.calls == 0, "a locally queued draft is never sent online by itself"
     task = _task_of("letter_draft")
     assert task.status == "pending" and task.last_error == APPROVAL_HOLD

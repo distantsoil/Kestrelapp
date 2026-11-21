@@ -5,7 +5,7 @@
 <section class="k-card st-card" id="st-conf" data-testid="st-conf">
   <form id="st-conf-form" hx-post="/settings/privacy/confidential" hx-target="#st-conf" hx-swap="outerHTML" hx-trigger="change, st-conf-edit" hx-include="#st-conf-form">
     {% call st.head('Confidential mode', 'eyeoff') %}
-      <label class="k-switch st-sw"><input type="checkbox" role="switch" name="conf_mode" value="on" {% if conf_on %}checked{% endif %} aria-label="Confidential mode" data-testid="st-conf-switch" onchange="this.form.querySelector('[name=changed]').value='mode'"><span class="k-switch__track" aria-hidden="true"></span></label>
+      <label class="k-switch st-sw"><input type="checkbox" role="switch" name="conf_mode" value="on" {% if conf_on %}checked{% endif %} aria-label="Confidential mode" data-testid="st-conf-switch" data-k-change-set="changed=mode"><span class="k-switch__track" aria-hidden="true"></span></label>
     {% endcall %}
     <input type="hidden" name="changed" value="">
     <p class="st-sub">Hides your current employer in everything Kestrel shows or creates.</p>

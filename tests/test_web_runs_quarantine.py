@@ -157,8 +157,9 @@ def test_retry_tier1_never_un_promotes_the_item_hard_rule_4_saved():
     """A tier-1 quarantine is NOT stuck: handle_t1 already promoted it to t1_pass and queued t2,
     which is hard rule 4 (uncertainty escalates, it never rejects). Rolling the stage back to
     t0_pass would re-run Tier 1, which can return a kill and land the item in t1_reject, so Retry
-    would be able to reject exactly the item the escalation rule rescued. Retry must instead leave
-    the promotion intact and only re-queue the tier 2 that promotion already implies."""
+    would be able to reject exactly the item the escalation rule rescued. Retry leaves the
+    promotion intact, queues nothing and spends no try: the row's step is Quick sort, and it is
+    never re-run as some other step (D-UI-790)."""
     seed = asyncio.run(_seed())
     with _client() as c:
         r = c.post(f"/quarantine/{seed['q1_id']}/retry")
@@ -167,7 +168,7 @@ def test_retry_tier1_never_un_promotes_the_item_hard_rule_4_saved():
     opp = asyncio.run(_fetch(Opportunity, seed["opp_t1_id"]))
     assert opp.stage == "t1_pass", "retry un-promoted an item hard rule 4 had already saved"
     q = asyncio.run(_fetch(Quarantine, seed["q1_id"]))
-    assert q.attempts == 3
+    assert q.attempts == 2
 
 
 def test_retry_on_a_tier_without_a_worker_task_does_not_touch_the_stage():

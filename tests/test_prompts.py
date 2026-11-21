@@ -17,8 +17,8 @@ def test_prompts_registered():
     # sits beside cover/v3. story_consolidate/v3 (themes narrowed to the eight behavioral themes
     # with at most three, and the plain-writing rules named up front, D-LLM-13) sits beside v2.
     # evaluate/v3 and evaluate_consulting/v3 (the operator's stated facts, D-SCORE-1) sit beside
-    # their /v2.
-    assert len(all_versions()) == 40
+    # their /v2. evaluate/v4 and evaluate_consulting/v4 (issue #208, D-SCORE-24) sit beside v3.
+    assert len(all_versions()) == 42
 
 
 def test_every_prompt_loads_and_substitutes_global_rules():

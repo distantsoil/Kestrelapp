@@ -1,0 +1,32 @@
+{# The first-run notice (D-UI-249): shown once, on the Today the wizard opens, before the tour.
+   The first run does the most work Kestrel ever does, so it says plainly to step away for a bit.
+   "Got it" or Escape dismisses it for good (one POST, however it closed); today.js starts the tour
+   when it closes. The close animation is skipped under either reduced-motion setting, and a timer
+   closes it if the animation never ends (a hidden window), so it can never stay stuck open.
+   Script: static/js/first-run-break.js (no inline script, D-STORY-702). Styles: static/css/pages/surfaces.css (.sf-break, .sf-fra-*). Art: static/js/first-run-art.js. #}
+<link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
+<dialog class="sf-dialog sf-break" id="td-break" data-testid="first-run-break" aria-labelledby="td-break-t"
+        aria-describedby="td-break-d">
+  <div class="sf-form">
+    <svg class="sf-break__art" viewBox="0 0 352 210" preserveAspectRatio="xMidYMid slice" role="img"
+         aria-label="A person in an armchair by a window, sipping coffee" data-testid="first-run-art"></svg>
+    <div class="sf-head">
+      <h2 id="td-break-t">Good time to grab a drink</h2>
+    </div>
+    <p class="sf-sub" id="td-break-d">Your first search has started. It is the biggest job Kestrel does, so it takes a while, longer when the model runs on this computer.</p>
+    <div class="sf-body">
+      <ol class="sf-break__steps">
+        <li class="is-now"><span class="sf-break__n" aria-hidden="true">1</span><span>Finding openings from your searches</span><span class="sf-break__now">Now</span></li>
+        <li><span class="sf-break__n" aria-hidden="true">2</span><span>Reading the openings and scoring them for fit</span></li>
+        <li><span class="sf-break__n" aria-hidden="true">3</span><span>Taking a closer look at the strongest matches</span></li>
+        {% if first_stories %}<li data-testid="first-run-stories-step"><span class="sf-break__n" aria-hidden="true">4</span><span>Drafting interview stories from your best matches</span></li>{% endif %}
+      </ol>
+      <p class="sf-muted sf-small">Leave Kestrel open. Today fills in as roles are scored{% if first_stories %}, and your stories appear in Interview prep when they are ready{% endif %}.{% if not first_stories %} There is no need to watch it.{% endif %}</p>
+    </div>
+    <div class="sf-foot">
+      <button class="k-btn k-btn--primary" type="button" data-testid="first-run-break-dismiss" autofocus>{{ 'Got it, show me around' if tour else 'Got it' }}</button>
+    </div>
+  </div>
+</dialog>
+<script src="{{ static_url('js/first-run-art.js') }}"></script>
+<script src="{{ static_url('js/first-run-break.js') }}"></script>

@@ -1,4 +1,4 @@
-"""What Settings shows (D-UI-106 to D-UI-109, SPEC-INTERFACES 2.6): the six sections, the plain
+"""What Settings shows (D-UI-106 to D-UI-109, SPEC-INTERFACES 2.6): the seven sections, the plain
 words for each rule, and the numbers a rule row needs. The page and its routes both read this
 module so a row, its count and its "See them" list can never disagree.
 
@@ -31,6 +31,7 @@ SECTIONS: tuple[tuple[str, str, str, str], ...] = (
     ("roles", "Which roles you see", "list", "SET UP"),
     ("scoring", "Scoring and learning", "tune", "SET UP"),
     ("privacy", "Privacy and access", "lock", "YOU"),
+    ("extension", "Browser extension", "ext", "YOU"),
     ("data", "Your data", "folder", "YOU"),
     ("preferences", "Preferences", "palette", "YOU"),
 )
@@ -504,7 +505,7 @@ MCP_NEVER = ("Apply for you", "Send email", "Message anyone")
 # --------------------------------------------------------------------------- the help cards
 # (title, icon, accent, lines, flyout body). Ported from the locked mockup; the flyout body is
 # fixed text written here, never user input, so it renders as markup.
-HELP: dict[str, tuple[tuple[str, str, str, tuple[str, ...], str], ...]] = {
+HELP: dict[str, tuple[tuple[str, str, str, tuple[str, ...] | str, str], ...]] = {
     "computer": (
         ("Which should I pick?", "help", "info",
          ("On this computer is free and private.", "Online is faster on an older computer.",
@@ -616,6 +617,28 @@ HELP: dict[str, tuple[tuple[str, str, str, tuple[str, ...], str], ...]] = {
          "It never applies, emails or messages anyone for you through Kestrel. Turn it off to "
          "cut the connection.</p>"),
     ),
+    # A string in place of the lines is one paragraph (the extension's cards say one thing each).
+    "extension": (
+        ("It never acts for you", "ban", "info",
+         "Kestrel never applies, fills in a form or sends a message. The extension reads a page "
+         "only when you click, and only the page you have open.",
+         "<h4>What a click does</h4><p>Capture adds the role you are looking at to Kestrel. Read "
+         "fills in a description Kestrel could not get. Nothing happens on a page until you "
+         "click.</p><h4>What it never does</h4><p>It never applies, fills in or submits a form, "
+         "presses a button on the page or messages anyone.</p>"),
+        ("Stays on this computer", "lock", "good",
+         "The extension talks only to Kestrel on this computer. Nothing goes to any other "
+         "server, and nothing is collected.",
+         "<h4>Where page text goes</h4><p>Only to Kestrel on this computer, over the connection "
+         "key you pasted in once.</p><h4>Nothing collected</h4><p>There is no account, no "
+         "tracking and no online service behind it.</p>"),
+        ("Why a description goes missing", "help", "plain",
+         "Some job boards show Kestrel a \"verify you are human\" page instead of the posting. "
+         "Open it in your browser, then use Read in the extension to fill it in.",
+         "<h4>What you see</h4><p>The role says it is waiting for a description.</p><h4>What to "
+         "do</h4><p>Open the posting in your browser, finish any check the site shows, then "
+         "press Read in the extension. Kestrel scores it once the text is in.</p>"),
+    ),
     "data": (
         ("When to back up", "cal", "info",
          ("Before updating or starting over.", "After you add many applications.",
@@ -672,7 +695,7 @@ HELP: dict[str, tuple[tuple[str, str, str, tuple[str, ...], str], ...]] = {
 }
 
 HOW_IT_WORKS = (
-    "<h4>The short version</h4><p>Settings has six parts. Pick one on the left. Changes save as "
+    "<h4>The short version</h4><p>Settings has seven parts. Pick one on the left. Changes save as "
     "you make them.</p><h4>Undo</h4><p>Most changes show a message with Undo for a few "
     "seconds.</p><h4>Technical details</h4><p>Commands and addresses sit behind Show details, so "
     "you only see them if you want to.</p><h4>Where things went</h4><p>Online model keys are on "

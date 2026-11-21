@@ -1,0 +1,30 @@
+{# Posting text (issue #210, D-UI-720): prints the nodes kestrel.web.posting_format.parse built
+   from the employer's description. Every value is autoescaped; the only elements are the ones
+   named here, and no attribute comes from the posting. Never mark posting text |safe. #}
+{%- macro posting_inline(nodes) -%}
+{%- for n in nodes -%}
+{%- if n.kind == 'strong' -%}<strong>{{ posting_inline(n.children) }}</strong>
+{%- elif n.kind == 'em' -%}<em>{{ posting_inline(n.children) }}</em>
+{%- else -%}{{ n.text }}{%- endif -%}
+{%- endfor -%}
+{%- endmacro -%}
+
+{%- macro posting_lines(lines) -%}
+{%- for ln in lines -%}{{ posting_inline(ln) }}{%- if not loop.last -%}<br>{%- endif -%}{%- endfor -%}
+{%- endmacro -%}
+
+{%- macro posting_body(blocks) -%}
+{%- for b in blocks -%}
+{%- if b.kind == 'heading' -%}
+{%- if b.level == 1 -%}<h3 class="kp-h kp-h--1">{{ posting_inline(b.line) }}</h3>
+{%- elif b.level == 2 -%}<h4 class="kp-h kp-h--2">{{ posting_inline(b.line) }}</h4>
+{%- else -%}<h5 class="kp-h kp-h--3">{{ posting_inline(b.line) }}</h5>{%- endif -%}
+{%- elif b.kind == 'list' -%}
+{%- if b.ordered -%}<ol class="kp-list">{%- else -%}<ul class="kp-list">{%- endif -%}
+{%- for it in b.items -%}<li class="kp-li{% if it.number %} kp-li--num{% endif %}{% if it.sub %} kp-li--sub{% endif %}">{%- if it.number -%}<span class="kp-num">{{ it.number }}</span> {% endif -%}{{ posting_lines(it.lines) }}</li>{%- endfor -%}
+{%- if b.ordered -%}</ol>{%- else -%}</ul>{%- endif -%}
+{%- elif b.kind == 'rest' -%}<p class="kp-p kp-rest">{{ b.text }}</p>
+{%- else -%}<p class="kp-p">{{ posting_lines(b.lines) }}</p>
+{%- endif -%}
+{%- endfor -%}
+{%- endmacro -%}

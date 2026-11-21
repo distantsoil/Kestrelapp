@@ -5,14 +5,17 @@ a JSON client gets JSON."""
 
 from __future__ import annotations
 
+from typing import Literal
+
 import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from kestrel import __version__
 from kestrel.db.enums import VERDICTS
 from kestrel.db.models import Opportunity
+from kestrel.ingest.manual import NAME_MAX, TEXT_MAX, URL_MAX
 from kestrel.services.export_terms import RESTRICTED_SENTENCE
 from kestrel.web.auth import LOCAL_ONLY
 from kestrel.web.deps import sessionmaker, templates
@@ -183,8 +186,31 @@ async def opportunities_lookup(request: Request):
     except (ValueError, TypeError):
         return JSONResponse({"error": "invalid JSON body"}, status_code=400)
     urls = body.get("urls") if isinstance(body, dict) else None
+    # The extension sends at most 100 per page; anything past that is not a board page's links.
+    urls = [u[:INGEST_URL_MAX] for u in (urls if isinstance(urls, list) else [])
+            if isinstance(u, str)][:100]
     async with sessionmaker()() as s:
-        return await lookup_by_urls(s, list(urls or []))
+        return await lookup_by_urls(s, urls)
+
+
+# The capture body's allowlist (issue #186 review round 5, D-EXT-777). Overlong strings are cut,
+# never refused, like every other hostile-input boundary here; a wrong type is refused.
+# The limits live with manual_ingest, which every caller passes through (D-EXT-777).
+INGEST_TEXT_MAX, INGEST_URL_MAX, INGEST_TITLE_MAX = TEXT_MAX, URL_MAX, NAME_MAX
+
+
+class IngestBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    url: str | None = None
+    text: str | None = None
+    title: str | None = None
+    org_name: str | None = None
+    track: Literal["employment", "consulting"] | None = None
+    score_now: bool = False
+
+
+def _cut(value: str | None, limit: int) -> str | None:
+    return value[:limit] if isinstance(value, str) else None
 
 
 @router.post("/api/opportunities/ingest")
@@ -195,16 +221,49 @@ async def opportunities_ingest(request: Request):
     from kestrel.ingest.manual import manual_ingest
 
     try:
-        body = await request.json()
+        raw = await request.json()
     except (ValueError, TypeError):
         return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    if not isinstance(body, dict) or not (body.get("url") or body.get("text")):
+    # Page text is hostile input (D-SEC-20): only these fields, only these types, and each one cut
+    # to a length a real posting fits in (the extension reads at most 40,000 characters).
+    try:
+        body = IngestBody.model_validate(raw if isinstance(raw, dict) else None, strict=True)
+    except ValidationError:
+        return JSONResponse({"error": "a field has the wrong type"}, status_code=400)
+    url, text = _cut(body.url, INGEST_URL_MAX), _cut(body.text, INGEST_TEXT_MAX)
+    if not (url or text):
         return JSONResponse({"error": "provide a url or text"}, status_code=400)
+    from kestrel.services.extension import is_linkedin
+
+    origin = request.headers.get("origin") or ""
+    # The extension is known by its Origin or by the key header it always sends, so the refusal
+    # does not depend on how a browser fills in Origin (D-EXT-772).
+    from_extension = bool(request.headers.get("x-kestrel-key")) or origin.split(":", 1)[0] in (
+        "chrome-extension", "moz-extension", "safari-web-extension")
+    if from_extension and is_linkedin(url):
+        # D-SRC-5: the extension never reads LinkedIn; a LinkedIn posting is pasted by hand.
+        return JSONResponse({"error": "linkedin"}, status_code=422)
     async with sessionmaker()() as s:
         opp = await manual_ingest(
-            s, url=body.get("url"), text=body.get("text"), title=body.get("title"),
-            org_name=body.get("org_name"), track=body.get("track") or "employment",
+            s, url=url, text=text, title=_cut(body.title, INGEST_TITLE_MAX),
+            org_name=_cut(body.org_name, INGEST_TITLE_MAX), track=body.track or "employment",
         )
+        if opp is not None and body.score_now:
+            # Capture and score now (issue #186, D-EXT-746): the role's queued embed moves to the
+            # front of its own queue. Priority only orders claims within a tier, so a tier that
+            # is mid-drain is never interrupted.
+            from sqlalchemy import func, update
+
+            from kestrel.db.models import Task
+            from kestrel.queue.rescore import RESCORE_PRIORITY
+
+            await s.execute(
+                update(Task)
+                .where(Task.type == "embed", Task.status == "pending",
+                       func.json_extract(Task.payload, "$.opportunity_id") == opp.id)
+                .values(priority=RESCORE_PRIORITY)
+            )
+            await s.commit()
     if opp is None:
         return JSONResponse({"error": "nothing to ingest"}, status_code=400)
     return {"id": opp.id, "title": opp.title, "stage": opp.stage, "track": opp.track}

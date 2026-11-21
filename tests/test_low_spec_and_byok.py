@@ -124,6 +124,18 @@ def _doctor_with(monkeypatch, s: Settings):
     monkeypatch.setattr(profiles, "detect_hardware", lambda: HW_LAPTOP)
     monkeypatch.delenv("OLLAMA_NUM_PARALLEL", raising=False)
     monkeypatch.delenv("OLLAMA_KEEP_ALIVE", raising=False)
+    # The doctor reads where Ollama reads them (#181): a place holding neither value, so the
+    # rows never depend on this machine's own registry, launchd or ~/.profile.
+    from kestrel.services import ollama_env
+
+    class _Empty(ollama_env.Backend):
+        def owned(self):
+            return dict.fromkeys(ollama_env.NAMES)
+
+        def commands(self, values):
+            return []
+
+    monkeypatch.setattr(ollama_env, "_override", [_Empty(mechanism="test", where="nowhere")])
     return d
 
 

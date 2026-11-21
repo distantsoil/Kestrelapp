@@ -28,7 +28,6 @@ import httpx
 import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import (
-    FileResponse,
     HTMLResponse,
     PlainTextResponse,
     RedirectResponse,
@@ -64,6 +63,7 @@ from kestrel.pipeline._shared import tier_is_hosted
 from kestrel.services import pursuit_undo
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import tailor_view as tv
+from kestrel.web.attachment import PDF_MISSING, pdf_download, pdf_not_served
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import fixed_reason, plain_error
 from kestrel.web.pipeline_view import pay_text, place_text
@@ -250,10 +250,13 @@ async def _fit_score(session: AsyncSession, opportunity_id: int | None) -> float
 
 
 def _preview_srcdoc(doc) -> str:
+    from kestrel.web.csp import frame_safe
+
     page = render_html(doc)
-    return page.replace("<head>", "<head>" + PREVIEW_SHEET, 1) if "<head>" in page else (
+    page = page.replace("<head>", "<head>" + PREVIEW_SHEET, 1) if "<head>" in page else (
         PREVIEW_SHEET + page
     )
+    return frame_safe(page)  # its stylesheets as links: the frame has the page's policy
 
 
 def _chosen_label(hidden: bool, index: int | None, n: int) -> str:
@@ -274,7 +277,7 @@ async def _employer_for(session: AsyncSession, settings: Settings, master_id: in
     """What happens to the current employer in a send about THIS document, as
     `plan_hosted_send` will decide it: "hidden", "held" (confidential mode and none marked in
     this document) or "off"."""
-    if not settings.confidential_mode or not settings.llm.hosted_mode.redact_confidential:
+    if not settings.confidential_mode:  # the one condition the send itself reads (D-PRIV-805)
         return "off"
     from kestrel.docs.current_employer import load_employer_map
 
@@ -1415,7 +1418,10 @@ async def download(request: Request, render_id: int):
                                     status_code=404)
             render = fresh
         path = paths.stored_pdf(render.pdf_path)
-        if path is None or not path.is_file():
-            return PlainTextResponse("The PDF file is missing from disk.", status_code=404)
+        if path is None:
+            return PlainTextResponse(PDF_MISSING, status_code=404)
+        data, why = paths.read_servable_why(path, paths.documents_dir())
+        if data is None:
+            return PlainTextResponse(pdf_not_served(why), status_code=404)
         name = render.filename or path.name
-    return FileResponse(path, media_type="application/pdf", filename=name)
+    return pdf_download(data, name)

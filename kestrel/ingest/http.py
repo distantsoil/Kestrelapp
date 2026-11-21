@@ -31,6 +31,11 @@ class UnsafeURLError(ValueError):
 
 UNSAFE_MSG = "That link points to this computer or a private network, so Kestrel will not read it"
 TOO_BIG_MSG = "That page is larger than 2 MB, so Kestrel will not read it"
+SCHEME_MSG = "The link must start with http:// or https://"
+NOT_FOUND_MSG = "Kestrel could not find that address"
+REDIRECTS_MSG = "That link redirects too many times"
+# The whole list of UnsafeURLError messages, for a page that picks one to show.
+UNSAFE_REFUSALS = (UNSAFE_MSG, TOO_BIG_MSG, SCHEME_MSG, NOT_FOUND_MSG, REDIRECTS_MSG)
 
 
 async def _resolve(host: str, port: int) -> list[str]:
@@ -60,13 +65,13 @@ async def assert_public_url(url: str) -> list[str]:
     connect time could answer a private address: DNS rebinding, D-SEC-10)."""
     parts = urlparse(url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise UnsafeURLError("The link must start with http:// or https://")
+        raise UnsafeURLError(SCHEME_MSG)
     host = parts.hostname
     port = parts.port or (443 if parts.scheme == "https" else 80)
     try:
         addrs = [host] if _literal_ip(host) else await _resolve(host, port)
     except OSError as exc:
-        raise UnsafeURLError("Kestrel could not find that address") from exc
+        raise UnsafeURLError(NOT_FOUND_MSG) from exc
     if not addrs or not all(_is_public(a) for a in addrs):
         raise UnsafeURLError(UNSAFE_MSG)
     return addrs
@@ -360,7 +365,7 @@ class HttpClient:
                 method, json = "GET", None
                 continue
             return out
-        raise UnsafeURLError("That link redirects too many times")
+        raise UnsafeURLError(REDIRECTS_MSG)
 
     async def get_json(self, url: str, **kw) -> object:
         r = await self.request("GET", url, **kw)

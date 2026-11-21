@@ -1,0 +1,44 @@
+/* Kestrel Capture theme: the app's Paper and Indigo tokens (kestrel/web/static/css/tokens.css,
+   D-UI-53), light and dark through prefers-color-scheme. Every color in the extension comes from
+   these tokens. The font is bundled (fonts/, OFL); nothing loads from any other host. */
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("fonts/manrope-latin-wght-normal.woff2") format("woff2");
+}
+:root {
+  color-scheme: light dark;
+  --font: "Manrope", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --fs-xs: 11px; --fs-sm: 12.5px; --fs-md: 14px; --fs-lg: 16px; --fs-xl: 19px;
+  --r-xs: 5px; --r-sm: 8px; --r-md: 10px; --r-lg: 14px; --r-pill: 20px;
+  --ease: cubic-bezier(.22, .8, .3, 1); --dur-1: .15s; --dur-2: .3s;
+  --bg: #F5F7FC; --paper: #FFFFFF; --ink: #141A33; --muted: #454C69; --line: #E3E7F1;
+  --soft: #EEF1FD; --brand: #4F5BD5; --brand-ink: #FFFFFF; --brand-2: #9AA3F5;
+  --good: #1E8E5A; --good-bg: #E4F6EC; --warn: #B26A00; --warn-bg: #FFF2D9;
+  --bad: #C2413B; --bad-bg: #FDE9E7; --good-ink: #14683F; --warn-ink: #7A4800; --bad-ink: #A32D28;
+  --tint-warn: #FFF8EA; --tint-warn-line: #F6E2B8; --tint-info: #F1F4FF; --tint-info-line: #DCE2FB;
+  --link-ink: #3B46B8; --chip-i-bg: #E7EAFD; --chip-i-ink: #3540A8;
+  --shadow: 0 10px 28px rgba(20, 26, 51, .10); --shadow-soft: 0 1px 3px rgba(20, 26, 51, .08);
+  --focus: #4F5BD5;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #070A18; --paper: #121834; --ink: #E8EBF8; --muted: #B6BCD8; --line: #262C48;
+    --soft: #1D2343; --brand: #7B86F0; --brand-ink: #0D1122; --brand-2: #4F5BD5;
+    --good: #4CC98A; --good-bg: #163426; --warn: #F2B44C; --warn-bg: #3A2B10;
+    --bad: #F07A73; --bad-bg: #3D1C1B; --good-ink: #4CC98A; --warn-ink: #F2B44C; --bad-ink: #FFB4AE;
+    --tint-warn: #211C14; --tint-warn-line: #4A3A1C; --tint-info: #161D38; --tint-info-line: #2B3563;
+    --link-ink: #C3C9FF; --chip-i-bg: #2A3270; --chip-i-ink: #DDE1FF;
+    --shadow: 0 10px 28px rgba(0, 0, 0, .45); --shadow-soft: 0 1px 3px rgba(0, 0, 0, .4);
+    --focus: #7B86F0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0s !important; animation-delay: 0s !important;
+    transition-duration: 0s !important; transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}

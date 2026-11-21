@@ -36,7 +36,7 @@ def loops(monkeypatch):
     """Stand-in worker and lane. The worker stops on its event; the lane is in an online call
     that does not look at the event, so only the cancel ends it (`stubborn` makes it ignore that
     too)."""
-    state = {"events": [], "stubborn": False}
+    state = {"events": [], "stubborn": False, "release": asyncio.Event()}
 
     async def worker(stop):
         await stop.wait()
@@ -50,8 +50,9 @@ def loops(monkeypatch):
                 state["events"].append("lane cancelled")
                 if not state["stubborn"]:
                     raise
-                state["stubborn"] = False  # ignores this cancel, then ends a moment later
-                await asyncio.sleep(0.3)
+                state["stubborn"] = False  # ignores this cancel, then ends when released:
+                # a fixed sleep let a stalled event loop end it before the reset looked
+                await state["release"].wait()
                 return
 
     monkeypatch.setattr(app_mod, "_worker_loop", worker)
@@ -109,6 +110,7 @@ async def test_a_lane_that_ignores_its_cancel_means_nothing_is_reset(loops):
     with pytest.raises(reset_mod.ResetBusy):
         await reset_mod.reset_in_app(get_sessionmaker())
     assert paths.db_path().exists()
+    loops["release"].set()
     await asyncio.sleep(0.5)  # the stubborn call ends; the loops come back
     _own, worker, lane = app_mod._current_work_loops()
     assert worker is not None and not worker.done() and not lane.done()

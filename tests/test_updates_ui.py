@@ -82,9 +82,10 @@ def test_banner_shows_version_and_base_wires_it():
     assert f"Kestrel {NEWER} is available." in body
     assert "Show details" in body and "Later" in body and "See what is new" in body
     assert f"You are on {kestrel.__version__}." in body
-    # D-UI-152: no self-update; the banner sends the user to the download page.
-    link = f'href="{PAGE}" target="_blank" rel="noopener noreferrer">Get it from kestrelapp.co'
-    assert link in body
+    # D-UI-152: no self-update; with no release entry in the feed the banner sends the user to
+    # the download page (D-UPD-8: with one, to the release file; tested below).
+    assert f'href="{PAGE}" target="_blank" rel="noopener noreferrer"' in body
+    assert ">Get it from kestrelapp.co" in body and "Download Kestrel" not in body
     assert "Restart" not in body and "restart" not in body
     assert "Nothing about you is sent." in body
     assert 'hx-get="/updates/banner"' in page and 'id="update-modal"' in page
@@ -328,3 +329,156 @@ def test_poll_update_status_keeps_last_value_on_bad_answers(monkeypatch):
     assert answer(200, {"detail": "nope"}) == "1.2.3"
     assert answer(200, {"available": True, "version": "2.0.0"}) == "2.0.0"
     assert answer(200, {"available": False}) is None
+
+
+# --- the direct release download (D-UPD-8, D-UPD-9) -------------------------------------------
+
+RELEASE = "https://github.com/distantsoil/Kestrelapp/releases/download"
+FILES = {"windows": f"Kestrel-Setup-{NEWER}.exe", "macos": f"Kestrel-{NEWER}.dmg",
+         "linux": f"Kestrel-{NEWER}-x86_64.AppImage"}
+SHA = "cd" * 32
+
+
+def _direct_feed(**tamper) -> dict:
+    feed = _feed()
+    feed["downloads"] = {
+        p: {"file": f, "url": f"{RELEASE}/v{NEWER}/{f}", "sha256": SHA, "signed": False}
+        for p, f in FILES.items()
+    }
+    for key, value in tamper.items():
+        for entry in feed["downloads"].values():
+            entry[key] = value
+    return feed
+
+
+def _this_file() -> str:
+    return FILES[updater.feed_platform()]
+
+
+def _hrefs(body: str) -> list[str]:
+    return [h for h in re.findall(r'href="([^"]+)"', body) if not h.startswith("/static/")]
+
+
+def test_details_offer_this_platforms_installer_from_the_release():
+    asyncio.run(_prepare(**_newer_state(cached_feed=_direct_feed())))
+    with _client() as c:
+        body = c.get("/updates/details").text
+    link = f"{RELEASE}/v{NEWER}/{_this_file()}"
+    assert f'href="{link}" target="_blank" rel="noopener noreferrer"' in body
+    assert f">Download Kestrel {NEWER}</a>" in body
+    assert "Get it from kestrelapp.co" not in body
+    assert "The file comes from GitHub, the Kestrel release page." in body
+    # Show details: file, release, checksum; nothing about the user is sent.
+    assert f"File: {_this_file()}" in body
+    assert f"Release: v{NEWER} on github.com/distantsoil/Kestrelapp" in body
+    assert f"SHA-256: {SHA}" in body and "Nothing about you is sent." in body
+    # No query string on any link, and nothing that reads as a self-update.
+    assert all("?" not in h for h in _hrefs(body))
+    lowered = body.lower()
+    assert "install now" not in lowered and "restart" not in lowered
+    assert "Your data stays where it is." in body
+
+
+@pytest.mark.parametrize(
+    ("reason", "tamper"),
+    [
+        ("http", {"url": f"http://github.com/distantsoil/Kestrelapp/releases/download/v{NEWER}/x"}),
+        ("other host", {"url": f"https://evil.example/distantsoil/Kestrelapp/releases/download/"
+                               f"v{NEWER}/x"}),
+        ("other repo", {"url": f"https://github.com/distantsoil/kestrel/releases/download/"
+                               f"v{NEWER}/x"}),
+        ("version mismatch", {"url": f"{RELEASE}/v{NEWER}1/x"}),
+        ("bad sha", {"sha256": "nope"}),
+        ("javascript", {"url": "javascript:alert(1)"}),
+    ],
+)
+def test_a_tampered_release_entry_falls_back_to_the_site_on_every_surface(reason, tamper):
+    feed = _direct_feed(**tamper)
+    if "url" in tamper:
+        for entry in feed["downloads"].values():
+            entry["url"] = tamper["url"].replace("/x", "/" + entry["file"])
+    asyncio.run(_prepare(**_newer_state(cached_feed=feed)))
+    with _client() as c:
+        details = c.get("/updates/details").text
+        banner = c.get("/updates/banner").text
+    for body in (details, banner):
+        assert f'href="{PAGE}"' in body, reason
+        assert ">Get it from kestrelapp.co" in body and "Download Kestrel" not in body, reason
+        assert "github.com" not in "".join(_hrefs(body)), reason
+        assert "javascript:" not in body, reason
+    assert "The file comes from GitHub" not in details
+    assert "On the download page, get the installer" in details
+
+
+def test_a_feed_without_an_entry_for_this_platform_falls_back_to_the_site():
+    feed = _direct_feed()
+    del feed["downloads"][updater.feed_platform()]
+    asyncio.run(_prepare(**_newer_state(cached_feed=feed)))
+    with _client() as c:
+        body = c.get("/updates/details").text
+    assert f'href="{PAGE}"' in body and ">Get it from kestrelapp.co" in body
+    assert "SHA-256" not in body
+
+
+def test_every_update_surface_links_the_same_release_file(monkeypatch):
+    from kestrel.db.models import Notification
+
+    async def seed() -> None:
+        async with get_sessionmaker()() as s:
+            s.add(Notification(kind="update", severity="info",
+                               title=f"Kestrel {NEWER} is available", body="See what's new."))
+            await s.commit()
+
+    asyncio.run(_prepare(**_newer_state(cached_feed=_direct_feed())))
+    asyncio.run(seed())
+    link = f"{RELEASE}/v{NEWER}/{_this_file()}"
+    label = f"Download Kestrel {NEWER}"
+    with _client() as c:
+        banner = c.get("/updates/banner").text
+        details = c.get("/updates/details").text
+        bell = c.get("/notifications/list").text
+
+        async def fake(session, *, feed_url, current=None, transport=None):
+            return await updater.load_state(session)
+
+        monkeypatch.setattr(updater, "check_now", fake)
+        settings_result = c.post("/updates/check").text
+        about_result = c.post("/updates/check", data={"surface": "about"}).text
+    for name, body in (("banner", banner), ("details", details), ("bell", bell),
+                       ("settings", settings_result), ("about", about_result)):
+        assert f'href="{link}"' in body, name
+        assert f">{label}" in body, name
+        assert "Get it from kestrelapp.co" not in body, name
+    assert 'data-testid="notif-action"' in bell and 'target="_blank"' in bell
+    assert "The installer comes from GitHub, the Kestrel release page." in banner
+
+
+def test_the_bell_falls_back_to_the_site_without_a_release_entry():
+    from kestrel.db.models import Notification
+
+    async def seed() -> None:
+        async with get_sessionmaker()() as s:
+            s.add(Notification(kind="update", severity="info", title="Kestrel is available"))
+            await s.commit()
+
+    asyncio.run(_prepare(**_newer_state()))
+    asyncio.run(seed())
+    with _client() as c:
+        bell = c.get("/notifications/list").text
+    assert f'href="{updater.DOWNLOAD_PAGE}"' in bell and ">Get it from kestrelapp.co" in bell
+
+
+def test_whats_new_every_change_opens_the_changelog_and_fallback_the_release(monkeypatch):
+    """#209 (D-UPD-11): the footer link is the full CHANGELOG; with no notes the fallback names
+    the running version's GitHub release, not the download page."""
+    monkeypatch.setattr(kestrel, "__version__", "0.7.6")
+    asyncio.run(_prepare(**_newer_state(upgraded_from="0.0.0")))
+    with _client() as c:
+        body = c.get("/updates/whats-new-card").text
+    every = body.split('data-testid="whats-new-every-change"')[0].rsplit("<a", 1)[1]
+    assert 'href="https://github.com/distantsoil/Kestrelapp/blob/main/CHANGELOG.md"' in every
+    asyncio.run(_prepare(upgraded_from="0.0.0", cached_feed={**_feed("0.7.6"), "releases": []}))
+    with _client() as c:
+        body = c.get("/updates/whats-new-card").text
+    page = body.split('data-testid="whats-new-release-page"')[0].rsplit("<a", 1)[1]
+    assert 'href="https://github.com/distantsoil/Kestrelapp/releases/tag/v0.7.6"' in page

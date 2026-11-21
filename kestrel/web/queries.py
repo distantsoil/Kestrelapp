@@ -38,6 +38,7 @@ from kestrel.db.models import (
 from kestrel.research.connections import not_imported_connection
 from kestrel.services import run_model
 from kestrel.services.hidden_orgs import not_hidden_org_clause, opp_visible_clause
+from kestrel.services.role_id_query import parse_role_id, role_id_clause, role_id_found
 from kestrel.urls import safe_web_url
 from kestrel.web.fit import (
     EMPTY_POSTING_STAGE_REASON,
@@ -50,7 +51,7 @@ from kestrel.web.fit import (
     GROUP_UNSCORED,
     GROUP_WORTH,
     Fit,
-    failure_words,
+    failure_sentence,
     fit_for,
     fit_word_for_verdict,
     hidden_unscored_why,
@@ -101,6 +102,9 @@ class OppFilters:
     # marks one canonical; the others show on the role page as "also seen on". A copy the operator
     # already acted on (shortlisted or saved) stays listed so nothing they chose disappears.
     include_duplicates: bool = False
+    # An ID query (`#434`) is a lookup only for the Pipeline page (D-UI-771); the JSON API, MCP and
+    # every other caller keep their exclusions, so only the page's filters set this.
+    id_lookup: bool = False
     # The triage chips (docs/UI_PROPOSAL.html Screen 2). Shortlisted is "has a pursuit row"; new
     # today is "first seen since 00:00 UTC". Both are additive to the older filters above.
     shortlisted: bool = False
@@ -166,7 +170,7 @@ class OppRow:
     # "failed" (parked in Scoring failed) or "stuck" (re-queued once at startup and still
     # unscored with nothing queued, D-UI-56). None for a scored row.
     scoring: str | None = None
-    # Scoring failed rows only: the latest quarantine error in plain words (fit.failure_words).
+    # Scoring failed rows only: the latest quarantine error as a sentence (fit.failure_sentence).
     failed_reason: str | None = None
     # The operator took this role off Needs another try (D-UI-133). It is not scored and not
     # failed: the row says so and links back there to undo.
@@ -187,6 +191,16 @@ class OppRow:
     # An unscored row whose duplicate group has a scored copy from another board (issue #144):
     # the copy's id and score. Display and link only; the row is never folded or hidden.
     twin: ScoredTwin | None = None
+    # Where Kestrel found the role (pipeline_view.source_word): the source's kind and, for a
+    # JobSpy search, its board. Set by pipeline_view.attach_sources or unscored.unscored_rows.
+    source_kind: str | None = None
+    source_site: str | None = None
+    # An ID query's words for this row (kestrel.services.role_id_query.role_id_hits): Hidden
+    # company, and the note a duplicate's main copy carries. Empty on an ordinary search.
+    id_label: str = ""
+    id_note: str = ""
+    # The track an ID query found the role on, set only when it is not the tab being shown.
+    id_track: str = ""
 
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])")
@@ -752,7 +766,7 @@ async def scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
         reasons = await failure_reasons(session, [r.opp.id for r in failed])
         for r in failed:
             r.scoring = "failed"
-            r.failed_reason = reasons.get(r.opp.id) or failure_words(None)
+            r.failed_reason = reasons.get(r.opp.id) or failure_sentence(None)
     todo = [r for r in rows if r.fit and r.fit.word == "new" and r.fit.group != GROUP_FAILED]
     if not todo:
         return
@@ -817,6 +831,11 @@ async def scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
             r.scoring = "stuck"
         else:
             r.scoring = "not_queued"
+    # A waiting role that nothing will score (a dead task, a pause, an out-of-credit hold, the
+    # background lane under online scoring) says so instead of Waiting.
+    from kestrel.web.unscored import apply_holds
+
+    await apply_holds(session, todo)
 
 
 def _unscored_reason(r: OppRow) -> tuple[str, str | None]:
@@ -912,7 +931,7 @@ async def hidden_unscored(session: AsyncSession, opps: list[Opportunity]) -> dic
 
 
 async def failure_reasons(session: AsyncSession, opp_ids: list[int]) -> dict[int, str]:
-    """The newest quarantine error per role, in plain words (fit.failure_words)."""
+    """The newest quarantine error per role, as a plain sentence (fit.failure_sentence)."""
     if not opp_ids:
         return {}
     newest = (
@@ -925,7 +944,7 @@ async def failure_reasons(session: AsyncSession, opp_ids: list[int]) -> dict[int
             select(Quarantine.opportunity_id, Quarantine.error).where(Quarantine.id.in_(newest))
         )
     ).all()
-    return {int(o): failure_words(err) for o, err in rows if o is not None}
+    return {int(o): failure_sentence(err) for o, err in rows if o is not None}
 
 
 def _apply_filters(stmt, f: OppFilters):
@@ -933,16 +952,26 @@ def _apply_filters(stmt, f: OppFilters):
         from kestrel.services.export_terms import shareable_clause
 
         stmt = stmt.where(shareable_clause())
+    # An exact ID query that finds a role shows that role whatever its state (D-UI-770): the
+    # three default exclusions below let it through and the row carries its own labels. An ID that
+    # finds nothing is ordinary title text (D-UI-772), so `found` is None or one shared test.
+    role_id = parse_role_id(f.q) if f.id_lookup else None
+    found = role_id_found(role_id) if role_id is not None else None
+
+    def _unless_found(cond):
+        return cond if found is None else or_(found, cond)
+
     if f.hidden_only:
         stmt = stmt.where(Opportunity.archived_at.is_not(None))
     elif not f.include_archived:
-        stmt = stmt.where(Opportunity.archived_at.is_(None))
+        stmt = stmt.where(_unless_found(Opportunity.archived_at.is_(None)))
     if not f.include_hidden_orgs:
-        stmt = stmt.where(not_hidden_org_clause())
+        stmt = stmt.where(_unless_found(not_hidden_org_clause()))
     if not f.include_duplicates:
-        stmt = stmt.where(listed_clause())
+        stmt = stmt.where(_unless_found(listed_clause()))
     if f.track in ("employment", "consulting"):
-        stmt = stmt.where(Opportunity.track == f.track)
+        # An ID that finds a role finds it on either tab; the row says which tab it is on.
+        stmt = stmt.where(_unless_found(Opportunity.track == f.track))
     if f.stage:
         stmt = stmt.where(Opportunity.stage == f.stage)
     if f.verdict:
@@ -968,9 +997,13 @@ def _apply_filters(stmt, f: OppFilters):
     if f.q:
         # Titles and org names, as the search box promises ("Search titles and orgs").
         like = f"%{f.q}%"
-        stmt = stmt.where(
+        text = (
             Opportunity.title.ilike(like) | Org.name.ilike(like) | Opportunity.org_name.ilike(like)
         )
+        if found is None or role_id is None:
+            stmt = stmt.where(text)
+        else:
+            stmt = stmt.where(or_(and_(found, role_id_clause(role_id)), and_(~found, text)))
     if f.shortlisted:
         stmt = stmt.where(Pursuit.id.is_not(None))
     if f.new_today:
@@ -1836,6 +1869,13 @@ async def list_runs(session: AsyncSession, limit: int = 25) -> list[Run]:
     )
 
 
+def _badge_tone(word: str | None) -> str:
+    """good, warn or muted for a board badge, from the same fit word it prints."""
+    if word in ("strong fit", "good fit"):
+        return "good"
+    return "warn" if word == "maybe" else "muted"
+
+
 async def lookup_by_urls(session: AsyncSession, urls: list[str]) -> dict[str, dict]:
     """POST /api/opportunities/lookup: per known URL its id/score/verdict/ghost. Powers the
     extension's seen-badge (SPEC-INTERFACES 3)."""
@@ -1847,18 +1887,28 @@ async def lookup_by_urls(session: AsyncSession, urls: list[str]) -> dict[str, di
     latest = _latest_eval_subq()
     rows = (
         await session.execute(
-            select(Opportunity, Evaluation)
+            select(Opportunity, Evaluation, Pursuit.applied_at)
             .join(latest, latest.c.opportunity_id == Opportunity.id, isouter=True)
             .join(Evaluation, Evaluation.id == latest.c.eid, isouter=True)
+            .join(Pursuit, Pursuit.opportunity_id == Opportunity.id, isouter=True)
             .where(Opportunity.url.in_(urls))
         )
     ).all()
-    for opp, ev in rows:
+    from kestrel.services.extension import is_waiting
+
+    for opp, ev, applied_at in rows:
         out[opp.url] = {
             "id": opp.id,
             "score": ev.score if ev else None,
             "verdict": ev.verdict if ev else None,
             "stage": opp.stage,
             "ghost_score": opp.ghost_score,
+            # The badge's Closed look reads this (issue #186: it was read but never sent).
+            "liveness": opp.liveness,
+            "needs_description": is_waiting(opp),
+            # The app's own fit words and their tone, so the badge never maps verdicts itself.
+            "fit_word": fit_word_for_verdict(ev.verdict, ev.score) if ev else None,
+            "tone": _badge_tone(fit_word_for_verdict(ev.verdict, ev.score) if ev else None),
+            "applied_at": applied_at,
         }
     return out

@@ -546,21 +546,27 @@ def test_i_applied_on_a_role_never_shortlisted_with_quick_pick_undo_and_edit_dat
     application; Edit date changes the dates; Undo puts the role back to not shortlisted."""
     from datetime import date, timedelta
 
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    from kestrel.services.pursuit_board import FOLLOW_UP_DAYS
+
     ctx, page, errors = _page(live, "light", 1680)
     try:
         page.get_by_test_id("applied-form").wait_for()
         assert page.get_by_test_id("add-to-list").count() == 1  # never shortlisted
+        # D-TEST-582: the dates come from the server's clock, as the page rendered them, never
+        # from this test's own date.today(), which can name another day around midnight.
+        today = date.fromisoformat(page.get_by_test_id("applied-on-date").input_value())
+        yesterday = page.get_by_test_id("pick-yesterday").get_attribute("data-oa-pick")
+        assert yesterday == (today - timedelta(days=1)).isoformat()
         page.get_by_test_id("pick-yesterday").click()
         assert page.get_by_test_id("applied-on-date").input_value() == yesterday
-        follow = (date.today() + timedelta(days=6)).isoformat()
+        follow = (date.fromisoformat(yesterday) + timedelta(days=FOLLOW_UP_DAYS)).isoformat()
         assert page.get_by_test_id("applied-follow-date").input_value() == follow
         page.get_by_test_id("mark-applied").click()
         page.get_by_test_id("applied-on").wait_for()
         assert page.get_by_test_id("on-my-list").count() == 1
         page.get_by_test_id("applied-edit-open").click()
         page.get_by_test_id("applied-edit-form").wait_for(state="visible")
-        three_ago = (date.today() - timedelta(days=3)).isoformat()
+        three_ago = (today - timedelta(days=3)).isoformat()
         page.get_by_test_id("applied-edit-date").fill(three_ago)
         page.get_by_test_id("applied-edit-save").click()
         page.get_by_test_id("applied-follow").wait_for()
@@ -695,6 +701,63 @@ def _scored_by_the_current_prompt(ids) -> None:
         pool.submit(asyncio.run, run()).result()
 
 
+@pytest.mark.parametrize("settle_ms", [0, 400])
+def test_the_your_view_strip_opens_however_late_htmx_settles(live, settle_ms):
+    """The strip arrives out of band and opens a frame after its swap. htmx's settle step puts
+    the markup's own class back on an element with an id, so an open state applied before the
+    settle was undone on a slow machine and the strip stayed hidden. A long settle delay makes
+    that order certain: the strip must open anyway."""
+    _scored_by_the_current_prompt(live[2])
+    ctx, page, errors = _page(live, "light", 1280)
+    try:
+        page.evaluate("settle => { htmx.config.defaultSettleDelay = settle; }", settle_ms)
+        page.locator("#rl-match").scroll_into_view_if_needed()
+        six = _row(page, _SIX)
+        six.get_by_test_id("match-done").click()
+        six.locator("[data-rl-story-new]").wait_for(state="visible")
+        wait_for_layout(page)
+        six.locator("[data-rl-story-new]").click()
+        sheet = page.locator("#rl-story")
+        sheet.wait_for(state="visible")
+        wait_for_layout(page)
+        sheet.locator("textarea").first.fill("Led the green belt project at an invented depot.")
+        sheet.get_by_role("button", name="Save", exact=True).click()
+        page.locator(".k-toast", has_text="Saved. Now met").wait_for()
+        page.wait_for_function("() => !document.querySelector('.htmx-settling')")
+        wait_for_layout(page)  # the settle is over; what is left is the strip's final state
+        page.get_by_test_id("corrections-strip").wait_for(state="visible")
+        assert page.evaluate("document.getElementById('rl-cx').classList.contains('on')") is True
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("settle_ms", [0, 400])
+def test_an_open_evidence_list_stays_open_after_a_correction_however_late_htmx_settles(
+        live, settle_ms):
+    """What was open in the matches is reopened after the swap; htmx's settle step puts the
+    markup's closed class back, so reopening any earlier left the list closed."""
+    _scored_by_the_current_prompt(live[2])
+    ctx, page, errors = _page(live, "light", 1440)
+    try:
+        page.evaluate("settle => { htmx.config.defaultSettleDelay = settle; }", settle_ms)
+        page.get_by_test_id("evidence-toggle").click()
+        wait_for_layout(page)
+        assert page.evaluate("document.getElementById('rl-evbody').classList.contains('on')")
+        row = _row(page, _PROCESS)
+        row.get_by_test_id("match-pencil").click()
+        row.get_by_test_id("pick-not_me").click()
+        row.get_by_test_id("match-save").click()
+        page.locator(".k-toast", has_text="Saved. Now not met on this role.").wait_for()
+        page.wait_for_function("() => !document.querySelector('.htmx-settling')")
+        wait_for_layout(page)
+        assert page.evaluate("document.getElementById('rl-evbody').classList.contains('on')")
+        assert page.get_by_test_id("evidence-toggle").get_attribute("aria-expanded") == "true"
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
 @pytest.mark.parametrize("theme,width", [("light", 1280), ("dark", 1280), ("light", 1024)])
 def test_a_story_written_from_a_correction_does_not_queue_a_rescore_that_would_be_held(
     live, theme, width
@@ -714,7 +777,8 @@ def test_a_story_written_from_a_correction_does_not_queue_a_rescore_that_would_b
         page.locator("#rl-match").scroll_into_view_if_needed()
         six = _row(page, _SIX)
         six.get_by_test_id("match-done").click()
-        page.wait_for_timeout(450)
+        six.locator("[data-rl-story-new]").wait_for(state="visible")  # was a fixed 450 ms (#223)
+        wait_for_layout(page)
         six.locator("[data-rl-story-new]").click()
         sheet = page.locator("#rl-story")
         sheet.wait_for(state="visible")
@@ -722,7 +786,8 @@ def test_a_story_written_from_a_correction_does_not_queue_a_rescore_that_would_b
         assert sheet.get_by_role("button", name="Save", exact=True).is_visible()
         assert not page.get_by_test_id("story-rescore").is_visible()
         sheet.locator("textarea").first.fill("Led the green belt project at an invented depot.")
-        page.screenshot(path=f"{SHOTS_FIXD}/story-from-correction-{theme}-{width}.png")
+        if SHOTS_FIXD:
+            page.screenshot(path=f"{SHOTS_FIXD}/story-from-correction-{theme}-{width}.png")
         sheet.get_by_role("button", name="Save", exact=True).click()
         page.locator(".k-toast", has_text="Saved. Now met").wait_for()
         story_posts = [p for p in posted if p["url"].endswith("/role/story")]
@@ -732,13 +797,14 @@ def test_a_story_written_from_a_correction_does_not_queue_a_rescore_that_would_b
         page.locator("a[data-rl-story]").first.click()
         sheet.wait_for(state="visible")
         assert page.get_by_test_id("story-rescore").is_visible()
-        page.screenshot(path=f"{SHOTS_FIXD}/story-plain-{theme}-{width}.png")
+        if SHOTS_FIXD:
+            page.screenshot(path=f"{SHOTS_FIXD}/story-plain-{theme}-{width}.png")
         assert not errors, errors
     finally:
         ctx.close()
 
 
-SHOTS_FIXD = "/tmp/claude-0/-home-user/b7db7f2a-4231-54ed-b731-e6f6c37a62fa/scratchpad/shots-fixD"
+SHOTS_FIXD = os.environ.get("KESTREL_SHOTS", "")  # screenshots only when a folder is given
 
 
 def test_corrections_save_moves_the_row_and_undo_restores_it(live):
@@ -1059,3 +1125,63 @@ def test_older_score_mark_only_where_a_correction_bears(live, theme, width):
             assert not errors, errors
         finally:
             ctx.close()
+
+
+_FORMATTED = (
+    "**Who are we?**\n"
+    "Larkspur Logistics runs three distribution centers and a small analytics team.\n\n"
+    "## What you will do\n"
+    "* Lead **process improvement** across the centers\n"
+    "* Build the *weekly* forecast and explain it to site leads\n"
+    "  - one review each Monday\n"
+    "- Keep the stock sheet honest\n\n"
+    "### How to apply\n"
+    "1. Send your resume\n"
+    "2. Meet the team\n\n"
+    "Read more on [our careers page](https://larkspur.example/careers/operations-analyst-2026)."
+    "<script>alert(1)</script>"
+)
+
+
+@pytest.mark.parametrize(("theme", "width"), [("light", 1280), ("dark", 1280), ("light", 390),
+                                              ("dark", 390)])
+def test_the_posting_tab_shows_formatted_text_that_fits(live, theme, width):
+    """Issue #210: headings, bold, lists and a link shown as text, with no raw marks, no
+    sideways scroll and no overlapping blocks, in light and dark and at phone width."""
+    from tests import quick_fixtures as qf
+
+    _, _, ids = live
+
+    async def put(s):
+        from kestrel.db.models import Opportunity
+
+        (await s.get(Opportunity, ids["strong"])).description_md = _FORMATTED
+        await s.commit()
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(1) as pool:  # Playwright's own loop runs on this thread
+        pool.submit(qf.run, put).result()
+    ctx, page, errors = _page(live, theme, width, "/posting")
+    try:
+        desc = page.get_by_test_id("description")
+        assert desc.locator("h4.kp-h").inner_text() == "What you will do"
+        assert desc.locator("strong").first.inner_text() == "Who are we?"
+        assert desc.locator("li.kp-li").count() == 6 and desc.locator("a").count() == 0
+        text = desc.inner_text()
+        assert "**" not in text and "##" not in text and "<script" not in text
+        assert "our careers page (https://larkspur.example/careers/" in text
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
+        boxes = page.evaluate(_BOXES, ".kp-text > *")
+        assert len(boxes) >= 6
+        for i, a in enumerate(boxes):
+            assert a["r"] <= width + 1, a
+            for b in boxes[i + 1:]:
+                assert not _overlaps(a, b), (a, b)
+        out = os.environ.get("KESTREL_SHOT_DIR")  # review screenshots, when asked for
+        if out:
+            desc.scroll_into_view_if_needed()
+            page.screenshot(path=f"{out}/posting-format-{theme}-{width}.png", full_page=True)
+        assert not errors, errors
+    finally:
+        ctx.close()

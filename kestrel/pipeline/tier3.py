@@ -31,7 +31,12 @@ from kestrel.ingest.tokens import count_tokens
 from kestrel.llm.client import LLMClient
 from kestrel.llm.guard import run_guarded
 from kestrel.pipeline import scoring
-from kestrel.pipeline._shared import jd_budget, make_quarantine_hook, prompt_spec
+from kestrel.pipeline._shared import (
+    jd_budget,
+    make_quarantine_hook,
+    plan_hosted_send,
+    prompt_spec,
+)
 from kestrel.pipeline.context import (
     build_tier2_values,
     comp_intel_summary,
@@ -39,12 +44,11 @@ from kestrel.pipeline.context import (
     render_user,
 )
 from kestrel.pipeline.profile import load_profile
-from kestrel.web.redact import confidential
 
 log = structlog.get_logger()
 
 # Tier 3 sends the same P2 and P2C prompts as Tier 2 and stays on the same version (D-SCORE-1).
-_VERSION = {"employment": "evaluate/v3", "consulting": "evaluate_consulting/v3"}
+_VERSION = {"employment": "evaluate/v3", "consulting": "evaluate_consulting/v3"}  # default
 # The tier role for the hosted escalation. Separate from "tier3" (the LOCAL deep model used by cover
 # letters and local work) so nothing local is ever routed to the external backend.
 _FRONTIER_TIER = "frontier"
@@ -142,6 +146,13 @@ def _token_of(model: str, base_url: str, messages: list[dict], token_map: str = 
         _canonical(model, base_url, messages, token_map).encode("utf-8")).hexdigest()
 
 
+def _versions(settings: Settings) -> dict[str, str]:
+    """The deeper read sends the Tier 2 prompt version the settings choose (D-SCORE-29)."""
+    from kestrel.pipeline.tier2 import evaluate_versions
+
+    return evaluate_versions(settings)
+
+
 async def build_escalation_preview(
     session: AsyncSession, settings: Settings, opportunity_id: int
 ) -> EscalationPreview:
@@ -163,16 +174,25 @@ async def build_escalation_preview(
     if opp.track not in _VERSION:
         return _err(f"track '{opp.track}' has no Tier 3 evaluation prompt")
 
-    enabled, mapping = await confidential(session)
+    # The one decision every online send takes (D-PRIV-800): the deeper read is external in
+    # either mode and hides the employer whenever confidential mode is on. `settings` is the
+    # sender here: transmit_escalation passes the settings of the client that sends.
+    plan = await plan_hosted_send(session, None, _FRONTIER_TIER, sender=settings,
+                                  escalation=True)
+    enabled, mapping = bool(plan.refuse or plan.mapping), plan.mapping
     org = await session.get(Org, opp.org_id) if opp.org_id else None
     source = await session.get(Source, opp.source_id) if opp.source_id else None
     profile = load_profile(opp.track)
-    spec = prompt_spec(_VERSION[opp.track])
+    spec = prompt_spec(_versions(settings)[opp.track])
     comp_intel = await comp_intel_summary(session, opp)
     from kestrel.learning.corrections import scoring_corrections
-    from kestrel.pipeline.context import stated_correction_ids
+    from kestrel.pipeline.context import profile_full_v4, stated_correction_ids
+    from kestrel.pipeline.resume_digest import resume_digest
 
     corrections = await scoring_corrections(session, opp)
+    # The operator's own resume lines (D-SCORE-25): part of the previewed payload, so the
+    # confirmation shows them and its token changes if the resume changes before the send.
+    digest = await resume_digest(session, opp.track, profile_full_v4(profile))
     values = build_tier2_values(
         opp=opp,
         org=org,
@@ -189,6 +209,7 @@ async def build_escalation_preview(
         # The operator's stated facts (D-LEARN-3): part of the previewed payload, so the
         # confirmation shows them and its token changes if they change before the send.
         corrections=corrections,
+        resume_digest=digest,
     )
     user = render_user(
         spec.user,
@@ -229,7 +250,7 @@ async def build_escalation_preview(
     elif backend.api_key_env and not _has_key(backend.api_key_env) and not backend.api_key:
         unavailable = (
             f"No {_PROVIDER_NAMES.get(backend.provider, backend_name)} key is saved; add it in "
-            "Settings > Hosted before escalating (preview only until then)"
+            "Settings > This computer before escalating (preview only until then)"
         )
 
     return EscalationPreview(
@@ -267,6 +288,12 @@ async def transmit_escalation(
     means nothing is sent. The client wraps the messages in the request envelope (schema, params);
     the audit records the operator payload, which is the privacy-relevant part. Records the
     transmission in frontier_transmission and writes a Tier 3 Evaluation on success."""
+    # The preview (the destination, the hiding and the token) is re-derived from the client
+    # that sends, never from other settings the caller holds (issue #218, D-PRIV-800): a
+    # client pointed somewhere else than the confirmed preview fails the token check below.
+    held = getattr(client, "settings", None)
+    if isinstance(held, Settings):
+        settings = held
     preview = await build_escalation_preview(session, settings, opportunity_id)
     if preview.error:
         return EscalationResult(sent=False, error=preview.error, preview=preview)
@@ -423,7 +450,7 @@ async def transmit_escalation(
             )
         await session.refresh(trans)
 
-    spec = prompt_spec(_VERSION[opp.track])
+    spec = prompt_spec(_versions(settings)[opp.track])
     hook = make_quarantine_hook(session, tier=3, opportunity_id=opp.id)
     # The SEND is inside the guard too (review): the previous fix only wrapped the work
     # that follows it, so a connection dropped DURING the model call -- the most common way a slow
@@ -521,6 +548,7 @@ async def _record_escalation(
     dim_fields = type(value.dimensions).model_fields
     dim_scores = {n: getattr(value.dimensions, n).score for n in dim_fields}
     blockers = [{"kind": b.kind, "detail": b.detail} for b in value.blockers]
+    profile = load_profile(opp.track)
     post = scoring.post_process(
         track=opp.track,
         dimension_scores=dim_scores,
@@ -529,8 +557,11 @@ async def _record_escalation(
         blockers=blockers,
         legitimacy_status=value.legitimacy.status,
         work_auth_signal=getattr(value, "work_auth_signal", None),
-        requires_sponsorship=bool(getattr(load_profile(opp.track), "requires_sponsorship", False)),
+        requires_sponsorship=bool(getattr(profile, "requires_sponsorship", False)),
         settings=settings,
+        opp=opp,
+        profile=profile,
+        legitimacy=value.legitimacy.model_dump(),
     )
     ev = Evaluation(
         opportunity_id=opp.id,
@@ -552,9 +583,9 @@ async def _record_escalation(
             }
             for k in dim_scores
         },
-        blocks=value.blocks.model_dump(),
+        blocks=scoring.blocks_with_notes(value, post.legitimacy_notes),
         blockers=post.blockers,
-        legitimacy=value.legitimacy.model_dump(),
+        legitimacy=post.legitimacy,
         correction_ids=list(preview.correction_ids),
         raw_response=result.raw,
         prompt_tokens=result.prompt_tokens,

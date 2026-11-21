@@ -147,7 +147,8 @@ async def test_personio_429_on_a_job_page_stops_reading_pages_and_keeps_every_ro
     got = await _fetch()
     assert pages.call_count == 1  # the first 429 ends the page reads
     assert len(got) == 7 and sum(p.description_html is None for p in got) == 3
-    assert "rate limiting" in got.partial_error and "3 roles" in got.partial_error
+    assert "rate limiting" in got.partial_error and "3 of its roles" in got.partial_error
+    assert [n.kind for n in got.notices] == ["rate_limited"]
 
 
 @respx.mock
@@ -162,7 +163,11 @@ async def test_personio_a_failing_job_page_leaves_that_role_without_a_body():
     respx.get(_XML).mock(return_value=Response(200, text=_FEED))
     respx.get(f"{_BASE}/job/{_EMPTY_ID}").mock(return_value=Response(500))
     got = await _fetch()
-    assert len(got) == 5 and got[-1].description_html is None and got.partial_error is None
+    assert len(got) == 5 and got[-1].description_html is None
+    # the page that failed is said, so Runs and the health check see it (D-ERR-24 round 8)
+    assert got.partial_error is not None
+    assert got.partial_error.startswith("Personio did not return the details of 1 of its roles at ")
+    assert [n.kind for n in got.notices] == ["body_unread"]
     assert got[-1].location_raw == "Chicago"  # the feed's office name stays
 
 

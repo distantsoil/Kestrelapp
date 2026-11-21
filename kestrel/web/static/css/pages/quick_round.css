@@ -19,11 +19,11 @@
 
 /* ------------------------------------------------------------------------------- the round */
 .qr-round { display: flex; flex-direction: column; align-items: center; gap: 12px; min-width: 0;
-  animation: qr-in .38s cubic-bezier(.2, .8, .2, 1); }
+  animation: qr-in .38s var(--ease); }
 .qr-round[hidden], .qr-done[hidden] { display: none; }
 .qr-rhead { width: min(560px, 100%); display: flex; align-items: center; gap: 12px; }
 .qr-q { font-size: 15px; font-weight: 600; min-width: 0; }
-.qr-count { margin-left: auto; color: var(--muted); font-size: 13.5px;
+.qr-count { margin-left: auto; color: var(--muted); font-size: var(--fs-md);
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 .qr-pips { width: min(560px, 100%); display: grid; grid-template-columns: repeat(var(--n, 10), 1fr);
   gap: 3px; }
@@ -34,13 +34,13 @@
 .qr-pips i.is-unsure { background: var(--muted); opacity: .4; }
 .qr-pips i.is-cur { background: var(--brand); }
 
-.qr-stage { position: relative; width: min(440px, 100%); height: 390px; max-height: 60vh;
-  min-height: 300px; margin-bottom: 34px; }
+.qr-stage { position: relative; width: min(440px, 100%); height: 470px; max-height: 60vh;
+  min-height: 330px; margin-bottom: 34px; }
 .qr-card { position: absolute; inset: 0; display: flex; flex-direction: column;
   background: var(--paper); border: 1px solid var(--line); border-radius: 20px;
   box-shadow: var(--shadow); padding: 26px 26px 22px; touch-action: none; user-select: none;
   will-change: transform; visibility: hidden; opacity: 0; overflow: hidden;
-  transition: transform .42s cubic-bezier(.2, .8, .2, 1), opacity .3s, box-shadow .2s; }
+  transition: transform .42s var(--ease), opacity .3s, box-shadow .2s; }
 .qr-card.is-front { z-index: 3; visibility: visible; opacity: 1; cursor: grab; box-shadow: var(--shadow-pop); }
 .qr-card.is-front:active { cursor: grabbing; }
 .qr-card.is-front:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
@@ -69,10 +69,55 @@
   stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .qr-facts span { min-width: 0; overflow-wrap: anywhere; display: -webkit-box;
   -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; overflow: hidden; }
+/* The posting's own words (D-UI-331): an excerpt, and "More" opens the whole text in a region
+   that scrolls inside the card, so the answer buttons below the stage never move. */
+.qr-desc { margin-top: 12px; min-height: 0; flex: 0 1 auto; display: flex; flex-direction: column;
+  gap: 6px; overflow: hidden; }
+.qr-card.is-open .qr-desc { flex: 1 1 auto; }
+.qr-desc__excerpt { margin: 0; font-size: var(--fs-md); line-height: 1.45; color: var(--ink);
+  overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }
+.qr-nodesc { margin: 12px 0 0; font-size: var(--fs-md); line-height: 1.45; color: var(--muted);
+  overflow-wrap: anywhere; }
+.qr-more { align-self: flex-start; flex: none; font: inherit; font-size: var(--fs-md); font-weight: 600;
+  color: var(--link-ink); background: none; border: 0; padding: 2px 0; cursor: pointer;
+  border-radius: 4px; }
+.qr-more__t { display: inline-block; }
+.qr-more:hover { text-decoration: underline; }
+.qr-more:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.qr-desc__full { flex: 1 1 auto; min-height: 60px; overflow-y: auto; overscroll-behavior: contain;
+  touch-action: pan-y; user-select: text; cursor: auto; font-size: var(--fs-md); line-height: 1.5;
+  overflow-wrap: anywhere; padding: 8px 8px 8px 0;
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.qr-desc__full[hidden] { display: none; }
+.qr-desc__full p { margin: 0 0 .7em; }
+.qr-desc__h { margin: .9em 0 .35em; font-size: var(--fs-md); font-weight: 700; line-height: 1.35;
+  letter-spacing: 0; color: var(--ink); }
+.qr-desc__h:first-child { margin-top: 0; }
+.qr-desc__full:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.qr-card.is-open .qr-desc__excerpt { display: none; }
+.qr-card.is-open .qr-desc__full { animation: qr-expand .24s var(--ease); }
+.qr-card.is-collapsing .qr-desc__excerpt { animation: qr-expand .24s var(--ease); }
+/* `.qr-card > :not(.qr-stamp)` above fades every child; these keep that fade and add the size and
+   spacing that change when the text opens. Same specificity, later in the file. */
+.qr-card > .qr-title { transition: opacity .3s, font-size .24s var(--ease), margin-top .24s var(--ease); }
+.qr-card > .qr-open { transition: opacity .3s, margin-top .24s var(--ease), padding-top .24s var(--ease); }
+.qr-card.is-open .qr-title { -webkit-line-clamp: 2; line-clamp: 2; margin-top: 12px; font-size: 20px; }
+/* The facts change layout (a column of four becomes a wrapped row), which cannot be animated, so
+   the block fades in on its new layout, on open and on Less. */
+.qr-card.is-open .qr-facts, .qr-card.is-collapsing .qr-facts { animation: qr-fade .24s var(--ease); }
+.qr-card.is-open .qr-facts { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
+.qr-card.is-open .qr-facts .k-ic { width: 14px; height: 14px; }
+.qr-card.is-open .qr-open { margin-top: 8px; padding-top: 8px; }
+/* On a short window the open text gets the room: the facts are shown again on Less. */
+@media (max-height: 780px) {
+  .qr-card.is-open .qr-facts { display: none; }
+  .qr-card.is-open .qr-title { -webkit-line-clamp: 1; line-clamp: 1; font-size: 18px; margin-top: 10px; }
+}
 @media (max-height: 600px) { .qr-title { -webkit-line-clamp: 2; line-clamp: 2; } }
 @media (max-height: 540px) { .qr-title { -webkit-line-clamp: 1; line-clamp: 1; } }
 .qr-open { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line);
-  font-size: 13.5px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+  font-size: var(--fs-md); color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
 .qr-open a { font-weight: 600; white-space: nowrap; }
 .qr-stamp { position: absolute; top: 22px; padding: 5px 12px; border-radius: 8px; font-weight: 800;
   font-size: 15px; letter-spacing: .04em; opacity: 0; border: 2px solid; pointer-events: none; }
@@ -94,7 +139,7 @@
    button 58 by 46 with the star off center. */
 .qr-act { width: 62px; height: 62px; padding: 0; border-radius: 50%; border: 1px solid var(--line);
   background: var(--paper); display: grid; place-items: center; box-shadow: var(--shadow);
-  cursor: pointer; transition: transform .14s cubic-bezier(.2, .8, .2, 1), background .15s; }
+  cursor: pointer; transition: transform .14s var(--ease), background .15s; }
 .qr-act .k-ic { width: 26px; height: 26px; margin: 0; }
 .qr-act:hover { transform: translateY(-2px); }
 .qr-act:active { transform: scale(.92); }
@@ -118,7 +163,7 @@
 .qr-empty p { margin: 0; }
 
 /* --------------------------------------------------------------------------------- the done */
-.qr-done { animation: qr-in .38s cubic-bezier(.2, .8, .2, 1); }
+.qr-done { animation: qr-in .38s var(--ease); }
 .qr-donebox { max-width: 640px; margin: 0 auto; padding-top: 16px; min-width: 0; }
 .qr-donebox h2 { font-size: 28px; margin: 0 0 6px; letter-spacing: -.015em; text-wrap: balance;
   overflow-wrap: anywhere; }
@@ -143,15 +188,17 @@
 .qr-k { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* ------------------------------------------------------------ the meter (Today and Calibrate) */
-.qr-meter { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--muted);
+.qr-meter { display: flex; align-items: center; gap: 10px; font-size: var(--fs-md); color: var(--muted);
   margin-top: 6px; min-width: 0; }
 .qr-meter__bar { flex: 0 1 220px; min-width: 60px; height: 6px; border-radius: 3px;
   background: var(--soft); position: relative; overflow: hidden; }
 .qr-meter__bar b { position: absolute; inset: 0 auto 0 0; background: var(--brand);
-  border-radius: 3px; transition: width .6s cubic-bezier(.2, .8, .2, 1); }
+  border-radius: 3px; transition: width .6s var(--ease); }
 .qr-meter__text b { color: var(--ink); font-variant-numeric: tabular-nums; }
 
 @keyframes qr-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes qr-expand { from { opacity: 0; transform: translateY(6px); } }
+@keyframes qr-fade { from { opacity: 0; } }
 @keyframes qr-pop { from { transform: scale(.4); } to { transform: none; } }
 
 @container kwin (max-width: 700px) {
@@ -164,7 +211,16 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .qr-round, .qr-done, .qr-steps li.hit .qr-ic { animation: none; }
-  .qr-card, .qr-card > *, .qr-act, .qr-pips i, .qr-meter__bar b { transition: none; }
+  .qr-round, .qr-done, .qr-steps li.hit .qr-ic, .qr-card.is-open .qr-desc__full,
+  .qr-card.is-collapsing .qr-desc__excerpt, .qr-card.is-open .qr-facts,
+  .qr-card.is-collapsing .qr-facts { animation: none; }
+  .qr-card, .qr-card > *, .qr-act, .qr-pips i, .qr-meter__bar b, .qr-card > .qr-title,
+  .qr-card > .qr-open { transition: none; }
   .qr-act:hover, .qr-act:active { transform: none; }
 }
+html[data-reduce-motion="1"] .qr-card.is-open .qr-desc__full,
+html[data-reduce-motion="1"] .qr-card.is-collapsing .qr-desc__excerpt,
+html[data-reduce-motion="1"] .qr-card.is-open .qr-facts,
+html[data-reduce-motion="1"] .qr-card.is-collapsing .qr-facts { animation: none; }
+html[data-reduce-motion="1"] .qr-card > .qr-title,
+html[data-reduce-motion="1"] .qr-card > .qr-open { transition: none; }

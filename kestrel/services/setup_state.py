@@ -29,7 +29,7 @@ import asyncio
 import json
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,11 +38,18 @@ from typing import Any
 import httpx
 import structlog
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel import paths
 from kestrel import setup as setup_cli
-from kestrel.config import Settings, hosted_mode_problem
+from kestrel.config import (
+    ONLINE_CONSENT_HOW,
+    RUN_CARD_KEYS,
+    HostedMode,
+    Settings,
+    hosted_mode_problem,
+)
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting
 from kestrel.errors import UserFacingError
@@ -95,7 +102,7 @@ OLLAMA_DOWNLOAD: dict[str, str] = {
 }
 
 
-_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0", ""})
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0", ""})  # noqa: S104  0.0.0.0 is compared against, never bound
 
 
 def ollama_remote_host(url: str | None) -> str | None:
@@ -292,10 +299,17 @@ def _verification(report: dict[str, Any] | None) -> tuple[str, str]:
 
 # -------------------------------------------------------------------------- run mode choice
 def run_choice(settings: Settings, rows: dict[str, Any]) -> tuple[str, bool]:
-    """The Local / Hosted / Both card. A stored choice wins; otherwise it is derived from the
-    stored `llm.mode` (the effective mode in Settings falls back to local when hosted cannot run,
-    so the row is read, not the resolved value) and whether hosted is configured."""
+    """The Local / Hosted / Both card. Once online models were set up and then switched off, it
+    shows Local, whatever was chosen before; the stored choice is kept and shows again when they
+    are switched back on (D-REL-41, D-PRIV-791). A Hosted or Both choice made before online was
+    ever set up stays shown: that is the pending setup the page walks through (steps 6 and 7).
+    Otherwise a stored choice wins; else it is derived from the stored `llm.mode` (the effective
+    mode in Settings falls back to local when hosted cannot run, so the row is read, not the
+    resolved value) and whether hosted is configured."""
     stored = rows.get(CHOICE_KEY)
+    hm = settings.llm.hosted_mode
+    if hm.acknowledged_at and not hm.enabled:
+        return "local", stored in CHOICES
     if stored in CHOICES:
         return str(stored), True
     mode = rows.get(MODE_KEY) or settings.llm.mode
@@ -306,6 +320,151 @@ def run_choice(settings: Settings, rows: dict[str, Any]) -> tuple[str, bool]:
         for b in prov.external_backends(settings).values()
     )
     return ("both" if configured else "local"), False
+
+
+# One place names where the confirmation is made (config.ONLINE_CONSENT_HOW, #208).
+ONLINE_OFF = f"Online models are off. To turn them on, {ONLINE_CONSENT_HOW}."
+LOCAL_CHOSEN = (
+    "On this computer is chosen under Settings > This computer, so online models are not in "
+    "use. Choose Online model or Both there to use them."
+)
+
+
+def online_not_in_use(settings: Settings, rows: dict[str, Any]) -> str | None:
+    """Why online models are not in use now, or None when they are: switched on, the disclosure
+    ticked as it reads now, and the run card not on Local. The one rule for the provider reads
+    (the model list and the balance, D-REL-41); the card and this read the same run_choice."""
+    if not settings.llm.hosted_mode.active:
+        return ONLINE_OFF
+    if run_choice(settings, rows)[0] == "local":
+        return LOCAL_CHOSEN
+    return None
+
+
+def online_send_held(settings: Settings) -> str | None:
+    """THE gate for anything that would be sent to an online provider (D-PRIV-798): why nothing
+    may go now, or None when it may. Every inference path asks here and nowhere else: the
+    worker's hold check, a one-run model pick, the client itself, and each route that confirms
+    an online send. It applies `online_not_in_use`'s rule to the card rows these settings were
+    loaded with (config.HostedMode._run_card): switched off, a stale tick, or On this computer
+    chosen all hold the send, including work queued and confirmed earlier, and retries.
+
+    "Chosen" is the stored choice. With no choice stored the card only shows a default (Local
+    when no key is saved), and a default is not the person's decision: the provider reads stay
+    off for it (`online_not_in_use`), but a send the person confirms is not refused as if they
+    had chosen On this computer.
+
+    Settings that were not built from the setting rows (`_run_card` is None: a bare
+    `load_settings()`, a test's hand-built object) carry no card, so only the switch and the tick
+    are judged. Every loader the app sends through reads the rows (load_settings_with_db, the
+    doctor's sync copy, the worker's live re-read)."""
+    if not settings.llm.hosted_mode.active:
+        return ONLINE_OFF
+    card = getattr(settings.llm.hosted_mode, "_run_card", None)
+    if card is None:
+        return None
+    choice, chosen = run_choice(settings, card)
+    return LOCAL_CHOSEN if choice == "local" and chosen else None
+
+
+HOSTED_ROW_PREFIX = "llm.hosted_mode."
+# Said when the stored state cannot be read at the moment of a send: when unsure, nothing goes.
+STATE_UNREADABLE = (
+    "Kestrel could not read whether online models are in use right now, so nothing was sent."
+)
+
+
+def hosted_mode_from_rows(hosted: HostedMode, rows: Mapping[str, Any]) -> HostedMode:
+    """`hosted` with every `llm.hosted_mode.<field>` row laid over it and the run card's rows as
+    `rows` hold them: Hosted mode as the setting table says it is now. A row that no longer
+    validates reads as off. With no card row and a `hosted` that never read the card (settings
+    not built from the setting rows) there is still no card to judge by. Shared by the worker's
+    per-task re-read and the client's check before each request (D-PRIV-798)."""
+    data = hosted.model_dump()
+    card: dict[str, Any] = {}
+    for key, value in rows.items():
+        if key in RUN_CARD_KEYS:
+            card[key] = value
+            continue
+        field_name = key[len(HOSTED_ROW_PREFIX):]
+        # resume_lines follows the prompt version (Settings), never a stored row.
+        if key.startswith(HOSTED_ROW_PREFIX) and "." not in field_name and (
+            field_name != "resume_lines"
+        ):
+            data[field_name] = value
+    try:
+        live = HostedMode.model_validate(data)
+    except ValueError as exc:
+        log.warning("hosted_mode_row_invalid", error=str(exc))
+        return HostedMode(enabled=False)
+    known = card or getattr(hosted, "_run_card", None) is not None
+    live._run_card = card if known else None
+    return live
+
+
+def _stored_online_rows() -> dict[str, Any] | None:
+    """The Hosted mode rows and the run card rows, read now with a plain sync engine (the
+    caller runs it in a thread; no shared engine, so no event loop is involved). None when there
+    is no database or no setting table yet: nothing is stored, the settings are the whole
+    truth."""
+    from sqlalchemy import or_
+    from sqlalchemy.exc import OperationalError
+
+    from kestrel.db.engine import make_sync_engine
+
+    db = paths.db_path()
+    if not db.exists():
+        return None
+    engine = make_sync_engine(db)
+    try:
+        with engine.connect() as conn:
+            found = conn.execute(
+                select(Setting.key, Setting.value).where(
+                    or_(Setting.key.like(HOSTED_ROW_PREFIX + "%"), Setting.key.in_(RUN_CARD_KEYS))
+                )
+            ).all()
+    except OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            return None
+        raise
+    finally:
+        engine.dispose()
+    return {k: v for k, v in found}
+
+
+async def online_send_held_now(settings: Settings) -> str | None:
+    """`online_send_held`, judged on what the setting rows hold at this moment instead of on
+    what `settings` held when it was loaded. The client asks this immediately before every
+    request to an online provider, so a repair or a retry made after the person chose On this
+    computer (or switched online off) is not sent on the strength of an earlier check
+    (D-PRIV-798 round 2). A database that cannot be read holds the send."""
+    hosted = settings.llm.hosted_mode
+    if not isinstance(hosted, HostedMode):
+        return online_send_held(settings)
+    try:
+        rows = await asyncio.to_thread(_stored_online_rows)
+    except (SQLAlchemyError, OSError) as exc:
+        log.warning("online_state_unreadable", error=type(exc).__name__)
+        return STATE_UNREADABLE
+    if rows is None:
+        return online_send_held(settings)
+    live = hosted_mode_from_rows(hosted, rows)
+    now = settings.model_copy(update={"llm": settings.llm.model_copy(update={"hosted_mode": live})})
+    return online_send_held(now)
+
+
+def send_refusal(why: str, off_sentence: str) -> str:
+    """The sentence a route shows for `why` (a non-None online_send_held answer): its own
+    long-standing words when online is switched off or the tick is stale, and the reason itself
+    when On this computer is chosen, so the words always match the cause."""
+    return off_sentence if why == ONLINE_OFF else f"Nothing was sent. {why}"
+
+
+async def online_not_in_use_now(session: AsyncSession, settings: Settings) -> str | None:
+    """`online_not_in_use` with the card rows read from the database for this call."""
+    found = await session.execute(
+        select(Setting.key, Setting.value).where(Setting.key.in_((MODE_KEY, CHOICE_KEY))))
+    return online_not_in_use(settings, {k: v for k, v in found.all()})
 
 
 def is_first_run(settings: Settings, rows: dict[str, Any] | None = None) -> bool:
@@ -641,7 +800,8 @@ def build_steps(st: SetupState, cat: profiles.ModelCatalog) -> list[StepState]:
         StepState(
             "hosted", 6, "Hosted provider and key", status6,
             detail=detail6,
-            explanation="On Settings > Hosted: pick a provider (OpenRouter first: free models "
+            explanation="On Settings > This computer: pick a provider (OpenRouter first: free "
+            "models "
             "available; then OpenModel, Anthropic or OpenAI), paste your key, read what each "
             "tier sends, and connect. Kestrel tests the key and picks a model per tier (a "
             "free-only filter is available). "
@@ -651,7 +811,7 @@ def build_steps(st: SetupState, cat: profiles.ModelCatalog) -> list[StepState]:
                 else "Optional for Local: it enables deeper reads only."
             ),
             link="/settings#hosted",
-            link_label="Add a key" if not keys else "Settings > Hosted",
+            link_label="Add a key" if not keys else "Settings > This computer",
             pill=pill6, pill_class="apply" if pill6 == "ok" else "grey",
         )
     )
@@ -840,7 +1000,7 @@ async def set_run_mode(session: AsyncSession, choice: str, settings: Settings) -
     if problem is None:
         await _set(session, MODE_KEY, "hosted")
         return "Kestrel runs on hosted models."
-    return f"{HOSTED_PENDING} under Settings > Hosted: {problem}."
+    return f"{HOSTED_PENDING} under Settings > This computer: {problem}."
 
 
 async def apply_pending_hosted_mode(

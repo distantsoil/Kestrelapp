@@ -1,48 +1,92 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Kestrel Capture — options</title>
-  <style>
-    body { font: 14px system-ui, sans-serif; max-width: 480px; margin: 2rem auto; color: #1f1a17; }
-    h1 { color: #d4622a; font-size: 1.2rem; }
-    label { display: block; margin: .8rem 0 .2rem; font-weight: 600; }
-    input, select { width: 100%; padding: .4rem; border: 1px solid #e4ded9; border-radius: 6px; }
-    .row { display: flex; gap: .5rem; }
-    button { margin-top: 1rem; padding: .5rem .9rem; background: #d4622a; color: #fff; border: none;
-      border-radius: 6px; cursor: pointer; }
-    .muted { color: #6b625b; font-size: .85rem; }
-    #status { margin-left: .6rem; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kestrel Capture settings</title>
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="options.css">
 </head>
-<body>
-  <h1>Kestrel Capture</h1>
-  <p class="muted">This extension talks only to your local Kestrel. Nothing is sent anywhere else.
-  Leave the port blank and it finds Kestrel by itself. Set one only to pin a specific instance;
-  the running port is on Kestrel's About page (it is the port in <code>runtime.json</code>).</p>
-
-  <div class="row">
-    <div style="flex:2"><label>API host</label><input id="host" value="127.0.0.1"></div>
-    <div style="flex:1"><label>Port</label><input id="port" type="number" placeholder="auto"></div>
+<body class="opts">
+  <div class="layout">
+    <nav class="side" aria-label="Settings sections">
+      <div class="brandline"><img class="logo" src="icon.svg" alt=""> <b>Kestrel Capture</b></div>
+      <a href="#connection" data-sec="connection">Connection</a>
+      <a href="#browser" data-sec="browser">On this browser</a>
+      <a href="#about" data-sec="about">About</a>
+    </nav>
+    <main class="content">
+      <section id="connection" class="sec">
+        <h1>Connection</h1>
+        <p><span id="conn-pill" class="pillbig">Checking...</span></p>
+        <div class="card">
+          <label class="lbl" for="key">Connection key</label>
+          <div class="keyrow">
+            <input id="key" type="password" autocomplete="off" spellcheck="false" readonly value="">
+            <button id="key-change" type="button">Change</button>
+          </div>
+          <div id="key-edit" class="hidden">
+            <input id="key-new" type="password" placeholder="Paste key here" autocomplete="off" spellcheck="false" aria-label="New connection key">
+            <p class="muted">In Kestrel: Settings, Browser extension, Copy key.</p>
+            <div class="row-btns"><button id="key-cancel" type="button">Cancel</button><button id="key-save" class="primary" type="button">Save</button></div>
+            <div id="key-msg" role="status"></div>
+          </div>
+        </div>
+        <details class="card">
+          <summary>Show details</summary>
+          <p class="muted" id="found-line">Found automatically on 127.0.0.1.</p>
+          <label class="lbl" for="port">Port (empty means automatic)</label>
+          <div class="keyrow"><input id="port" type="text" inputmode="numeric" placeholder="Automatic"><button id="port-save" type="button">Save</button></div>
+          <div id="port-msg" role="status"></div>
+        </details>
+      </section>
+      <section id="browser" class="sec">
+        <h1>On this browser</h1>
+        <p class="muted">These are the same settings as in Kestrel's Settings, Browser extension: one value, stored in Kestrel, editable from either place.</p>
+        <div class="card" id="switches">
+          <label class="sw"><input type="checkbox" data-feature="badges"><span class="track" aria-hidden="true"></span> Show Kestrel scores on job boards</label>
+          <label class="sw"><input type="checkbox" data-feature="waiting"><span class="track" aria-hidden="true"></span> Offer roles that are waiting for a description</label>
+          <label class="sw"><input type="checkbox" data-feature="toolbar_count"><span class="track" aria-hidden="true"></span> Show a count on the toolbar icon</label>
+          <div id="sw-msg" role="status"></div>
+        </div>
+        <div class="card">
+          <h2>Sites where badges are hidden</h2>
+          <ul id="hidden-sites" class="sites"></ul>
+        </div>
+      </section>
+      <section id="about" class="sec">
+        <h1>About</h1>
+        <dl class="grid2 card">
+          <dt>Version</dt><dd id="ver"></dd>
+          <dt>Connected to</dt><dd id="conn-to">Not connected</dd>
+          <dt>Cost</dt><dd>Free. You are not the product.</dd>
+          <dt>License</dt><dd>Source is public under PolyForm Noncommercial 1.0.0</dd>
+        </dl>
+        <p class="links">
+          <a href="https://kestrelapp.co/privacy" target="_blank" rel="noopener noreferrer">Privacy policy</a>
+          <button id="help" class="link" type="button">Help</button>
+          <a href="https://github.com/distantsoil/kestrel" target="_blank" rel="noopener noreferrer">Source code</a>
+        </p>
+        <div class="card">
+          <h2>What this extension can see and do</h2>
+          <ul class="plain">
+            <li>On the job boards it supports, it checks the links already on the page against Kestrel and shows a small badge next to postings Kestrel knows.</li>
+            <li>When you click Capture or Read, it reads the title and text of the page you have open and sends them to Kestrel on this computer.</li>
+            <li>When you open its popup, it sends the address of the tab you are on to Kestrel on this computer, to see whether Kestrel knows that posting.</li>
+            <li>It shows what Kestrel already knows about a role: its score, why it fits, and your documents for it.</li>
+          </ul>
+          <h2>What it never does</h2>
+          <ul class="plain">
+            <li>It never applies, fills in a form, clicks or submits anything for you.</li>
+            <li>It never opens, reloads or edits a page, and never gets past a login or a check page. A badge is its own small element next to a link; the page's text and links stay as they were.</li>
+            <li>It never sends anything to any server but Kestrel on this computer. Nothing is collected, sold or shared.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
   </div>
-  <label>Shared secret (required)</label>
-  <input id="secret" type="password" placeholder="X-Kestrel-Key">
-  <p class="muted">Kestrel accepts a capture or a badge lookup from an extension only when it
-  carries this secret, so that any other extension with a localhost permission cannot drive your
-  Kestrel. Generate it in Kestrel under Settings &gt; LAN and paste it here. It is sent as the
-  <code>X-Kestrel-Key</code> header on real requests, never on a discovery probe.</p>
-  <label>Badge style</label>
-  <select id="badgeStyle">
-    <option value="pill">Pill (score + status)</option>
-    <option value="minimal">Minimal (dot)</option>
-  </select>
-  <label>Badge these boards</label>
-  <input id="boards" value="greenhouse,lever,ashby,workday,smartrecruiters,indeed">
-  <div>
-    <button id="save">Save</button>
-    <button id="test" style="background:#6b625b">Test connection</button>
-    <span id="status" class="muted"></span>
-  </div>
+  <script src="api.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

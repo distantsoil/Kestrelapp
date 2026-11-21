@@ -8,7 +8,9 @@ Gated like the other live-browser tests: set KESTREL_LIVE_BROWSER=1."""
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -22,18 +24,35 @@ pytestmark = pytest.mark.skipif(
     reason="launches a real browser; set KESTREL_LIVE_BROWSER=1",
 )
 
+# The desktop window's channel, faked at the page's fetch (kestrel-ui.js calls
+# /api/window/call/<name> and long-polls /api/window/events; D-SEC-61). window.pywebview is the
+# marker pywebview puts on the desktop window's pages; only its presence is read.
 FAKE_API = """
 window.__calls = [];
-const rec = (name, ret) => (...a) => {
-  window.__calls.push([name, ...a]); return Promise.resolve(ret);
-};
-window.pywebview = {api: {
-  window_info: rec('info', {os: window.__os || 'win', maximized: false}),
-  window_minimize: rec('min'), window_toggle_maximize: rec('max', true),
-  window_close_intent: rec('intent', 'tray'), window_close: rec('close'),
-  window_start_drag: rec('drag'), window_start_resize: rec('resize'),
-  window_set_frame_color: rec('strip'),
-}};
+window.pywebview = window.pywebview || {};
+window.__labels = {window_info: 'info', window_minimize: 'min', window_toggle_maximize: 'max',
+  window_close_intent: 'intent', window_close: 'close', window_start_drag: 'drag',
+  window_start_resize: 'resize', window_set_frame_color: 'strip', bridge_check: 'bridge',
+  window_set_theme: 'theme'};
+window.__answers = {window_info: () => ({os: window.__os || 'win', maximized: false}),
+  window_toggle_maximize: () => true, window_close_intent: () => 'tray', bridge_check: () => true};
+(function () {
+  const realFetch = window.fetch.bind(window);
+  window.fetch = function (url, opts) {
+    const u = String(url);
+    const m = u.match(/\\/api\\/window\\/call\\/([a-z_]+)/);
+    if (m) {
+      const args = (JSON.parse((opts && opts.body) || '{}').args) || [];
+      window.__calls.push([window.__labels[m[1]] || m[1], ...args]);
+      const ans = window.__answers[m[1]];
+      const value = ans ? ans() : null;
+      return Promise.resolve(new Response(JSON.stringify({value: value}),
+        {status: 200, headers: {'Content-Type': 'application/json'}}));
+    }
+    if (u.indexOf('/api/window/events') >= 0) return new Promise(() => {});
+    return realFetch(url, opts);
+  };
+})();
 """
 
 
@@ -106,6 +125,8 @@ def test_controls_call_the_window_api_and_close_asks_first(live):
         page.keyboard.press("Escape")
         calls = [c[0] for c in page.evaluate("window.__calls")]
         assert calls[:1] == ["info"] and "min" in calls and "max" in calls
+        # The page reports that it reached the API (D-SEC-61, kestrel/desktop/bridge_check.py).
+        assert calls.count("bridge") == 1
         assert calls.index("intent") < calls.index("close")  # close asks where it goes first
         assert calls.count("drag") == 1 and "resize" not in calls
         assert not errors, errors
@@ -153,12 +174,18 @@ def test_launch_entrance_runs_once_and_reduced_motion_stops_everything(live):
     base, browser, _ = live
     ctx = browser.new_context(viewport={"width": 1440, "height": 900})
     page = ctx.new_page()
+    # Recorded in the page at DOMContentLoaded, not read back after goto returns: on a loaded
+    # machine the entrance can finish (and its class come off) before a round trip from the
+    # test reaches the page, which failed the owner's Windows base on 6a76875e.
+    page.add_init_script("""document.addEventListener('DOMContentLoaded', () => {
+      const a = document.querySelector('.side .mainnav > a');
+      window.__kIntro = {cls: document.documentElement.classList.contains('k-intro'),
+                         anim: a ? getComputedStyle(a).animationName : null}; });""")
     try:
-        # Read at first paint: the entrance classes come off once the motion is over.
+        # At first paint the entrance is on: the class and the nav's entrance animation.
         page.goto(base + "/", wait_until="domcontentloaded")
-        assert page.evaluate("document.documentElement.classList.contains('k-intro')")
-        assert page.locator(".side .mainnav > a").first.evaluate(
-            "el => getComputedStyle(el).animationName") == "k-inL"
+        first = page.evaluate("window.__kIntro")
+        assert first == {"cls": True, "anim": "k-inL"}, first
         page.wait_for_load_state("networkidle")
         page.goto(base + "/help")
         assert not page.evaluate("document.documentElement.classList.contains('k-intro')")
@@ -232,20 +259,71 @@ def test_the_palette_opens_with_ctrl_k_in_any_case_finds_a_page_and_opens_it(liv
         ctx.close()
 
 
-def test_loading_page_states_and_one_try_again_at_a_time(live):
-    from kestrel.desktop.shell import splash_html
+class _ShellDouble:
+    """Stands in for the shell's WindowApi behind the loading page's server: records each call."""
 
-    _, browser, _ = live
-    ctx = browser.new_context(viewport={"width": 1200, "height": 760})
+    def __init__(self, os_key: str = "win") -> None:
+        self.calls: list[str] = []
+        self.os_key = os_key
+
+    def __getattr__(self, name):
+        from kestrel.desktop.channel import SPLASH_CALLS
+
+        if name not in SPLASH_CALLS:
+            raise AttributeError(name)
+
+        def record(*args):
+            self.calls.append(name)
+            return {"os": self.os_key, "maximized": False} if name == "window_info" else None
+
+        return record
+
+
+@pytest.fixture
+def splash():
+    """The real loading page from the shell's own server (splash_server.py), under the app's
+    exact policy, with a recording stand-in for the shell."""
+    from kestrel.desktop.splash_server import SplashServer
+
+    servers = []
+
+    def make(theme="auto", os_key="win"):
+        double = _ShellDouble(os_key)
+        srv = SplashServer(double, theme=theme).start()
+        servers.append(srv)
+        return srv, double
+
+    yield make
+    for srv in servers:
+        srv.stop()
+
+
+def _splash_page(browser, srv, **ctx_kw):
+    ctx_kw.setdefault("viewport", {"width": 1200, "height": 760})
+    ctx = browser.new_context(**ctx_kw)
     page = ctx.new_page()
+    response = page.goto(srv.url)
+    page.wait_for_function("() => !!window.KSplash")
+    return ctx, page, response
+
+
+def _post(page, srv, fn, *args):
+    """Send the page an update the way the shell does, and wait until the page has applied it."""
+    seq = srv.channel.post(fn, *args)
+    page.wait_for_function(
+        "n => Number(document.documentElement.getAttribute('data-splash-seq') || 0) >= n", arg=seq)
+
+
+def test_loading_page_states_and_one_try_again_at_a_time(live, splash):
+    _, browser, _ = live
+    srv, shell = splash()
+    ctx, page, _ = _splash_page(browser, srv)
     try:
-        page.set_content(splash_html())
-        page.evaluate(FAKE_API.replace("window_info:", "splash_retry: rec('retry'), window_info:"))
-        page.evaluate("KSplash.say('Updating your data to the new version', null, 'Later', 0)")
+        _post(page, srv, "say", "Updating your data to the new version", None, "Later", 0)
         page.wait_for_function("document.getElementById('status').textContent.startsWith('Updating')")
         assert page.locator("#bar").evaluate("b => b.classList.contains('is-indet')")
-        assert page.locator("#note").inner_text() == "Later"
-        page.evaluate("KSplash.fail('Something stopped it.', 'Startup step: x')")
+        page.wait_for_function("document.getElementById('note').textContent === 'Later'")
+        _post(page, srv, "fail", "Something stopped it.", "Startup step: x")
         assert page.locator("#prob").is_visible() and page.locator("#sp").is_hidden()
         assert page.locator("#reason").inner_text() == "Something stopped it."
         assert page.evaluate("document.activeElement.id") == "retry"
@@ -255,16 +333,94 @@ def test_loading_page_states_and_one_try_again_at_a_time(live):
         page.click("#retry")
         assert page.locator("#retry").is_disabled()
         page.locator("#retry").dispatch_event("click")  # a second click while it runs
-        assert [c[0] for c in page.evaluate("window.__calls")].count("retry") == 1
-        page.evaluate("KSplash.fail('Again.', '')")
+        page.wait_for_timeout(300)
+        assert shell.calls.count("splash_retry") == 1
+        _post(page, srv, "fail", "Again.", "")
         assert page.locator("#retry").is_enabled()
     finally:
         ctx.close()
 
 
-def test_loading_page_offers_safe_mode_after_two_failed_starts(live, monkeypatch):
+def test_the_startup_card_under_the_production_policy_retries_and_quits(live, splash):
+    """#212 round 4: the loading page is served with the app's exact policy and its failure card
+    works through the shell's channel alone: the card shows, Try again and Quit reach the shell,
+    and nothing breaks the policy (the shared watch fails the test on any violation)."""
+    from kestrel.web.csp import POLICY
+
+    _, browser, _ = live
+    srv, shell = splash()
+    ctx, page, response = _splash_page(browser, srv)
+    try:
+        assert response.headers["content-security-policy"] == POLICY
+        _post(page, srv, "say", "Opening your data", 30)
+        _post(page, srv, "fail", "Kestrel could not open your data.", "Startup step: migrate",
+              "migrations_failed", "STA-004")
+        assert page.locator("#prob").is_visible()
+        assert page.locator("#ecode").inner_text() == "Code STA-004"
+        page.click("#retry")
+        page.wait_for_timeout(300)
+        assert shell.calls.count("splash_retry") == 1
+        _post(page, srv, "fail", "Kestrel could not open your data.", "", "migrations_failed",
+              "STA-004")
+        page.click("#quit")
+        page.wait_for_timeout(300)
+        assert shell.calls.count("splash_quit") == 1
+        page.click("#logs")
+        page.wait_for_timeout(300)
+        assert shell.calls.count("splash_open_logs") == 1
+        # A page that reloads replays every update it missed and lands on the same card.
+        page.reload()
+        page.wait_for_function("() => document.getElementById('prob').classList.contains('is-on')")
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [390, 480, 1440])
+def test_the_startup_card_shows_its_code_under_the_reason_and_first_in_details(
+    live, splash, theme, width
+):
+    _, browser, _ = live
+    srv, _shell = splash(theme=theme)
+    ctx, page, _ = _splash_page(browser, srv, viewport={"width": width, "height": 760},
+                                color_scheme=theme)
+    try:
+        _post(page, srv, "fail",
+              "Kestrel's local server did not answer in time. Trying again usually fixes it.",
+              "Startup step: start the local server\nLog file: kestrel.log (in the logs folder)",
+              "health_never_up", "STA-006")
+        assert page.locator("#ecode").is_visible()
+        assert page.locator("#ecode").inner_text() == "Code STA-006"
+        page.click("#detBtn")
+        assert page.locator("#det").inner_text().startswith("Code STA-006\nStartup step:")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
+        boxes = page.evaluate(
+            "['reason','ecode','det'].map(i => { const r = document.getElementById(i)"
+            ".getBoundingClientRect(); return [r.top, r.bottom, r.left, r.right]; })"
+        )
+        (_, reason_bottom, _, _), (ecode_top, ecode_bottom, _, _), (det_top, _, _, _) = boxes
+        assert ecode_top >= reason_bottom - 8  # under the reason (its margin pulls it close)
+        assert det_top >= ecode_bottom  # no overlap with the details block
+    finally:
+        ctx.close()
+
+
+def test_a_card_without_a_code_shows_no_code_line(live, splash):
+    _, browser, _ = live
+    srv, _shell = splash()
+    ctx, page, _ = _splash_page(browser, srv)
+    try:
+        _post(page, srv, "fail", "Something stopped it.", "Startup step: x", "x", "")
+        assert page.locator("#ecode").is_hidden()
+        page.click("#detBtn")
+        assert page.locator("#det").inner_text() == "Startup step: x"
+    finally:
+        ctx.close()
+
+
+def test_loading_page_offers_safe_mode_after_two_failed_starts(live, splash, monkeypatch):
     """#130: the real offer (two failed starts, then the third) on the real loading page: the
-    button reads Start with optional features off, reaches the desktop API once, and a normal
+    button reads Start with optional features off, reaches the shell once, and a normal
     failure card does not show it."""
     import kestrel.desktop.shell as shell
     from kestrel import startup_health
@@ -278,30 +434,27 @@ def test_loading_page_offers_safe_mode_after_two_failed_starts(live, monkeypatch
     err = exc_info.value
     startup_health._write(0)
     _, browser, _ = live
-    ctx = browser.new_context(viewport={"width": 1200, "height": 760})
-    page = ctx.new_page()
+    srv, double = splash()
+    ctx, page, _ = _splash_page(browser, srv)
     try:
-        page.set_content(shell.splash_html())
-        page.evaluate(
-            FAKE_API.replace("window_info:", "splash_safe_start: rec('safe'), window_info:")
-        )
-        page.evaluate("([r, d, c]) => KSplash.fail(r, d, c)", [err.reason, err.details, err.code])
+        _post(page, srv, "fail", err.reason, err.details, err.code)
         assert page.locator("#safe").is_visible()
         assert page.locator("#safe").inner_text() == "Start with optional features off"
         assert "last two times" in page.locator("#reason").inner_text()
         page.click("#safe")
         page.locator("#safe").dispatch_event("click")  # a second click while it runs
-        assert [c[0] for c in page.evaluate("window.__calls")].count("safe") == 1
-        page.evaluate("KSplash.fail('Something stopped it.', '', 'migrations_failed')")
+        page.wait_for_timeout(300)
+        assert double.calls.count("splash_safe_start") == 1
+        _post(page, srv, "fail", "Something stopped it.", "", "migrations_failed")
         assert page.locator("#safe").is_hidden()
     finally:
         ctx.close()
 
 
-def test_loading_page_for_a_newer_database_offers_download_and_no_retry(live):
+def test_loading_page_for_a_newer_database_offers_download_and_no_retry(live, splash):
     """#105: the real StartupError for a database a newer Kestrel saved, rendered on the real
     loading page: it names the release, offers Download latest, hides Try again, and the button
-    reaches the desktop API."""
+    reaches the shell."""
     import sqlite3
 
     import kestrel.desktop.shell as shell
@@ -321,16 +474,10 @@ def test_loading_page_for_a_newer_database_offers_download_and_no_retry(live):
         shell._start_backend(shell._Splash())
     err = exc_info.value
     _, browser, _ = live
-    ctx = browser.new_context(viewport={"width": 1200, "height": 760})
-    page = ctx.new_page()
+    srv, double = splash()
+    ctx, page, _ = _splash_page(browser, srv)
     try:
-        page.set_content(shell.splash_html())
-        page.evaluate(
-            FAKE_API.replace("window_info:", "splash_download: rec('download'), window_info:")
-        )
-        page.evaluate(
-            "([r, d, c]) => KSplash.fail(r, d, c)", [err.reason, err.details, err.code]
-        )
+        _post(page, srv, "fail", err.reason, err.details, err.code)
         assert page.locator("#prob").is_visible()
         assert "saved by a newer Kestrel (99.1.0)" in page.locator("#reason").inner_text()
         assert page.locator("#download").is_visible()
@@ -338,16 +485,17 @@ def test_loading_page_for_a_newer_database_offers_download_and_no_retry(live):
         assert page.locator("#retry").is_hidden()
         assert page.evaluate("document.activeElement.id") == "download"
         page.click("#download")
-        assert [c[0] for c in page.evaluate("window.__calls")].count("download") == 1
-        page.evaluate("KSplash.fail('Something stopped it.', '', 'migrations_failed')")
+        page.wait_for_timeout(300)
+        assert double.calls.count("splash_download") == 1
+        _post(page, srv, "fail", "Something stopped it.", "", "migrations_failed")
         assert page.locator("#retry").is_visible() and page.locator("#download").is_hidden()
     finally:
         ctx.close()
 
 
-LATE_API = FAKE_API.replace("window.pywebview = {api: {", "window.__late = {api: {") + """
-window.pywebview = {};  // the object exists early, its API arrives later
-setTimeout(() => { window.pywebview.api = window.__late.api;
+LATE_API = FAKE_API.replace("window.pywebview = window.pywebview || {};", "") + """
+// pywebview puts its object on the page after it loads, then fires pywebviewready.
+setTimeout(() => { window.pywebview = {};
   window.dispatchEvent(new Event('pywebviewready')); }, 700);
 """
 EARLY_EVENT = FAKE_API + """
@@ -359,7 +507,7 @@ window.dispatchEvent(new Event('pywebviewready'));
 @pytest.mark.parametrize("init", [LATE_API, EARLY_EVENT], ids=["api-late", "event-early"])
 def test_controls_appear_whichever_comes_first_the_api_or_the_page(live, init):
     """Hardware check: on Windows pywebviewready fired before the page listened, so the controls
-    stayed hidden. They must appear when the API is already there, or when it arrives later."""
+    stayed hidden. They must appear when the window's marker is already there, or arrives later."""
     base, browser, bridge = live
     bridge.set_quit_handler(lambda: None)
     bridge.set_window_frame(True)
@@ -1238,8 +1386,11 @@ def test_opening_the_rail_overlays_the_page_and_does_not_move_it(live, width):
                                "document.querySelector('#sidebar').getBoundingClientRect().width)")
         assert page.evaluate(_MAIN_BOX) == before
         assert _tip(page) == ["true", "Collapse sidebar"]
-        assert page.evaluate(
-            "getComputedStyle(document.querySelector('.k-side-toggle')).transform") != arrow_closed
+        # The arrow turns over .3s (components.css .k-side-toggle transition), and the first
+        # animated frame still reads the closed value; wait for it to turn rather than reading once.
+        page.wait_for_function(
+            "getComputedStyle(document.querySelector('.k-side-toggle')).transform !== "
+            + json.dumps(arrow_closed))
         # Above the page, not beside it: the sidebar's box covers the page's left edge.
         top = page.evaluate("""() => { const r = document.querySelector('#sidebar')
           .getBoundingClientRect(); const e = document.elementFromPoint(r.right - 6, 300);
@@ -1446,4 +1597,61 @@ def test_track_switch_and_window_controls_work_in_the_open_sidebar(live, monkeyp
             assert page.locator(f'[data-wc="{w}"]').is_visible()
         assert errors == []
     finally:
+        ctx.close()
+
+
+def test_window_events_reach_the_page_through_the_real_routes(live):
+    """D-SEC-61 (round 4): no fake at the page. The page reaches a stand-in WindowApi through
+    POST /api/window/call, and the shell's events (maximized, the closing screen) reach the page
+    through its long poll of /api/window/events, under the app's policy."""
+    from kestrel.desktop.channel import APP_EVENTS, Channel
+
+    base, browser, bridge = live
+
+    class _Api:
+        def __init__(self):
+            self.calls = []
+
+        def window_info(self):
+            self.calls.append("window_info")
+            return {"os": "win", "maximized": False}
+
+        def bridge_check(self):
+            self.calls.append("bridge_check")
+            return True
+
+        def window_set_frame_color(self, color=None):
+            self.calls.append("window_set_frame_color")
+
+        def window_minimize(self):
+            self.calls.append("window_minimize")
+
+    api, channel = _Api(), Channel(APP_EVENTS)
+    bridge.set_quit_handler(lambda: None)
+    bridge.set_window_frame(True)
+    bridge.set_window_api(api, channel)
+    # Not _page: its wait for an idle network never comes while the page's long poll is open.
+    ctx = browser.new_context(viewport={"width": 1440, "height": 900})
+    page = ctx.new_page()
+    page.add_init_script("window.pywebview = {};")
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(base + "/help")
+    try:
+        page.wait_for_selector("#k-wctl:not([hidden])")
+        page.click('[data-wc="min"]')
+        deadline = time.monotonic() + 5
+        while "window_minimize" not in api.calls and time.monotonic() < deadline:
+            page.wait_for_timeout(100)
+        # window_info answers first; the calls after it are concurrent requests in any order.
+        assert api.calls[0] == "window_info"
+        assert {"bridge_check", "window_minimize"} <= set(api.calls)
+        page.wait_for_timeout(300)  # the page's long poll is open
+        channel.post("state", True)
+        page.wait_for_function("document.getElementById('k-wctl').classList.contains('is-max')")
+        channel.post("closing")
+        page.wait_for_selector("#k-closing")
+        assert not errors, errors
+    finally:
+        bridge.set_window_api(None, None)
         ctx.close()

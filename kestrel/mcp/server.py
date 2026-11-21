@@ -7,6 +7,8 @@ sends anything externally, submits anything, or makes a final document unseen.""
 
 from __future__ import annotations
 
+import functools
+
 from fastmcp import FastMCP
 from sqlalchemy import func, select
 
@@ -59,6 +61,18 @@ def _opp_summary(
     }
 
 
+async def _leaving(result):
+    """The one exit for MCP tool output (issue #218, D-PRIV-806): an MCP client is usually an
+    online model, so with Confidential mode on every string in every result has the current
+    employer replaced by its "Show it as" text, matched as widely as an online send
+    (`EmployerMap.redact_sent`). A field a tool forgets to redact itself is still covered here."""
+    async with get_sessionmaker()() as s:
+        conf, mapping = await confidential(s)
+    if not conf or not mapping:
+        return result
+    return mapping.redact_sent_json(result, keys=False)
+
+
 async def _client():
     """An LLM client on the settings the app runs with: the setting-table layer (hosted rows, a
     Settings-page model change) over YAML, never the YAML layer alone."""
@@ -78,8 +92,19 @@ def build_mcp() -> FastMCP:
     mcp = FastMCP("kestrel")
     sm = get_sessionmaker
 
+    def tool(fn):
+        """Register a tool whose every result leaves through `_leaving` (issue #218,
+        D-PRIV-806). Tools are registered only through this, never `mcp.tool` directly
+        (tests/test_confidential_leaks.py)."""
+
+        @functools.wraps(fn)
+        async def leaving(*args, **kwargs):
+            return await _leaving(await fn(*args, **kwargs))
+
+        return mcp.tool(leaving)
+
     # ---------------------------------------------------------------------- read tools
-    @mcp.tool
+    @tool
     async def list_opportunities(
         track: str | None = None, stage: str | None = None, verdict: str | None = None,
         score_min: float | None = None, limit: int = 50,
@@ -95,7 +120,7 @@ def build_mcp() -> FastMCP:
             conf, mapping = await confidential(s)
         return [_opp_summary(r.opp, r.ev, mapping, conf=conf) for r in page.rows]
 
-    @mcp.tool
+    @tool
     async def get_opportunity(opportunity_id: int) -> dict:
         """Full opportunity record with its latest evaluation blocks and dimensions."""
         async with sm()() as s:
@@ -124,7 +149,7 @@ def build_mcp() -> FastMCP:
             out["legitimacy"] = redact_json(ev.legitimacy, mapping, enabled=conf)
         return out
 
-    @mcp.tool
+    @tool
     async def search_opportunities(
         query: str, track: str | None = None, limit: int = 10
     ) -> list[dict]:
@@ -152,7 +177,7 @@ def build_mcp() -> FastMCP:
             for h in hits
         ]
 
-    @mcp.tool
+    @tool
     async def get_shortlist(track: str | None = None, limit: int = 50) -> list[dict]:
         """Everything whose LATEST tier-2 verdict is apply/pursue, ranked by score."""
         async with sm()() as s:
@@ -180,7 +205,7 @@ def build_mcp() -> FastMCP:
             conf, mapping = await confidential(s)
         return [_opp_summary(o, e, mapping, conf=conf) for o, e in rows]
 
-    @mcp.tool
+    @tool
     async def get_pursuits(track: str | None = None) -> list[dict]:
         """The pursuit pipeline with statuses and next actions."""
         async with sm()() as s:
@@ -202,7 +227,7 @@ def build_mcp() -> FastMCP:
             for p, o in rows
         ]
 
-    @mcp.tool
+    @tool
     async def get_org(org_id: int) -> dict:
         """An organization with its accumulated signals, latest research, and contacts."""
         async with sm()() as s:
@@ -240,7 +265,7 @@ def build_mcp() -> FastMCP:
             enabled=conf,
         )
 
-    @mcp.tool
+    @tool
     async def get_story_bank() -> dict:
         """Canonical stories with themes, plus theme coverage and gaps."""
         from kestrel.interview.coverage import theme_coverage
@@ -258,7 +283,7 @@ def build_mcp() -> FastMCP:
                         for st in stories],
         }
 
-    @mcp.tool
+    @tool
     async def get_comp_intel(
         title: str, geo_bucket: str | None = None, org_size_band: str | None = None,
         currency: str = "USD",
@@ -271,7 +296,7 @@ def build_mcp() -> FastMCP:
                                    org_size_band=org_size_band, currency=currency)
         return rng.as_dict()
 
-    @mcp.tool
+    @tool
     async def get_analytics(track: str = "employment") -> dict:
         """Funnel and score-vs-outcome summary for a track, with sample sizes."""
         from kestrel.analytics.metrics import collect_metrics
@@ -280,7 +305,7 @@ def build_mcp() -> FastMCP:
             m = await collect_metrics(s, track)
         return {"track": track, "funnel": m["funnel"], "score_vs_outcome": m["score_vs_outcome"]}
 
-    @mcp.tool
+    @tool
     async def get_run_status() -> dict:
         """Live progress of the active run."""
         from kestrel.web.queries import live_activity
@@ -289,7 +314,7 @@ def build_mcp() -> FastMCP:
             return await live_activity(s)
 
     # ------------------------------------------------------------ action tools (none external)
-    @mcp.tool
+    @tool
     async def ingest_opportunity(
         url: str | None = None, text: str | None = None, title: str | None = None,
         org_name: str | None = None, track: str = "employment",
@@ -305,7 +330,7 @@ def build_mcp() -> FastMCP:
             return {"error": "provide a url or text"}
         return {"id": opp.id, "title": opp.title, "stage": opp.stage, "track": opp.track}
 
-    @mcp.tool
+    @tool
     async def trigger_scan(source_name: str) -> dict:
         """Enqueue a scrape for a named source. Only enqueues; the worker later fetches PUBLIC pages
         politely. Never acts externally in the tool itself."""
@@ -324,7 +349,7 @@ def build_mcp() -> FastMCP:
         await TaskQueue(sm()).enqueue("scrape", {"source_id": src.id, "requested": True})
         return {"enqueued": True, "source_id": src.id}
 
-    @mcp.tool
+    @tool
     async def trigger_evaluation(opportunity_id: int) -> dict:
         """Force a re-evaluation: reset the opportunity to a state Tier 0 sweeps again."""
         async with sm()() as s:
@@ -339,7 +364,7 @@ def build_mcp() -> FastMCP:
             await s.commit()
         return {"id": opportunity_id, "requeued": True}
 
-    @mcp.tool
+    @tool
     async def set_pursuit_status(pursuit_id: int, status: str, note: str | None = None) -> dict:
         """Move a pursuit to a new status, writing a status_event. Rejects a status invalid for
         the pursuit's track."""
@@ -357,7 +382,7 @@ def build_mcp() -> FastMCP:
             await s.commit()
         return {"pursuit_id": pursuit_id, "status": status}
 
-    @mcp.tool
+    @tool
     async def add_note(pursuit_id: int, note: str) -> dict:
         """Append a dated note to a pursuit."""
         async with sm()() as s:

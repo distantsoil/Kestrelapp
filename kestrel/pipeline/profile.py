@@ -113,8 +113,16 @@ def empty_block(track: str) -> dict:
     return block
 
 
+# Contact-only keys the rules and prompts have no use for (D-PHONE-6, D-PHONE-7). The model-facing
+# profile never carries them, so no prompt can name the person's LinkedIn address or the stored
+# forms of their phone number; the documents read them from the editor's own block instead.
+CONTACT_ONLY = ("linkedin_profile", "phone_entered", "phone_e164", "phone_ext", "phone_country")
+
+
 def _build(block: dict) -> SimpleNamespace:
     block = normalize_name_fields(block)
+    for key in CONTACT_ONLY:
+        block.pop(key, None)
     block.setdefault("requires_sponsorship", False)
     # The near-floor margins (D-RULES-2): an absent key reads as the default, so a profile saved
     # before the setting existed keeps near-floor roles and no rule meets a missing attribute.

@@ -7,103 +7,8 @@
   <title>{% block title %}Kestrel{% endblock %}</title>
   {# Theme and scheme before first paint. The server renders data-scheme from the stored setting;
      this browser's own choice (localStorage) wins over it, and the theme is per browser only. #}
-  <script>
-    // Inside the desktop window there is no service worker: a page it controls loses WebView2's
-    // bridge (window.chrome.webview), so the window controls cannot reach the shell, and
-    // WebView2 turned link navigations into Save As downloads (Windows hardware check, round 3).
-    // Remove one an earlier run left in the window's profile, then reload once, uncontrolled.
-    (function () {
-      if (document.documentElement.getAttribute('data-k-desktop') !== '1') return;
-      if (!('serviceWorker' in navigator)) return;
-      navigator.serviceWorker.getRegistrations().then(function (regs) {
-        return Promise.all(regs.map(function (r) { return r.unregister(); }));
-      }).then(function () {
-        if (!navigator.serviceWorker.controller) return;
-        try {
-          if (sessionStorage.getItem('kestrel-sw-cleared')) return;
-          sessionStorage.setItem('kestrel-sw-cleared', '1');
-        } catch (e) { return; }
-        location.reload();
-      }).catch(function () {});
-    })();
-  </script>
-  <script>
-    (function () {
-      try {
-        var t = localStorage.getItem('kestrel-theme');
-        if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
-        var s = localStorage.getItem('kestrel-scheme');
-        if (s === 'indigo' || s === 'teal' || s === 'plum' || s === 'graphite' || s === 'contrast') document.documentElement.setAttribute('data-scheme', s);
-      } catch (e) {}
-      // Motion before first paint (D-UI-187): the launch entrance once per launch
-      // (the desktop app asks with #k-intro; a browser gets it on its first page of the
-      // session), and the page arrival on every other in-app page change.
-      try {
-        var h = document.documentElement;
-        var launched = sessionStorage.getItem('kestrel-launched');
-        if (location.hash === '#k-intro' || !launched) {
-          h.classList.add('k-intro');
-          sessionStorage.setItem('kestrel-launched', '1');
-          if (location.hash === '#k-intro') history.replaceState(null, '', location.pathname + location.search);
-        } else if (document.referrer && document.referrer.indexOf(location.origin + '/') === 0) {
-          h.classList.add('k-page-in');
-          // Leaving Today settles the hero band into the slim one (D-UI-199).
-          var from = document.referrer.slice(location.origin.length).split(/[?#]/)[0];
-          if (from === '/' && location.pathname !== '/') h.classList.add('k-from-today');
-        }
-      } catch (e) {}
-      // Settings > Preferences > Reduce motion also skips the page cross-fade (D-UI-201); the
-      // OS setting already turns it off in CSS.
-      window.addEventListener('pagereveal', function (e) {
-        if (e.viewTransition && document.documentElement.getAttribute('data-reduce-motion') === '1') {
-          e.viewTransition.skipTransition();
-        }
-        // The page-change recorder (D-UI-204), desktop window only: one log line per change.
-        try {
-          if (document.documentElement.getAttribute('data-k-desktop') !== '1') return;
-          var nav = performance.getEntriesByType('navigation')[0] || {};
-          var from = document.referrer.indexOf(location.origin) === 0
-            ? document.referrer.slice(location.origin.length).split(/[?#]/)[0] : '';
-          var rec = { to: location.pathname, came_from: from, vt: !!e.viewTransition,
-            ttfb_ms: nav.responseStart || 0, reveal_ms: performance.now(), hidden: document.hidden };
-          try {  // the page left behind recorded its side as it went (pageswap below)
-            var out = JSON.parse(sessionStorage.getItem('kestrel-swap') || 'null');
-            sessionStorage.removeItem('kestrel-swap');
-            if (out && out.to === location.pathname) {
-              rec.out_vt = out.vt; rec.out_anims = out.anims; rec.out_htmx = out.htmx;
-              rec.out_busy_ms = out.busy;
-            }
-          } catch (err) { /* storage off: the new page's side alone */ }
-          var body = JSON.stringify(rec);
-          navigator.sendBeacon('/api/diag/page', new Blob([body], { type: 'application/json' }));
-        } catch (err) { /* diagnostics never get in the way */ }
-      });
-      // The outgoing side of the same record (D-UI-209): Chromium decides here whether the page
-      // being left gets a transition, so note what this page was doing when it decided.
-      if (document.documentElement.getAttribute('data-k-desktop') === '1') {
-        var busy = [];
-        try {
-          new PerformanceObserver(function (l) {
-            var now = performance.now();
-            busy = busy.filter(function (t) { return t[0] + t[1] > now - 1000; });  // last second
-            l.getEntries().forEach(function (t) { busy.push([t.startTime, t.duration]); });
-          }).observe({ type: 'longtask', buffered: true });
-        } catch (err) { /* no long-task timing here */ }
-        window.addEventListener('pageswap', function (e) {
-          try {
-            var act = e.activation && e.activation.entry;
-            var to = act && act.url ? new URL(act.url).pathname : '';
-            var now = performance.now(), ms = 0;
-            busy.forEach(function (t) { if (t[0] + t[1] > now - 1000) ms += t[1]; });
-            sessionStorage.setItem('kestrel-swap', JSON.stringify({
-              to: to, vt: !!e.viewTransition, busy: Math.round(ms),
-              anims: document.getAnimations ? document.getAnimations().length : 0,
-              htmx: document.querySelectorAll('.htmx-request').length }));
-          } catch (err) { /* diagnostics never get in the way */ }
-        });
-      }
-    })();
-  </script>
+  <script src="{{ static_url('js/k-head.js') }}"></script>
+  <script src="{{ static_url('js/k-side.js') }}"></script>
   <link rel="manifest" href="{{ static_url('manifest.webmanifest') }}">
   {# Declared explicitly: static is mounted at /static, so a browser's automatic request for
      /favicon.ico at the site root would 404 and the tab would stay blank. #}
@@ -122,6 +27,16 @@
   <link rel="stylesheet" href="{{ static_url('css/components.css') }}">
   {# A converted screen adds its own sheet and script here (token colors only). #}
   {% block head_extra %}{% endblock %}
+  {# Last: htmx's indicator rules (it no longer writes a <style> of its own) and the classes that
+     replaced style= attributes (D-INST-8). #}
+  <link rel="stylesheet" href="{{ static_url('css/toast.css') }}">
+  <link rel="stylesheet" href="{{ static_url('css/csp.css') }}">
+  {# Filled by the scene renderer through the CSSOM (scene-band.js): the scenes' animation rules. #}
+  <link rel="stylesheet" id="k-scene-sheet" href="{{ static_url('css/scenes.css') }}">
+  {# htmx without eval or inline styles, for the Content-Security-Policy (D-INST-8, D-SEC-58):
+     no hx-on, trigger filters or js: values (k-head.js does their work), no indicator <style>,
+     and no style attribute copied while a swap settles. #}
+  <meta name="htmx-config" content='{"allowEval": false, "includeIndicatorStyles": false, "attributesToSettle": ["class", "width", "height"]}'>
   <script src="{{ static_url('js/htmx.min.js') }}" defer></script>
   {# Scenes and seasonal touches register on window, the band renderer draws them, then the UI
      runtime (theme, toasts, flyouts, slide-overs, modals). Deferred scripts run in order. #}
@@ -136,76 +51,9 @@
   {# A page on the lifecycle (D-UI-210) loads its script here, after kestrel-ui.js, so the script
      can call KUI.page.define as it runs; it still runs before Alpine, as head_extra's did. #}
   {% block page_scripts %}{% endblock %}
+  <script src="{{ static_url('js/k-chrome.js') }}" defer></script>
   <script src="{{ static_url('js/alpine.min.js') }}" defer></script>
-  <script>
-    // The page's start (D-UI-210): every deferred script above, page scripts included, has run
-    // (definitions first) before DOMContentLoaded, so the page the content root names in its
-    // data-k-page attribute mounts here, once. This listener is added while the head is parsed,
-    // ahead of htmx's own start, so the page hears htmx's first load events as it did when page
-    // scripts started themselves.
-    document.addEventListener('DOMContentLoaded', function () {
-      if (window.KUI && window.KUI.page) window.KUI.page.start();
-    });
-  </script>
-  <script>
-    // Busy feedback for every htmx request (kestrel.css body.busy): counted, so overlapping
-    // requests keep the cursor until the last one answers, and a failed send clears it too.
-    (function () {
-      var inflight = 0;
-      function on(name, fn) { document.addEventListener(name, fn); }
-      // A polled or self-loading partial (hx-trigger "every", "load", "revealed") is not a click:
-      // it never shows the cursor or the bar, so a page change does not flash a loading bar.
-      // Nor is a long request that shows its own status (data-no-busy, e.g. the import): there a
-      // spinning cursor for a minute reads as a hang.
-      // Nor is a request the app makes on its own, with nobody waiting on it: those carry the
-      // X-Kestrel-Background header (a timed refresh, a prefetch, a counts update), so only
-      // what the person pressed shows the bar, however the press is wired (#99).
-      function background(evt) { var rc = evt.detail && evt.detail.requestConfig; var h = rc && rc.headers; return !!(h && h['X-Kestrel-Background']); }
-      function polled(evt) { var el = evt.detail && evt.detail.elt; if (background(evt)) return true; if (el && el.closest && el.closest('[data-no-busy], [data-busy-text]:not([data-busy-text=""])')) return true; var t = el && el.getAttribute && el.getAttribute('hx-trigger'); return !!(t && /\b(every|load|revealed|intersect)\b/.test(t)); }
-      // An element with data-busy-text (a model call, a PDF render) gets a spinner and that text
-      // beside it for as long as its request is open, instead of the cursor (D-UI-20).
-      // An empty value names no status, so it is not a host (it would insert an empty spinner).
-      function host(evt) { var el = evt.detail && evt.detail.elt; return el && el.closest && el.closest('[data-busy-text]:not([data-busy-text=""])'); }
-      function showStatus(h) {
-        if (h.__status) return;
-        var s = document.createElement('span');
-        s.className = 'import-status busy-status'; s.setAttribute('role', 'status'); s.setAttribute('aria-live', 'polite');
-        s.style.display = 'inline-flex';
-        var dot = document.createElement('span'); dot.className = 'spin'; dot.setAttribute('aria-hidden', 'true');
-        s.appendChild(dot); s.appendChild(document.createTextNode(h.getAttribute('data-busy-text')));
-        var btn = h.tagName === 'FORM' ? h.querySelector('button[type=submit], button:not([type])') : null;
-        (btn || h).insertAdjacentElement('afterend', s);
-        h.__status = s;
-      }
-      function hideStatus(h) { if (h.__status) { h.__status.remove(); h.__status = null; } }
-      // The decision is recorded on the request itself: htmx re-fires afterRequest on an
-      // ancestor when the element was swapped out mid-request, with that ancestor as elt, so
-      // judging the element again on the way out would miscount.
-      function xhr(evt) { return evt.detail && evt.detail.xhr; }
-      on('htmx:beforeRequest', function (evt) {
-        var x = xhr(evt); if (!x || x.__kseen) return; x.__kseen = true;
-        var h = host(evt); if (h) { x.__khost = h; showStatus(h); return; }
-        if (polled(evt)) return;
-        x.__kcounted = true; inflight += 1; document.body.classList.add('busy');
-        // A count that never comes back (a node swapped out mid-request) clears itself, so the
-        // bar cannot run on an idle app (#99).
-        counted.push(x); x.__ktimer = setTimeout(function () { release(x); }, BUSY_LIMIT_MS);
-      });
-      var BUSY_LIMIT_MS = 30000, counted = [];
-      function release(x) {
-        if (!x.__kcounted || x.__kreleased) return; x.__kreleased = true; clearTimeout(x.__ktimer);
-        var i = counted.indexOf(x); if (i >= 0) counted.splice(i, 1);
-        inflight = Math.max(0, inflight - 1); if (!inflight) document.body.classList.remove('busy');
-      }
-      function done(evt) {
-        var x = xhr(evt); if (!x || x.__kdone) return; x.__kdone = true;
-        if (x.__khost) { hideStatus(x.__khost); return; }
-        release(x);
-      }
-      on('htmx:afterRequest', done);  // fired on load, error, abort and timeout alike
-      on('htmx:historyRestore', function () { counted.slice().forEach(release); });
-    })();
-  </script>
+  <script src="{{ static_url('js/k-start.js') }}"></script>
 </head>
 <body>
 {% from "ui/macros.html" import toast_region, icon as kicon %}
@@ -267,182 +115,7 @@
        repaint the counts and the readout this window last showed (kestrel-ui.js keeps them in
        sessionStorage); the polls above then refresh them. Counts are text only; the readout is
        this app's own markup, parsed with DOMParser rather than assigned as HTML. #}
-    <script>
-      (function () {
-        try {
-          var c = JSON.parse(sessionStorage.getItem('kestrel-side-counts') || '{}');
-          Object.keys(c).forEach(function (id) {
-            var el = /^nav-count-[a-z0-9-]+$/.test(id) && document.getElementById(id);
-            if (el) el.textContent = String(c[id]);
-          });
-          var ring = document.getElementById('nav-ring');
-          if (ring && c['nav-ring'] === '1') ring.hidden = false;
-          var r = sessionStorage.getItem('kestrel-side-rail');
-          var rail = document.getElementById('rail');
-          if (r && rail) {
-            var body = new DOMParser().parseFromString(r, 'text/html').body;
-            if (!body.querySelector('script')) rail.replaceChildren.apply(rail, Array.prototype.slice.call(body.childNodes));
-          }
-        } catch (e) {}
-        // The sidebar's forms (#126, D-UI-249). In the page it is the full sidebar (pinned) or the
-        // 68 px rail. The rail is chosen (the kestrel-side cookie) or forced by the window width.
-        // Opening the rail draws the full sidebar OVER the page; it closes after a short idle
-        // time, on Esc, on a click outside and after choosing a page. The pushpin keeps it in the
-        // page (kestrel-side-pin). The server reads both cookies for the first paint; every
-        // storage access is guarded because either store may be blocked.
-        var kwin = document.getElementById('kwin');
-        var btn = document.querySelector('.k-side-toggle');
-        var pin = document.querySelector('.k-side-pin');
-        var side = document.getElementById('sidebar');
-        if (kwin && btn && pin && side) {
-          var root = document.documentElement;
-          var mq1100 = window.matchMedia('(max-width: 1100px)');
-          var mq900 = window.matchMedia('(max-width: 899px)');
-          var mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
-          var hint = mac ? ' (⌘B)' : ' (Ctrl B)';
-          var cookieOf = function (n) {
-            var m = document.cookie.match(new RegExp('(?:^|; )' + n + '=([01])'));
-            return m ? m[1] : null;
-          };
-          var stored = function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } };
-          var cs = cookieOf('kestrel-side'), cp = cookieOf('kestrel-side-pin');
-          var collapsed = cs !== null ? cs === '1' : stored('kestrel-side-collapsed') === '1';
-          var pinned = !collapsed && (cp !== null ? cp === '1' : stored('kestrel-side-pin') === '1');
-          var open = false, closing = false, settling = false, hovering = false, idleTimer = null;
-          var rail = function () { return collapsed || mq900.matches || (mq1100.matches && !pinned); };
-          function render() {
-            var r = rail();
-            if (!r && !settling) { open = false; closing = false; }
-            kwin.classList.toggle('is-rail', r);
-            kwin.classList.toggle('is-side-open', (r && open) || settling);
-            kwin.classList.toggle('is-side-closing', closing);
-            kwin.classList.toggle('is-side-collapsed', collapsed);
-            root.classList.toggle('k-side-collapsed', collapsed);
-            root.classList.toggle('k-side-pinned', pinned);
-            var expanded = !r || open;
-            btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-            btn.setAttribute('aria-label', expanded ? 'Collapse sidebar' : 'Expand sidebar');
-            btn.title = (expanded ? 'Collapse sidebar' : 'Expand sidebar') + hint;
-            // In the page the pin is "on"; pressing it returns the sidebar to the rail. On the
-            // open rail it is "off"; pressing it keeps the sidebar in the page, if there is room.
-            var inPage = !r;
-            var tooSmall = r && mq900.matches;
-            pin.setAttribute('aria-pressed', inPage ? 'true' : 'false');
-            pin.setAttribute('aria-disabled', tooSmall ? 'true' : 'false');
-            var pinLabel = tooSmall ? 'The window is too narrow to keep the sidebar open'
-              : inPage ? 'Unpin sidebar (back to icons)' : 'Pin sidebar open';
-            pin.setAttribute('aria-label', pinLabel);
-            pin.title = pinLabel;
-            armIdle();
-          }
-          function remember() {
-            try {
-              localStorage.setItem('kestrel-side-collapsed', collapsed ? '1' : '0');
-              localStorage.setItem('kestrel-side-pin', pinned ? '1' : '0');
-            } catch (e) {}
-            var tail = '; path=/; max-age=31536000; samesite=lax';
-            document.cookie = 'kestrel-side=' + (collapsed ? '1' : '0') + tail;
-            document.cookie = 'kestrel-side-pin=' + (pinned ? '1' : '0') + tail;
-          }
-          // A browser with only the older localStorage copy moves it to the cookies once.
-          if ((cs === null && collapsed) || (cp === null && pinned)) remember();
-          // The grid glides on a press only (never on the restore at page load).
-          function afterGlide(fn) {
-            var done = false, t = null;
-            function end() {
-              if (done) return; done = true; clearTimeout(t);
-              kwin.removeEventListener('transitionend', on); fn();
-            }
-            function on(e) { if (e.target === kwin && e.propertyName === 'grid-template-columns') end(); }
-            kwin.addEventListener('transitionend', on);
-            t = setTimeout(end, 700);
-            if (!(parseFloat(getComputedStyle(kwin).transitionDuration) > 0)) end();
-          }
-          function collapseToRail() {
-            collapsed = true; pinned = false; open = false; closing = false;
-            kwin.classList.add('is-side-animating');
-            root.classList.add('k-side-glide');
-            remember(); render();
-          }
-          function openOverlay() {
-            if (!rail() || (open && !closing)) return;
-            open = true; closing = false; render();
-          }
-          function closeOverlay() {
-            if (!open || closing) return;
-            var a = getComputedStyle(side);
-            if (a.animationName === 'none') { open = false; render(); return; }
-            closing = true; render();
-            var done = false;
-            function end() {
-              if (done) return; done = true; side.removeEventListener('animationend', on);
-              if (closing) { open = false; closing = false; render(); }
-            }
-            function on(e) { if (e.target === side) end(); }
-            side.addEventListener('animationend', on);
-            setTimeout(end, 600);
-          }
-          function pinOpen() {
-            if (mq900.matches) return;
-            collapsed = false; pinned = true; settling = true;
-            kwin.classList.add('is-side-animating');
-            root.classList.add('k-side-glide');
-            remember(); render();
-            afterGlide(function () { settling = false; open = false; closing = false; render(); });
-          }
-          function armIdle() {
-            clearTimeout(idleTimer);
-            var f = document.activeElement;
-            // Keyboard focus inside keeps it open; the focus a mouse press leaves on a button does not.
-            if (!open || closing || hovering || (side.contains(f) && f.matches(':focus-visible'))) return;
-            var ms = parseInt(side.dataset.idleMs, 10) || 5000;
-            idleTimer = setTimeout(closeOverlay, ms);
-          }
-          function toggleSide() {
-            if (!rail()) collapseToRail();
-            else if (open && !closing) closeOverlay();
-            else openOverlay();
-          }
-          render();
-          btn.addEventListener('click', toggleSide);
-          pin.addEventListener('click', function () {
-            if (pin.getAttribute('aria-disabled') === 'true') return;
-            if (!rail()) collapseToRail(); else pinOpen();
-          });
-          side.addEventListener('mouseenter', function () { hovering = true; armIdle(); });
-          side.addEventListener('mouseleave', function () { hovering = false; armIdle(); });
-          side.addEventListener('focusin', armIdle);
-          side.addEventListener('focusout', function () { setTimeout(armIdle, 0); });
-          // Choosing a page closes the overlay at once.
-          side.addEventListener('click', function (e) {
-            if (open && e.target.closest && e.target.closest('.mainnav a')) closeOverlay();
-          });
-          // A press anywhere outside the open sidebar closes it (mouse, pen and touch alike).
-          document.addEventListener('pointerdown', function (e) {
-            if (open && !closing && !side.contains(e.target)) closeOverlay();
-          }, true);
-          document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape' && open && !closing && !e.defaultPrevented) {
-              var had = side.contains(document.activeElement);
-              closeOverlay();
-              if (had) btn.focus();
-            }
-          });
-          [mq1100, mq900].forEach(function (q) {
-            if (q.addEventListener) q.addEventListener('change', render);
-          });
-          // Ctrl B (Cmd B on a Mac) toggles it. Not while the sidebar is hidden (phone width),
-          // and never inside an editable field, where B belongs to the text.
-          document.addEventListener('keydown', function (e) {
-            if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || String(e.key).toLowerCase() !== 'b') return;
-            if (e.defaultPrevented || !btn.getClientRects().length) return;
-            if (e.target && e.target.isContentEditable) return;
-            e.preventDefault();
-            toggleSide();
-          });
-        }
-      })();
-    </script>
+    <i hidden data-k-init="side"></i>
   </aside>
 
   <div class="k-main" id="main">
@@ -472,7 +145,7 @@
              x-transition:leave="is-enter" x-transition:leave-end="is-from" data-testid="npanel">
           <div class="k-npanel__head"><h3>Notifications</h3>
             <button type="button" class="k-link" hx-post="/notifications/read-all" hx-target="#k-np-body" hx-swap="innerHTML"
-                    hx-vals='js:{tab: (document.getElementById("sf-np") || {dataset: {}}).dataset.tab || "all"}' data-testid="notif-read-all">Mark all as read</button>
+                    data-k-vals="np-tab" data-testid="notif-read-all">Mark all as read</button>
             <button type="button" class="k-iconbtn" aria-label="Close" @click="close()">{{ kicon('x') }}</button></div>
           <div class="k-npanel__body" id="k-np-body" hx-get="/notifications/list" hx-trigger="intersect once">Loading</div>
           <div class="k-npanel__foot">Problems stay in Needs attention until they are fixed.</div>
@@ -488,7 +161,7 @@
          the browser fallback it opens the same Quit dialog as the palette's Quit entry. #}
       <button class="k-icon" type="button" data-k-tip="Quit Kestrel"
               aria-label="Quit Kestrel" data-testid="quit-app"
-              aria-haspopup="dialog" onclick="window.kestrelQuit && window.kestrelQuit.open(this)"><svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0"/></svg></button>
+              aria-haspopup="dialog" data-k-quit-open><svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0"/></svg></button>
       {% endif %}
     </header>
     {# The page's name for its lifecycle (D-UI-210): a page template fills the page_name block
@@ -501,7 +174,7 @@
          The URL carries a code only; the sentence is looked up (kestrel/web/flash.py), so an
          unknown code shows nothing (WP-08, #21). #}
       {% set flash = flash_text(request.query_params.get('msg')) if request is defined else None %}
-      {% if flash %}<div class="warnbox" role="status" data-testid="flash" style="margin-bottom:.8rem">{{ flash }}</div>{% endif %}
+      {% if flash %}<div class="warnbox u-mb-08" role="status" data-testid="flash">{{ flash }}</div>{% endif %}
       {% block content %}{% endblock %}
     </main>
   </div>
@@ -536,18 +209,18 @@
          aria-label="Search roles, companies, settings, or type a command"
          :aria-activedescendant="view.count ? 'palette-opt-' + idx : null"
          @keydown.enter.prevent="go(view.items[idx])" @keydown.tab.prevent
-         @keydown.down.prevent="move(1)" @keydown.up.prevent="move(-1)" @input="idx = 0; search()"><span class="k-pal__kbd">Esc</span></div>
+         @keydown.down.prevent="move(1)" @keydown.up.prevent="move(-1)" @input="restart()"><span class="k-pal__kbd">Esc</span></div>
     <div class="k-pal__res" id="palette-list" role="listbox" aria-label="Results" x-ref="pres">
       <template x-for="(row, r) in view.rows" :key="r + ':' + (row.h || row.item.t)">
         <div :class="row.h ? 'k-pal__gh' : ('k-pal__it' + (row.n === idx ? ' is-sel' : ''))"
              :role="row.h ? 'presentation' : 'option'" :id="row.h ? null : 'palette-opt-' + row.n"
              :aria-selected="row.h ? null : (row.n === idx ? 'true' : 'false')"
-             @mousemove="if (!row.h) idx = row.n" @click="if (!row.h) go(row.item)">
+             @mousemove="hover(row)" @click="if (!row.h) go(row.item)">
           <template x-if="row.h"><span x-text="row.h"></span></template>
           <template x-if="!row.h"><span class="k-pal__row">
-            <span class="k-pal__ic" x-html="icon(row.item.ic)"></span>
-            <span class="k-pal__tx"><b x-html="hl(row.item.t)"></b><span x-text="row.item.s"></span></span>
-            <span class="k-pal__tag" x-text="row.recent ? (row.item.g || '').replace(/s$/, '') : ''"></span>
+            <span class="k-pal__ic" x-effect="paint($el, icon(row.item.ic))"></span>
+            <span class="k-pal__tx"><b x-effect="paint($el, hl(row.item.t))"></b><span x-text="row.item.s"></span></span>
+            <span class="k-pal__tag" x-text="groupTag(row)"></span>
             <span class="k-pal__kbd k-pal__enter">Enter</span></span></template>
         </div>
       </template>
@@ -560,215 +233,11 @@
   </div>
 </div>
 
-<script>
-  function kChrome() {
-    return {
-      theme: (function () { try { return localStorage.getItem('kestrel-theme') || 'auto'; } catch (e) { return 'auto'; } })(),
-      scheme: (function () {
-        var s = null;
-        try { s = localStorage.getItem('kestrel-scheme'); } catch (e) {}
-        if (s === 'indigo' || s === 'teal') return s;
-        return document.documentElement.getAttribute('data-scheme') || 'indigo';
-      })(),
-      palette: false, opener: null, q: '', idx: 0, more: false,
-      view: { rows: [], items: [], count: 0 }, found: { roles: [], companies: [] }, timer: null,
-      // Actions: what the palette may run (D-UI-91); every nav page is an "Open" action.
-      actions: [
-        {id: 'run', g: 'Actions', t: 'Run a search now', s: 'Look for new roles right away', ic: 'search', href: '/scan/choose?page=1', suggest: true, k: 'scan search run now find'},
-        {id: 'cal', g: 'Actions', t: 'Open Calibrate', s: 'Teach Kestrel what a good fit means to you', ic: 'calibrate', href: '/calibrate', suggest: true, k: 'calibrate teach learn'},
-        {id: 'dark', g: 'Actions', t: 'Turn on dark mode', s: 'Switch the look of Kestrel', ic: 'moon', k: 'dark light theme mode'},
-        {id: 'pause', g: 'Actions', t: 'Pause searching', s: 'Stop scheduled searches until you resume', ic: 'pause', k: 'pause stop worker searching'},
-        {% if k_desktop %}{id: 'quit', g: 'Actions', t: 'Quit Kestrel', s: 'Stop searching and close', ic: 'quit', k: 'quit exit close'},{% endif %}
-      ],
-      pages: [
-        {% for group, items in nav_groups %}{% for it in items %}{% if it.href != '/calibrate' %}
-        {g: 'Actions', t: {{ ('Open ' ~ it.label_for(cur))|tojson }}, s: {{ ('Go to ' ~ it.label_for(cur))|tojson }}, ic: 'open', href: {{ it.href|tojson }}},
-        {% endif %}{% endfor %}{% endfor %}
-      ],
-      dark: false,
-      init() {
-        // One source for appearance writes: KUI (kestrel-ui.js) owns storage and the attribute.
-        this.$watch('theme', v => { window.KUI.setTheme(v); this.dark = this.isDark(); });
-        this.dark = this.isDark();
-        if (window.matchMedia) {
-          const mq = window.matchMedia('(prefers-color-scheme: dark)');
-          if (mq.addEventListener) mq.addEventListener('change', () => { this.dark = this.isDark(); });
-        }
-        // The search field's shortcut follows the operating system (D-UI-91): Cmd K on a Mac.
-        const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
-        document.querySelectorAll('[data-k-kbd]').forEach(k => { k.textContent = mac ? '\u2318K' : 'Ctrl K'; });
-        if (this.theme !== 'auto') document.documentElement.setAttribute('data-theme', this.theme);
-        this.$watch('scheme', v => { window.KUI.setScheme(v); });
-        // The palette is modal: Tab stays in its field, and closing returns focus to the opener.
-        this.$watch('palette', v => {
-          if (!v && this.opener && this.opener.focus && document.contains(this.opener)) {
-            this.opener.focus();
-          }
-          if (!v) this.opener = null;
-        });
-        document.documentElement.setAttribute('data-scheme', this.scheme);
-        // The browser and LAN modes keep the offline cache; the desktop window never registers it.
-        if ('serviceWorker' in navigator && document.documentElement.getAttribute('data-k-desktop') !== '1') {
-          navigator.serviceWorker.register('/sw.js').catch(() => {});
-        }
-        window.addEventListener('keydown', (e) => {
-          if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'k') { e.preventDefault(); this.openPalette(); }
-        });
-        // Keys typed between Ctrl+K and the search box taking focus belong to the search, not to
-        // whatever had focus before (a fast typist lost the first word).
-        // They never reach the page behind it either (its j/k, "/" and Space shortcuts).
-        window.addEventListener('keydown', (e) => {
-          const pq = this.$refs.pq;
-          if (!this.palette || !pq || document.activeElement === pq) return;
-          const key = String(e.key || '');
-          const altGr = e.getModifierState && e.getModifierState('AltGraph');
-          if (key === 'Enter' || key === 'ArrowDown' || key === 'ArrowUp') {
-            e.preventDefault(); e.stopImmediatePropagation();
-            if (key === 'Enter') this.go(this.view.items[this.idx]);
-            else this.move(key === 'ArrowDown' ? 1 : -1);
-            return;
-          }
-          if (key.length !== 1 || e.metaKey || ((e.ctrlKey || e.altKey) && !altGr)) return;
-          e.preventDefault(); e.stopImmediatePropagation();
-          this.q += key; this.idx = 0; this.search();
-        }, true);
-        // Persist the track tab across pages (D-UI-57): localStorage as before, plus a cookie the
-        // server reads, so a page opened without ?track= (Today at /, a bookmark) shows the
-        // remembered tab. With one track in use (consulting switched off, D-UI-28) a stored
-        // choice is ignored.
-        const multi = {{ enabled_tracks()|length }} > 1;
-        const here = new URLSearchParams(location.search).get('track');
-        if (multi) {
-          if (here === 'employment' || here === 'consulting') { this.setTrack(here); }
-          else {
-            let t = null;
-            try { t = localStorage.getItem('kestrel-track'); } catch (e) {}
-            if ((t === 'employment' || t === 'consulting') && t !== {{ cur|tojson }}
-                && !document.cookie.includes('kestrel-track=')) {
-              this.setTrack(t);  // an older install remembered the tab in localStorage only
-              if (document.cookie.includes('kestrel-track=' + t)) location.reload();
-            }
-          }
-        }
-      },
-      isDark() {
-        const t = document.documentElement.getAttribute('data-theme');
-        if (t === 'dark' || t === 'light') return t === 'dark';
-        return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-      },
-      // One click toggles light and dark (the moon button); Settings > Preferences keeps
-      // System and the color schemes.
-      toggleTheme() { this.theme = this.isDark() ? 'light' : 'dark'; },
-      openPalette() {
-        this.opener = document.activeElement;
-        this.q = ''; this.idx = 0; this.found = { roles: [], companies: [] };
-        this.palette = true; this.more = false;
-        this.render();
-        this.$nextTick(() => {
-          const pq = this.$refs.pq;
-          if (!pq) return;
-          pq.focus();
-          pq.setSelectionRange(pq.value.length, pq.value.length);  // after any early keys
-        });
-      },
-      recent() {
-        try { return JSON.parse(localStorage.getItem('kestrel-palette-recent') || '[]') || []; }
-        catch (e) { return []; }
-      },
-      remember(item) {
-        const keep = {g: item.g, t: item.t, s: item.s, ic: item.ic, href: item.href, id: item.id};
-        const list = [keep].concat(this.recent().filter(r => r.t !== item.t)).slice(0, 4);
-        try { localStorage.setItem('kestrel-palette-recent', JSON.stringify(list)); } catch (e) {}
-      },
-      render() {
-        this.view = window.KPalette.results(this.q, {actions: this.actions, pages: this.pages,
-          roles: this.found.roles, companies: this.found.companies, recent: this.recent(),
-          dark: this.isDark()});
-        if (this.idx >= this.view.count) this.idx = 0;
-      },
-      search() {
-        this.render();
-        clearTimeout(this.timer);
-        const q = this.q.trim();
-        if (q.length < 2) { this.found = { roles: [], companies: [] }; this.render(); return; }
-        this.timer = setTimeout(() => {
-          fetch('/palette/search?q=' + encodeURIComponent(q), {credentials: 'same-origin'})
-            .then(r => r.ok ? r.json() : {roles: [], companies: []})
-            .then(d => { if (this.q.trim() === q) { this.found = d; this.render(); } })
-            .catch(() => {});
-        }, 120);
-      },
-      move(d) {
-        const n = this.view.count;
-        if (!n) return;
-        this.idx = (this.idx + d + n) % n;
-        this.$nextTick(() => {
-          const el = document.getElementById('palette-opt-' + this.idx);
-          if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
-        });
-      },
-      hl(t) { return window.KPalette.highlight(t, this.q); },
-      icon(name) { return window.KPalette.icon(name); },
-      go(item) {
-        if (!item) return;
-        this.remember(item);
-        this.palette = false;
-        if (item.id === 'dark') {
-          const was = this.isDark();
-          this.toggleTheme();
-          if (window.KUI) window.KUI.toast(was ? 'Dark mode turned off' : 'Dark mode turned on');
-          return;
-        }
-        if (item.id === 'pause') {
-          fetch('/api/worker/pause', {method: 'POST', credentials: 'same-origin'})
-            .then(r => { if (window.KUI) window.KUI.toast(r.ok ? 'Searching paused. Resume it on Runs.' : 'Could not pause. Nothing changed.', {tone: r.ok ? '' : 'warn'}); })
-            .catch(() => {});
-          return;
-        }
-        {% if k_desktop %}if (item.id === 'quit') { if (window.kestrelQuit) window.kestrelQuit.open(); return; }{% endif %}
-        if (item.href) {
-          if (window.kLeaveGuard && !window.kLeaveGuard()) return;
-          if (window.KUI && window.KUI.go) window.KUI.go(item.href, {guarded: true}); else location.href = item.href;
-        }
-      },
-      setTrack(v) {
-        try { localStorage.setItem('kestrel-track', v); } catch (e) {}
-        document.cookie = 'kestrel-track=' + v + '; path=/; max-age=31536000; samesite=lax';
-      },
-    };
-  }
-  // The bell badge (#95): the server sends the true unread count in HX-Trigger-After-Swap, so the
-  // button's aria-label carries it even when the badge shows "9+", and a changed label ticks once.
-  document.body.addEventListener('bellCount', function (e) {
-    var n = Number(e.detail && e.detail.value) || 0;
-    var btn = document.querySelector('[data-testid="bell"]');
-    var badge = document.getElementById('bellcount');
-    if (btn) btn.setAttribute('aria-label', n ? 'Notifications, ' + n + ' unread' : 'Notifications');
-    if (!badge) return;
-    var label = badge.textContent, last = badge.dataset.last;
-    // Only a real change after load moves it: a badge that appears replays its entry, a count
-    // that changes ticks once. Both classes clear on animationend, so the next change replays.
-    var cls = last === label || !label ? '' : (last === '' ? 'is-in' : 'is-tick');
-    if (cls) {
-      badge.classList.remove('is-in', 'is-tick'); void badge.offsetWidth; badge.classList.add(cls);
-    }
-    badge.dataset.last = label;
-  });
-  (function () {
-    var badge = document.getElementById('bellcount');
-    if (badge) badge.addEventListener('animationend', function () {
-      badge.classList.remove('is-in', 'is-tick');
-    });
-  })();
-  // The bell panel: opens under the bell over a scrim.
-  function bellPanel() {
-    return {
-      open: false,
-      toggle() { this.open ? this.close() : (this.open = true); },
-      close() { if (this.open) { this.open = false; if (this.$refs.bell) this.$refs.bell.focus(); } },
-    };
-  }
-</script>
+{# What k-chrome.js needs from the server (D-INST-8: no inline script). A JSON data block is not
+   run, so the policy does not apply to it; tojson escapes <, > and & inside it. #}
+{%- set chrome_pages = [] -%}
+{%- for group, items in nav_groups %}{% for it in items %}{% if it.href != '/calibrate' %}{% set _ = chrome_pages.append({'t': 'Open ' ~ it.label_for(cur), 's': 'Go to ' ~ it.label_for(cur), 'href': it.href}) %}{% endif %}{% endfor %}{% endfor %}
+<script type="application/json" id="k-chrome-data">{{ {'desktop': true if k_desktop else false, 'pages': chrome_pages, 'multi': enabled_tracks()|length > 1, 'cur': cur}|tojson }}</script>
 {{ toast_region() }}
 {% include "partials/toast.html" %}
 {% include "partials/quit_confirm.html" %}

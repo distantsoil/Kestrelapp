@@ -109,7 +109,10 @@ statement. `id`, `doc_master_id`, `section_kind` (`role` | `service_line` | `pro
 `org_label_redacted` and `hide_names` are set by the operator (D-PRIV-1): the role editor's
 "This is my current employer" box with its "Show it as" field and its names-to-hide chips, or the
 import's opt-in for an open-ended newest role. At most one employer per `doc_master` is current;
-confidential mode hides exactly the listed names.
+confidential mode hides exactly the listed names. Matching runs on the text as a reader sees it
+(NFKC compatibility forms, and every Unicode format character, variation selector and the
+combining grapheme joiner ignored), so neither styled letters nor invisible characters can hide a
+name; only the matched span is replaced, and other visible spellings stay exact (#210).
 
 **`doc_slot`** — `id`, `doc_section_id`, `key` (stable, e.g. `r1b2`), `sort_order`, `optional`,
 `default_variant_key`.
@@ -203,8 +206,11 @@ skills, then one call per role maps its bullets, and the app copies the referenc
   demand and added one at a time by the operator.
 - Proof points are extracted at the same time and written to the profile; a metric is kept only
   when it appears in the bullet.
-- PDF conversion drops repeated page headers, footers and page numbers and rejoins wrapped
-  bullets; the review screen says .docx gives the cleanest result.
+- PDF conversion drops repeated page headers, footers and page numbers. It never joins a
+  wrapped line to the bullet above (D-SCORE-31): a wrapped bullet arrives as two lines, the
+  warning says so, and the operator joins them in review. A soft line break inside one Word list
+  item is that item's own line and is joined. The review screen says .docx gives the cleanest
+  result.
 - The import reports its stages (Uploading, Reading, Processing) and a failed proposal can be
   retried on the text already read.
 - **Nothing writes to the database until the operator accepts the proposal.**
@@ -531,6 +537,8 @@ its model call returns, so drafts appear while the build runs and a build cut sh
 wrote. After about two minutes a pass stops between clusters and gives the worker back, so a
 search or a letter the person is waiting for runs before the next pass carries on. A cluster
 whose merge failed is not sent again by the same build, only by the next one.
+
+**The first run builds once (D-STORY-700).** Pressing Start searching the first time arms one automatic build in the database. After a run has produced its first Tier 2 employment evaluations and the scoring tiers have drained, one `build_stories` task is queued through the same request the Build button uses, and the flag is spent. A run with no deep read leaves it armed; restarting onboarding never re-arms it. With Tier 2 online and no confirmed dialog nothing is queued (the flag is spent, so it never retries unasked). Stories are drafts the person reviews.
 
 **Gap analysis is the point.** Knowing you have no good failure story is more useful than
 having forty mediocre ones.

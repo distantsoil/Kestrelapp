@@ -29,9 +29,5 @@
     {% endfor %}
   </form>
 {% endcall %}
-<script>
-  (function () {
-    var modal = document.getElementById('{{ dialog_id }}');
-    if (modal && window.KUI) window.KUI.openModal(modal);
-  })();
-</script>
+{# Opened by KUI as it lands (static/js/k-head.js, data-k-open-kui). #}
+<i hidden data-k-open-kui="{{ dialog_id }}"></i>

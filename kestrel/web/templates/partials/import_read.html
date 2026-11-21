@@ -1,17 +1,17 @@
 {# Step one of the import: what was read, then the processing step, which starts on load. #}
 {% if error %}
-  <div class="warnbox" style="margin-top:.8rem" data-testid="import-error">{{ error }}</div>
+  <div class="warnbox u-mt-08" data-testid="import-error">{{ error }}</div>
 {% else %}
   {% if filename or warnings %}
-    <div class="panel" style="margin-top:.8rem; padding:1rem" data-testid="import-extracted">
+    <div class="panel u-mt-08 u-p-1" data-testid="import-extracted">
       <h3>Text read from {{ filename or 'your file' }}
         {% if source_format %}<span class="muted">({{ source_format }})</span>{% endif %}</h3>
       {% for w in warnings %}
-        <div class="warnbox" style="margin-bottom:.5rem">{{ w }}</div>
+        <div class="warnbox u-mb-05">{{ w }}</div>
       {% endfor %}
       <details>
         <summary class="muted">Extracted markdown ({{ markdown.splitlines() | length }} lines)</summary>
-        <pre style="white-space:pre-wrap; max-height:24rem; overflow:auto; margin:.5rem 0 0">{{ markdown }}</pre>
+        <pre class="u-ws-pre-wrap u-maxh-24 u-ov-auto u-m-05-0-0">{{ markdown }}</pre>
       </details>
     </div>
   {% endif %}

@@ -29,7 +29,16 @@ from typing import Any
 
 import httpx
 
-from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError, path_segment
+from kestrel.ingest.base import (
+    AdapterError,
+    NoticeKind,
+    PostingBatch,
+    RawPosting,
+    SourceConfigError,
+    Unread,
+    failure_kind,
+    path_segment,
+)
 
 _BASE = "https://api.smartrecruiters.com/v1/companies"
 _PAGE = 100  # SmartRecruiters caps the postings page at 100.
@@ -55,7 +64,8 @@ class SmartRecruitersAdapter:
 
         items = await self._fetch_list(company, max_results, client)
 
-        postings: list[RawPosting] = []
+        postings = PostingBatch()
+        unread = Unread()  # roles whose detail could not be read, by the kind each failed with
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -63,9 +73,12 @@ class SmartRecruitersAdapter:
             if posting_id in (None, ""):
                 continue
             detail = await self._fetch_detail(company, str(posting_id), client)
-            if detail is None:
-                continue  # a single failing DETAIL skips only this posting
+            if isinstance(detail, NoticeKind):
+                unread.add(detail)  # a single failing DETAIL skips only this posting, and is said
+                continue
             postings.append(self._to_posting(item, detail, company))
+        for notice in unread.notices("SmartRecruiters", company):
+            postings.add(notice)
         return postings
 
     async def _fetch_list(self, company: str, max_results: int, client: Any) -> list[dict]:
@@ -92,16 +105,19 @@ class SmartRecruitersAdapter:
                 break
         return collected[:max_results]
 
-    async def _fetch_detail(self, company: str, posting_id: str, client: Any) -> dict | None:
-        """Return the parsed detail body, or None on an HTTP error so the caller skips it.
+    async def _fetch_detail(
+        self, company: str, posting_id: str, client: Any
+    ) -> dict | NoticeKind:
+        """Return the parsed detail body, or the kind of failure (a 429, or anything else as
+        unread) so the caller skips it and says why.
 
-        A successful-but-empty response becomes {} (not None), so the posting is still emitted
-        with no description; None is reserved strictly for a fetch failure."""
+        A successful-but-empty response becomes {}, so the posting is still emitted with no
+        description; a NoticeKind is reserved strictly for a fetch failure."""
         url = f"{_BASE}/{company}/postings/{posting_id}"
         try:
             detail = await client.get_json(url)
-        except httpx.HTTPError:
-            return None
+        except httpx.HTTPError as exc:
+            return failure_kind(exc)
         return detail if isinstance(detail, dict) else {}
 
     def _to_posting(self, item: dict, detail: dict, company: str) -> RawPosting:

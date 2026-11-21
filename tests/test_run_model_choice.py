@@ -28,6 +28,7 @@ from kestrel.pipeline.tier2 import handle_t2
 from kestrel.pipeline.worker import TierStats, Worker
 from kestrel.services import run_model
 from kestrel.services.run_model import T2_ONLY_KEY
+from tests.page_source import as_written
 from tests.pipeline_fakes import FakeLLM
 
 _PAD = " " + "Details follow. " * 20  # a real posting body, over the Tier 2 stub floor
@@ -276,7 +277,7 @@ def _client(monkeypatch, *, local=("kestrel-tier3:latest",)):
 
 def test_dialog_markup(monkeypatch):
     client, sid, _ran = _client(monkeypatch)
-    body = client.get(f"/sources/{sid}/run-now/choose").text
+    body = as_written(client.get(f"/sources/{sid}/run-now/choose").text)
     assert 'data-testid="run-now-dialog"' in body and "showModal" in body
     assert "My usual models" in body and "A different model, this time only" in body
     assert 'value="kestrel-tier3:latest"' in body and 'data-testid="run-now-pick"' in body

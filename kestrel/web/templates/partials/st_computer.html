@@ -4,6 +4,10 @@
 <div id="st-chk-slot" hx-get="/settings/computer/checklist" hx-trigger="load" hx-swap="outerHTML">
   <section class="k-card st-card" id="st-chk"><p class="st-dsm" role="status">Checking this computer…</p></section>
 </div>
+{# Ollama's speed settings (issue #181): read only until one of its buttons is pressed. #}
+<div id="ollama-env" hx-get="/setup/ollama-env" hx-trigger="load" hx-swap="outerHTML">
+  <section class="k-card st-card oe"><p class="st-dsm" role="status">Checking Ollama's speed settings…</p></section>
+</div>
 <section class="k-card st-card" id="st-everyday" data-testid="st-everyday">
   {{ st.head('Everyday options', 'settings') }}
   <div class="st-row st-row--first">
@@ -36,5 +40,5 @@
     <button class="k-btn k-btn--sm" type="button" hx-post="/updates/check" hx-target="#update-result" hx-swap="innerHTML" data-testid="st-update-check">Check now</button>
     <span class="st-res" id="update-result" aria-live="polite"></span>
   </div>
-  {{ st.det('Updates come from kestrelapp.co once a day. Nothing about you is sent.\nKestrel never downloads or installs anything: you choose if and when to update.') }}
+  {{ st.det('Kestrel checks kestrelapp.co once a day for a newer version. Nothing about you is sent.\nThe installer comes from GitHub, the Kestrel release page: your browser saves the file and you run it.\nKestrel itself never downloads or installs anything. You choose if and when to update.') }}
 </section>

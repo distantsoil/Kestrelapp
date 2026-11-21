@@ -22,6 +22,7 @@ from kestrel.db.engine import make_async_engine
 from kestrel.db.models import MockSession, Pursuit, Setting, Story, StoryUsage
 from kestrel.web import prep_view as pv
 from tests import prep_seed
+from tests.page_source import as_written
 
 pytestmark = pytest.mark.usefixtures("_isolate_data_home")
 
@@ -683,7 +684,7 @@ async def test_preview_shows_the_true_pages_and_the_pdf_uses_the_same_ones(monke
     monkeypatch.setattr("kestrel.docs.render.render_pdf", fake_render)
     with _client() as c:
         c.post(f"/prep/{opp}/ask/tick", data={"i": "3", "on": "1"})
-        p = c.get(f"/prep/{opp}/preview").text
+        p = as_written(c.get(f"/prep/{opp}/preview").text)
         assert "Your prep pack" in p and "Page <span" in p and "#fff" in p  # paper stays white
         assert "Your story: Throughput turnaround at two sites." in p
         assert "How is the second distribution center changing the team?" in p

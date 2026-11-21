@@ -35,7 +35,7 @@ QUERY_REFUSALS = (SINCE_INVALID, CURSOR_INVALID)
 QUERY_FALLBACK = "a query parameter could not be read"
 
 
-def parse_when(raw: str | None, name: str) -> datetime | None:
+def parse_when(raw: str | None) -> datetime | None:
     """An ISO date or timestamp (UTC when it has no offset), or None when absent."""
     s = (raw or "").strip()
     if not s:
@@ -43,7 +43,7 @@ def parse_when(raw: str | None, name: str) -> datetime | None:
     try:
         dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise BadQuery(f"{name} must be an ISO date or time, such as 2026-10-01") from exc
+        raise BadQuery(SINCE_INVALID) from exc
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
@@ -83,7 +83,7 @@ async def list_applications(
 ) -> Page:
     """Applications in id order, `limit` at a time. `since` keeps those whose last change is at
     or after it. `next_cursor` is None on the last page."""
-    since_dt = parse_when(since, "since")
+    since_dt = parse_when(since)
     after = _cursor(cursor)
     limit = max(1, min(int(limit), MAX_LIMIT))
     last_event = (
