@@ -162,6 +162,8 @@ def test_a_group_try_with_a_local_model_reaches_the_queue_for_the_five_roles_onl
     try:
         assert tasks() == 0  # looking at the banner and the menu queues nothing
         page.click('[data-testid="rt-group-model"]')
+        page.wait_for_selector('.rt-group .rt-menu [data-testid="rt-local"]')
+        wait_for_layout(page)  # D-TEST-821: the menu is loaded by htmx
         page.click('.rt-group .rt-menu [data-testid="rt-local"]')
         page.wait_for_selector('[data-testid="retry-queued"]')
         assert tasks() == 5

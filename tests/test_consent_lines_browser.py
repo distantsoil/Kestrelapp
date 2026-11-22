@@ -19,7 +19,7 @@ import os
 
 import pytest
 
-from tests.browser import launch_sync, wait_for_layout
+from tests.browser import default_timeout_ms, launch_sync, wait_for_layout
 from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.skipif(
@@ -181,6 +181,9 @@ def _open_retry(page, base, ids) -> str:
     wait_for_layout(page)
     row = page.locator(f"#rt-{ids['quarantine']}, [data-testid=rt-row]").first
     row.get_by_test_id("rt-model").click()
+    # D-TEST-821: the model menu is swapped in by htmx; click its entry once it has settled.
+    page.wait_for_selector('[data-testid="rt-online"]')
+    wait_for_layout(page)
     page.get_by_test_id("rt-online").click()
     page.locator("#rt-online-dialog").wait_for(state="visible")
     digest = page.locator("#rt-online-corrections").get_attribute("value")
@@ -244,8 +247,20 @@ def test_keep_it_anyway_opens_score_again_with_the_line(live):
         page.goto(f"{base}/opportunities")
         wait_for_layout(page)
         page.click("[data-testid=not-fit-show]")
+        # D-TEST-820: htmx binds a swapped-in row when the swap settles, not when it is inserted.
+        # Wait for the row, then for the settle (wait_for_layout waits out .htmx-settling), so the
+        # click cannot land on a button htmx has not processed yet.
+        page.wait_for_selector("#not-fit-box [data-testid=keep-anyway]")
+        wait_for_layout(page)
         row = page.locator(f"#not-fit-box .pl-row[data-id='{ids['strong']}']")
-        row.locator("[data-testid=keep-anyway]").click()
+        # Give the answer its own wait, so a slow or refused request names itself and the
+        # navigation that follows gets a fresh budget.
+        with page.expect_response(
+            lambda r: "/decide/keep-anyway" in r.url, timeout=default_timeout_ms()
+        ) as kept:
+            row.locator("[data-testid=keep-anyway]").click()
+        assert kept.value.ok, (kept.value.status, kept.value.url)
+        assert kept.value.headers.get("hx-redirect"), kept.value.headers
         page.wait_for_url("**/rescore/choose?**")
         page.locator("[data-testid=score-again-corrections]").wait_for(state="visible")
         assert LINE in page.get_by_test_id("score-again-correction-lines").inner_text()

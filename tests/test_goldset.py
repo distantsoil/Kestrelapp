@@ -156,6 +156,11 @@ async def test_regenerate_goldset_unifies_labels_and_verdict_overrides(sm, tmp_p
                 operator_verdict="pursue",
                 operator_score=4.4,
                 reason="Stronger trigger than the model gave it credit for.",
+                # D-TEST-822: the later judgment wins by created_at, and an exact tie goes to the
+                # label (capture.py visits labels last, with >=). Under the stress run's 10x clock
+                # both rows got the same microsecond, so the label won. The override is dated well
+                # after the label, so the order no longer depends on the clock.
+                created_at="2999-01-01T00:00:00.000000+00:00",
             )
         )
         await s.commit()
