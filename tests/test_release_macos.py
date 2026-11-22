@@ -1526,6 +1526,11 @@ def test_dmgbuild_is_pinned_by_hash_and_installed_only_in_the_build_job():
     install = _step(_jobs()["macos"], "Install")["run"]
     assert "--require-hashes -r packaging/macos/dmg-requirements.txt" in install
     assert "--only-binary :all:" in install
+    # D-REL-68: pyproject carries [tool.uv] constraint-dependencies (certifi>=...), which uv applies
+    # to this install and --require-hashes refuses (the 0.7.7 macOS job failed on it).
+    # --no-config keeps the project's constraints out of the hash-pinned install.
+    assert "--no-config" in install.split("--require-hashes")[0]
+    assert "constraint-dependencies" in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     for name in _workflow_names():
         text = (WORKFLOWS / name).read_text(encoding="utf-8")
         assert text.count("dmg-requirements.txt") == (1 if name == "release.yml" else 0)
@@ -1743,7 +1748,7 @@ def test_the_local_build_steps_install_dmgbuild_and_show_the_window_in_both_mode
     ]
     order = [
         "uv sync --extra dev",
-        "uv pip install --only-binary :all: --require-hashes"
+        "uv pip install --no-config --only-binary :all: --require-hashes"
         " -r packaging/macos/dmg-requirements.txt",
         "uv run python scripts/fetch_embed_model.py",
         'env -u APPLE_SIGNING_IDENTITY PYTHON="$(uv python find)" packaging/build_dmg.sh',

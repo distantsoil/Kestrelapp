@@ -295,10 +295,12 @@ jobs:
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
       - name: Install
         # dmgbuild writes the disk image window (#198); pinned by version and wheel hash.
+        # --no-config (D-REL-68): without it uv applies pyproject's [tool.uv] constraint-dependencies
+        # (certifi>=...) to this install, and --require-hashes refuses any pin that is not ==.
         run: |
           uv python install 3.12
           uv sync --extra dev
-          uv pip install --only-binary :all: --require-hashes -r packaging/macos/dmg-requirements.txt
+          uv pip install --no-config --only-binary :all: --require-hashes -r packaging/macos/dmg-requirements.txt
       - name: Fetch the embedding model
         # The in-process embedding model (D-EMBED-2): pinned by SHA-256, never committed; the
         # spec refuses to build without it.
