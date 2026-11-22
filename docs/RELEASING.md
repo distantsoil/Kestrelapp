@@ -81,7 +81,7 @@ that image is not the one to check. From a clone of the branch, on an Apple sili
 ```bash
 uv python install 3.12
 uv sync --extra dev
-uv pip install --only-binary :all: --require-hashes -r packaging/macos/dmg-requirements.txt
+uv pip install --no-config --only-binary :all: --require-hashes -r packaging/macos/dmg-requirements.txt
 uv run python scripts/fetch_embed_model.py
 env -u APPLE_SIGNING_IDENTITY PYTHON="$(uv python find)" packaging/build_dmg.sh
 ```
