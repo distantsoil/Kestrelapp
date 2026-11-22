@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -91,6 +92,14 @@ def _front_opp(page) -> str:
 
 def _answers() -> list[tuple[str, float]]:
     return [(lb.source, lb.score) for lb in _t(qf.labels) if lb.source == "quick"]
+
+
+def _wait_for_answers(n, *, backstop_s=30):
+    """Wait until n quick answers are stored (D-TEST-823); ends the moment they are."""
+    end = time.monotonic() + backstop_s
+    while len(_answers()) < n:
+        assert time.monotonic() < end, (n, _answers())
+        time.sleep(0.05)
 
 
 def _assert_clean(page, containers, *, width, theme, where):
@@ -311,14 +320,17 @@ def test_the_top_pick_button_is_a_circle_with_its_icon_centered(live):
 def test_reduced_motion_turns_the_flight_off_and_the_buttons_and_keys_still_work(live):
     ctx, page, errors = _round(live, reduced=True)
     try:
+        before = len(_answers())
         page.click("#qr-yes")
+        # D-TEST-823: the button and the key each send their own save; two saves in flight can land
+        # in either order. Wait until the first is recorded, then press the key, so the order the
+        # test asserts is the order the user acted in.
+        page.wait_for_function("document.querySelector('#qr-count').textContent.startsWith('2 of')")
+        _wait_for_answers(before + 1)
         page.keyboard.press("ArrowLeft")
         page.wait_for_function("document.querySelector('#qr-count').textContent.startsWith('3 of')")
-        for _ in range(60):
-            if len(_answers()) == 5:
-                break
-            page.wait_for_timeout(100)
-        assert [s for _, s in _answers()][3:] == [4.0, 2.0]
+        _wait_for_answers(before + 2)
+        assert [s for _, s in _answers()][before:] == [4.0, 2.0]
         # No pointer-follow in reduced motion: a drag leaves the card alone.
         box = page.locator(".qr-card.is-front").bounding_box()
         page.mouse.move(box["x"] + 50, box["y"] + 100)
