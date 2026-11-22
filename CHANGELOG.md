@@ -2,7 +2,7 @@
 
 All notable changes to Kestrel are listed here, newest first. The format follows Keep a Changelog.
 
-## [0.7.7] - 2026-11-20
+## [0.7.7] - 2026-11-22
 
 ### Added
 
