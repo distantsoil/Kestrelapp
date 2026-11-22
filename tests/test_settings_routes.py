@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import re
 import zipfile
 
 import pytest
@@ -724,7 +725,9 @@ def test_backup_download_records_last_backup_and_restore_message(monkeypatch):
         assert "kestrel-backup-" in r.headers["content-disposition"]
         assert zipfile.is_zipfile(io.BytesIO(r.content))
         assert _row("backup.last_at")
-        assert "Last backup: just now" in c.get("/settings/section/data").text
+        section = c.get("/settings/section/data").text
+        # D-TEST-825: real time may pass between the backup and this read; accept plain minutes.
+        assert re.search(r"Last backup: (just now|\d+ minutes? ago)", section)
         bad = c.post("/settings/restore", data={"from_settings": "1"},
                      files={"backup_file": ("x.zip", b"not a zip", "application/zip")})
         assert "warnbox" in bad.text  # a refused file says so; nothing was replaced

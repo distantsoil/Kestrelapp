@@ -153,9 +153,11 @@ async def test_the_online_lane_gets_the_same_grace_as_the_worker(sm, _bounds):
     lane = asyncio.create_task(online_call_finishing_soon())
     await asyncio.sleep(0)
     started = time.monotonic()
-    await app_mod._graceful_worker_shutdown(worker, stop, grace_s=2.0, also=(lane,))
+    # D-TEST-825: a long grace (30 s) and a 20 s ceiling: the lane ends in 0.2 s, so waiting out
+    # the grace would fail, and a loaded machine cannot reach 20 s.
+    await app_mod._graceful_worker_shutdown(worker, stop, grace_s=30.0, also=(lane,))
     assert finished == ["lane"] and not lane.cancelled()
-    assert time.monotonic() - started < 1.5  # the grace is a ceiling, not a delay
+    assert time.monotonic() - started < 20  # the grace is a ceiling, not a delay
 
 
 async def test_a_lane_call_that_never_returns_is_cut_off_within_the_bound(sm, _bounds):

@@ -87,12 +87,19 @@ async def test_host_limiter_spaces_requests():
     assert elapsed >= 2.0 / rate * 0.8  # two intervals, allowing scheduler slack
 
 
-async def test_host_limiter_zero_rate_never_waits():
+async def test_host_limiter_zero_rate_never_waits(monkeypatch):
+    # D-TEST-825: no wall-clock ceiling; prove the zero rate takes no wait at all.
+    import types
+
     limiter = _HostLimiter()
-    start = time.monotonic()
+
+    def _no_wait(_seconds=None):
+        raise AssertionError("a zero rate must not read the clock or sleep")
+
+    monkeypatch.setattr("kestrel.ingest.http.time", types.SimpleNamespace(monotonic=_no_wait))
+    monkeypatch.setattr("kestrel.ingest.http.asyncio", types.SimpleNamespace(sleep=_no_wait))
     for _ in range(5):
         await limiter.wait("host", 0.0)
-    assert time.monotonic() - start < 0.05
 
 
 # --------------------------------------------------------------- hard rule 7, at the HTTP layer

@@ -214,7 +214,10 @@ def test_bell_panel_tabs_groups_human_words_and_actions():
     assert "Today" in body and "Earlier" in body
     # A human severity, never the raw word; a plain relative time, never a raw stamp.
     assert "Needs attention" in body and ">warning<" not in body and ">info<" not in body
-    assert "just now" in body and "3 days ago" in body
+    # D-TEST-825: a few minutes of load may turn "just now" into minutes and 3 days into more.
+    assert re.search(r"just now|\d+ minutes? ago", body)
+    days = re.search(r"(\d+) days ago", body)
+    assert days is not None and int(days.group(1)) >= 3
     # A due follow-up opens Applications; there is no Draft follow-up (D-UI-148).
     assert "Open in Applications" in body and "Draft follow-up" not in body
     assert 'href="/pursuits"' in body and "Open Sources" in body

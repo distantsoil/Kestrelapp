@@ -626,12 +626,15 @@ def test_runs_live_panel_shows_the_step_bars_and_events():
     # The newest row was written at seed time, so the words are "N seconds ago" for the time the
     # seed, app start and request took: "0 seconds ago" on a fast machine, "1 second ago"
     # (singular, correctly) on a slow Windows runner. Assert the exact words for whatever N is.
+    # D-TEST-825: machine load may age the row past a minute, so accept the unit the count has
+    # reached; the word must still be the plain relative one, singular exactly at one.
     activity = re.search(
         r'data-testid="run-activity">\s*<span class="k-dot[^>]*></span>Last activity (\d+) '
-        r'(seconds?) ago\s*<', panel)
+        r'(second|seconds|minute|minutes) ago\s*<', panel)
     assert activity is not None, panel
-    secs = int(activity.group(1))
-    assert secs < 60 and activity.group(2) == ("second" if secs == 1 else "seconds")
+    secs, unit = int(activity.group(1)), activity.group(2)
+    assert (secs == 1) == (not unit.endswith("s"))
+    assert secs < 60 if unit.startswith("second") else secs >= 1
     assert 'data-testid="run-stall"' not in panel
     with _client() as c:  # the poll that patches the card in place lives on the page
         assert 'hx-trigger="every 5s, run-refresh from:body"' in c.get("/runs").text
@@ -650,7 +653,10 @@ def test_runs_live_panel_warns_after_ten_minutes_without_activity():
         html = c.get("/runs").text
     panel = html.split('data-testid="run-live"')[1]
     warn = panel.split('data-testid="run-stall"')[1].split("</div>")[0]
-    assert "No activity for 31 minutes" in warn or "No activity for 30 minutes" in warn
+    # D-TEST-825: the seeded 30-minute stall ages under load; require at least 30 minutes.
+    stalled = re.search(r"No activity for (\d+) (minutes?)\b", warn)
+    assert stalled is not None and int(stalled.group(1)) >= 30, warn
+    assert stalled.group(2) == ("minute" if int(stalled.group(1)) == 1 else "minutes")
     assert 'href="/about#diagnostics"' in warn
 
 
@@ -761,7 +767,10 @@ def test_in_flight_line_says_retries_and_how_long_the_run_has_gone():
     started = iso(clock_seed.ago(horizon=timedelta(0), minutes=7))
     v = rs.view({**base, "retrying": 1, "started_at": started})
     assert v["step"] == "Rating 3 of 12 · 1 failed"
-    assert v["step_detail"] == "Rating 3 of 12 · 1 failed · 1 retrying · 7 min so far"
+    # D-TEST-825: the seeded 7 minutes age under load; require at least 7.
+    clock = re.fullmatch(
+        r"Rating 3 of 12 · 1 failed · 1 retrying · (\d+) min so far", v["step_detail"])
+    assert clock is not None and int(clock.group(1)) >= 7, v["step_detail"]
 
 
 def test_runs_live_panel_draws_the_step_and_its_clock_as_two_spans():

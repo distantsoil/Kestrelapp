@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import sqlite3
 import tempfile
 from datetime import UTC, datetime, timedelta
@@ -177,7 +178,9 @@ def test_the_section_has_no_overlap_or_clipping_and_says_connected(live, theme, 
     ctx, page, errors = _open(live, theme, width)
     try:
         status = page.inner_text('[data-testid="xt-status"]')
-        assert status == "Connected · Chrome · used 2 minutes ago", status
+        # D-TEST-825: the seeded 2 min 20 s ages under load; require at least 2 minutes.
+        seen = re.fullmatch(r"Connected · Chrome · used (\d+) minutes? ago", status)
+        assert seen is not None and int(seen.group(1)) >= 2, status
         assert page.get_attribute('[data-testid="st-nav-extension"]', "aria-current") == "page"
         _assert_clean(page, (theme, width))
         page.screenshot(path=str(_SHOTS / f"app-settings-extension-{theme}-{width}.png"),

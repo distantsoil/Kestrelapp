@@ -102,6 +102,14 @@ def _wait_for_answers(n, *, backstop_s=30):
         time.sleep(0.05)
 
 
+def _wait_for_answers_settled(n, *, backstop_s=30):
+    """Wait until exactly n quick answers are stored (D-TEST-825), e.g. after an Undo's delete."""
+    end = time.monotonic() + backstop_s
+    while len(_answers()) != n:
+        assert time.monotonic() < end, (n, _answers())
+        time.sleep(0.05)
+
+
 def _assert_clean(page, containers, *, width, theme, where):
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True, (
         where, "sideways scroll", theme, width)
@@ -406,7 +414,8 @@ def test_a_save_failing_after_later_answers_keeps_undo_on_the_right_cards(live):
         _wait_answers(seeded + 1)
         page.keyboard.press("Control+z")  # card 2: never saved, nothing removed
         _count_is(page, 2)
-        page.wait_for_timeout(500)
+        # D-TEST-825: the undo path stores its change; poll the stored rows, never a fixed sleep.
+        _wait_for_answers_settled(seeded + 1)
         assert len(_answers()) == seeded + 1  # card 1's answer is still there
         assert not errors
     finally:

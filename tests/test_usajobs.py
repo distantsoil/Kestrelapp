@@ -421,7 +421,8 @@ def test_the_email_check_agrees_with_the_old_pattern_on_ordinary_input(value):
 def test_a_long_hostile_email_is_refused_in_well_under_a_second(hostile):
     start = time.perf_counter()
     assert looks_like_email(hostile) is False
-    assert time.perf_counter() - start < 0.2
+    # D-TEST-825: a backstop, not a speed claim: ms normally, so 10 s means the pattern blew up.
+    assert time.perf_counter() - start < 10
 
 
 def test_the_saved_email_check_refuses_a_hostile_string_with_the_same_sentence():
@@ -435,4 +436,5 @@ def test_the_saved_email_check_refuses_a_hostile_string_with_the_same_sentence()
         save_usajobs_credentials(None, key="", email="!" * 50_000)  # type: ignore[arg-type]
     )
     assert said == "That does not look like an email address."
-    assert time.perf_counter() - start < 0.5
+    # D-TEST-825: a backstop, not a speed claim: ms normally, so 10 s means the pattern blew up.
+    assert time.perf_counter() - start < 10

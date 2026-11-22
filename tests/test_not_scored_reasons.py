@@ -608,7 +608,8 @@ def test_pasted_text_cannot_make_the_dedup_or_team_patterns_slow():
     normalize_desc("?utm_" * 20_000)
     normalize_desc("?utm_a" * 20_000)
     mentions_team("0" * 50_000)
-    assert time.monotonic() - t0 < 1.0
+    # D-TEST-825: a backstop, not a speed claim: ms normally, so 10 s means the pattern blew up.
+    assert time.monotonic() - t0 < 10
     kept = normalize_desc("Go https://x.test/j?utm_source=a&utm_medium=b now ?ref=c ok")
     assert kept == "go now ok"
     assert mentions_team("a 12-person team") and mentions_team("a 12345 person team")

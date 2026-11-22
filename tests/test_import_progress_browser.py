@@ -159,7 +159,11 @@ def test_a_hang_shows_the_long_wait_line_then_ends_with_a_message(live, path):
         page.clock.run_for(61_000)  # a minute of the page's own time
         assert page.is_visible('[data-testid="import-long"]')
         assert "taking longer" in page.inner_text('[data-testid="import-long"]')
-        assert page.inner_text('[data-testid="import-elapsed"]').strip() in {"61 s", "60 s"}
+        # D-TEST-824: clock.install() leaves the page clock running in real time as well, so a
+        # loaded machine adds seconds ("62 s" was seen). The page has had a fake minute at least:
+        # that lower bound is what the line promises; an upper bound would be a real-time limit.
+        shown = page.inner_text('[data-testid="import-elapsed"]').strip()
+        assert shown.endswith(" s") and int(shown[:-2]) >= 60, shown
         page.wait_for_selector('[data-testid="import-error"]', timeout=15000)  # the client gave up
         assert "too long" in page.inner_text('[data-testid="import-error"]')
         assert page.query_selector('[data-testid="import-working"]') is None

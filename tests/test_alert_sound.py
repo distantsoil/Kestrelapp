@@ -559,7 +559,7 @@ class _Popen:
         type(self).started.append((list(argv), kwargs))
 
     def wait(self) -> int:
-        type(self).release.wait(5)
+        type(self).release.wait(30)
         return 0
 
 
@@ -596,7 +596,8 @@ def test_macos_uses_afplay(monkeypatch, popen):
     monkeypatch.setattr(alert_sound.shutil, "which", _which("afplay"))
     began = time_mod.monotonic()
     assert alert_sound._start(Path("/tmp/chime.wav")) is True  # returns while the player runs
-    assert time_mod.monotonic() - began < 2  # the fake player only exits after 5 s: no waiting
+    # D-TEST-825: the fake player holds for 30 s; a 20 s ceiling still proves no waiting.
+    assert time_mod.monotonic() - began < 20
     argv, kwargs = popen.started[0]
     assert argv == ["/usr/bin/afplay", str(Path("/tmp/chime.wav"))]  # the machine's own spelling
     assert kwargs["stdout"] is alert_sound.subprocess.DEVNULL

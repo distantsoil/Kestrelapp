@@ -266,7 +266,8 @@ def test_a_relaunch_right_after_exit_shows_the_busy_page_at_once(shell, monkeypa
     paths.runtime_json().unlink(missing_ok=True)
     t0 = _time.monotonic()
     assert shell._second_launch(wait_s=60) == "closing"
-    assert _time.monotonic() - t0 < 3
+    # D-TEST-825: the wait is 60 s; 30 s still proves it did not wait, and load cannot reach it.
+    assert _time.monotonic() - t0 < 30
 
 
 def test_quitting_keeps_the_closing_screen_up_until_the_server_has_stopped(shell, monkeypatch):

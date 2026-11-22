@@ -547,11 +547,12 @@ def test_macos_menu_actions_leave_the_main_thread(shell, monkeypatch):
 
     def slow() -> None:
         seen.append(threading.current_thread().name)
-        release.wait(5)
+        release.wait(30)
 
+    # D-TEST-825: the action blocks for 30 s; a 20 s ceiling still proves the call did not wait.
     started = time.monotonic()
     shell._menu_action(slow)(None, None)
-    assert time.monotonic() - started < 1.0  # returned without waiting for the action
+    assert time.monotonic() - started < 20  # returned without waiting for the action
     release.set()
     for _ in range(100):
         if seen:

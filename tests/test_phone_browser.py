@@ -329,6 +329,9 @@ def test_changing_the_country_twice_in_a_row_keeps_the_same_number(live):
     page.locator("#pa-loc").focus()
     page.wait_for_function("document.querySelector('[data-phone-e164]').value === '+15555550123'")
     page.locator("[data-phone-country]").select_option("GB")
+    # D-TEST-825: wait for the GB reformat reply before choosing DE, as the test above does,
+    # so DE is computed from the settled display instead of racing the older answer.
+    page.wait_for_function("document.querySelector('[data-phone-shown-under]').value === 'GB'")
     page.locator("[data-phone-country]").select_option("DE")
     page.wait_for_function("document.querySelector('#pa-phone').value === '+1 555-555-0123'")
     assert page.locator("[data-phone-e164]").input_value() == "+15555550123"

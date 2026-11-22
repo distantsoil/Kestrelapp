@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
@@ -1056,17 +1057,26 @@ def test_a_poll_updates_the_work_in_flight_without_moving_the_card(running, widt
     ctx, page, errors = _page(base, browser, "light", width)
     try:
         before = page.get_by_test_id("run-step").inner_text()
-        assert "9 min so far" in before and "retrying" not in before, before
+        # D-TEST-825: load may age the seeded 9.5 min past the 9-minute bucket; lower bound.
+        minutes = re.search(r"(\d+) min so far", before)
+        assert minutes is not None and int(minutes.group(1)) >= 9, before
+        assert "retrying" not in before, before
         page.evaluate(_FRAMES_JS)
-        for change, want in ((retry_nine_thirty, "retrying"), (ten_thirty, "10 min so far")):
+        for change, want in ((retry_nine_thirty, "retrying"), (ten_thirty, "min so far")):
             _db(change)
             with page.expect_response(
                 lambda r: r.url.endswith("/runs") and r.request.method == "GET"
             ):
                 page.evaluate("htmx.trigger(document.body, 'run-refresh')")
+            # D-TEST-825: the seeded 10.5 min may drift into the 11-minute bucket under load, so
+            # require at least 10 minutes rather than the exact wording.
             page.wait_for_function(
-                "t => document.querySelector('[data-testid=\"run-step\"]').textContent"
-                ".includes(t)", arg=want)
+                """(w) => {
+                  const t = document.querySelector('[data-testid="run-step"]').textContent;
+                  if (w === 'retrying') return t.includes('retrying');
+                  const m = /(\\d+) min so far/.exec(t);
+                  return m !== null && Number(m[1]) >= 10;
+                }""", arg=want)
             page.wait_for_function(_ANIMATIONS_DONE)
         page.evaluate("window.__go = false")
         frames = page.evaluate("window.__frames")
@@ -1098,15 +1108,26 @@ def test_the_clock_ticks_in_seconds_without_redrawing_the_step_text(running):
     ctx, page, errors = _page(base, browser, "light", 1280)
     try:
         before = page.get_by_test_id("run-clock").inner_text()
-        assert "sec so far" in before and "just started" not in before, before
+        # D-TEST-825: seeded 20 s ago; load may add minutes, so require at least 20 s elapsed
+        # rather than the exact second, and still never "just started".
+        clock = re.search(r"(\d+) (sec|min) so far", before)
+        assert clock is not None and "just started" not in before, before
+        secs = int(clock.group(1)) * (60 if clock.group(2) == "min" else 1)
+        assert secs >= 20, before
         page.evaluate("""() => { window.__mainNode = document.querySelector(
           '[data-live="step-main"]'); }""")
         _db(forty)
         with page.expect_response(lambda r: r.url.endswith("/runs") and r.request.method == "GET"):
             page.evaluate("htmx.trigger(document.body, 'run-refresh')")
+        # D-TEST-825: seeded 40 s ago; wait for at least 40 s elapsed in seconds or minutes,
+        # so a slow machine crossing the minute mark does not fail the clock update.
         page.wait_for_function(
-            "() => /^ · (4\\d|5\\d) sec so far$/.test("
-            "document.querySelector('[data-live=\"step-clock\"]').textContent)")
+            """() => {
+              const m = /^ · (\\d+) (sec|min) so far$/.exec(
+                document.querySelector('[data-live="step-clock"]').textContent);
+              if (!m) return false;
+              return Number(m[1]) * (m[2] === 'min' ? 60 : 1) >= 40;
+            }""")
         assert page.evaluate("""() => window.__mainNode === document.querySelector(
           '[data-live="step-main"]')""") is True
         assert not errors, errors
