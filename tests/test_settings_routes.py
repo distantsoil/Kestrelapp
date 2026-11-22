@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import re
 import zipfile
 
 import pytest
@@ -488,19 +489,80 @@ def test_everyday_options_save_and_undo():
         assert not c.post("/settings/computer/option", json={"key": "bogus"}).json()["ok"]
 
 
-def test_autostart_writes_and_removes_the_entry_for_this_platform(tmp_path, monkeypatch):
+class _FakeRegistry:
+    """A stand-in for winreg holding one Run key in memory: the autostart test never writes the
+    real registry of the Windows machine it runs on (D-TEST-575)."""
+
+    HKEY_CURRENT_USER = "HKCU"
+    REG_SZ = 1
+
+    def __init__(self) -> None:
+        self.values: dict[tuple[str, str], str] = {}
+
+    class _Key:
+        def __init__(self, reg, path):
+            self.reg, self.path = reg, path
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def CreateKey(self, root, path):  # noqa: N802 - winreg's own names
+        return self._Key(self, path)
+
+    def OpenKey(self, root, path):  # noqa: N802
+        return self._Key(self, path)
+
+    def SetValueEx(self, key, name, reserved, kind, value):  # noqa: N802
+        self.values[(key.path, name)] = value
+
+    def QueryValueEx(self, key, name):  # noqa: N802
+        if (key.path, name) not in self.values:
+            raise FileNotFoundError(name)
+        return self.values[(key.path, name)], self.REG_SZ
+
+    def DeleteValue(self, key, name):  # noqa: N802
+        if self.values.pop((key.path, name), None) is None:
+            raise FileNotFoundError(name)
+
+
+def _autostart_on(platform, tmp_path, monkeypatch):
+    """D-TEST-575: the platform and the registry are set by the test, never the host's own (on
+    Windows the old test wrote the real Run key)."""
+    import sys
+
     from kestrel.services import autostart
 
+    monkeypatch.setattr(autostart, "platform_name", lambda: platform)
     # Linux honors XDG_CONFIG_HOME, which CI runners set; keep the entry under this test's home.
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-
+    reg = _FakeRegistry()
+    monkeypatch.setitem(sys.modules, "winreg", reg)
     assert autostart.set_enabled(True, home=tmp_path, parts=["/opt/k k/Kestrel", "--tray"]) is None
-    if autostart.platform_name() != "windows":
-        assert autostart.is_enabled(home=tmp_path)
-        text = next(p for p in tmp_path.rglob("*") if p.is_file()).read_text(encoding="utf-8")
-        assert "--tray" in text and "Kestrel" in text
-        assert autostart.set_enabled(False, home=tmp_path) is None
-        assert not autostart.is_enabled(home=tmp_path)
+    assert autostart.is_enabled(home=tmp_path)
+    return autostart, reg
+
+
+def test_autostart_writes_and_removes_the_windows_run_value(tmp_path, monkeypatch):
+    autostart, reg = _autostart_on("windows", tmp_path, monkeypatch)
+    assert list(tmp_path.rglob("*")) == []
+    text = reg.values[(autostart.RUN_KEY, autostart.VALUE_NAME)]
+    assert "--tray" in text and "Kestrel" in text
+    assert autostart.set_enabled(False, home=tmp_path) is None
+    assert not autostart.is_enabled(home=tmp_path)
+    assert reg.values == {}
+
+
+@pytest.mark.parametrize("platform", ["macos", "linux"])
+def test_autostart_writes_and_removes_the_entry_file(platform, tmp_path, monkeypatch):
+    autostart, reg = _autostart_on(platform, tmp_path, monkeypatch)
+    assert reg.values == {}
+    text = next(p for p in tmp_path.rglob("*") if p.is_file()).read_text(encoding="utf-8")
+    assert "--tray" in text and "Kestrel" in text
+    assert autostart.set_enabled(False, home=tmp_path) is None
+    assert not autostart.is_enabled(home=tmp_path)
 
 
 def test_tray_flag_is_a_launch_option_not_a_command():
@@ -663,7 +725,9 @@ def test_backup_download_records_last_backup_and_restore_message(monkeypatch):
         assert "kestrel-backup-" in r.headers["content-disposition"]
         assert zipfile.is_zipfile(io.BytesIO(r.content))
         assert _row("backup.last_at")
-        assert "Last backup: just now" in c.get("/settings/section/data").text
+        section = c.get("/settings/section/data").text
+        # D-TEST-825: real time may pass between the backup and this read; accept plain minutes.
+        assert re.search(r"Last backup: (just now|\d+ minutes? ago)", section)
         bad = c.post("/settings/restore", data={"from_settings": "1"},
                      files={"backup_file": ("x.zip", b"not a zip", "application/zip")})
         assert "warnbox" in bad.text  # a refused file says so; nothing was replaced
@@ -737,3 +801,20 @@ def test_a_quiet_tray_start_does_not_raise_the_running_window(monkeypatch):
     assert shell.acquire_single_instance() is False and calls == []
     monkeypatch.setattr(shell.sys, "argv", ["Kestrel"])
     assert shell.acquire_single_instance() is False and calls == [1]
+
+
+def test_a_tracker_the_csv_reader_refuses_is_said_plainly_at_both_steps():
+    """A field past the CSV reader's own size limit makes the reader raise its own error; both
+    import steps answer with the plain sentence, never a server error or the reader's text."""
+    import csv
+
+    huge = "x" * (csv.field_size_limit() + 10)
+    sample = f'Company,Job title,Date applied,Status\n"{huge}",Planner,2026-09-01,Applied\n'
+    with _client() as c:
+        read = c.post("/settings/data/applied/read", files=_csv(sample))
+        review = c.post("/settings/data/applied/review", data={
+            "text": sample, "file_name": "t.csv", "map_0": "company", "map_1": "title",
+            "map_2": "date", "map_3": "status"})
+    for r in (read, review):
+        assert r.status_code == 200
+        assert "could not be read as CSV" in r.text and "field limit" not in r.text

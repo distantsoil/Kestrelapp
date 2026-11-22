@@ -292,6 +292,24 @@ class P2Eval(_Base):
     ]
 
 
+# evaluate/v4 (issue #208, D-SCORE-24): what needs confirming is a worth-checking line, never a
+# blocker. A subclass, so the v3 schema sent to the model stays byte for byte as it was.
+# Required in the schema the model is given, but a reply that leaves it out reads as an empty list
+# rather than a failure (hard rule 3 asks for structure, not for an optional note).
+WorthChecking = Annotated[list[Annotated[str, _truncate(250)]], _cap(4)]
+
+
+def _require_worth_checking(schema: dict) -> None:
+    required = schema.setdefault("required", [])
+    if "worth_checking" not in required:
+        required.append("worth_checking")
+
+
+class P2EvalV4(P2Eval):
+    model_config = ConfigDict(extra="ignore", json_schema_extra=_require_worth_checking)
+    worth_checking: WorthChecking = Field(default_factory=list)
+
+
 # ===== P2C — consulting eval
 class P2CSituation(_Base):
     stated: str
@@ -418,6 +436,12 @@ class P2CEval(_Base):
     headline_reason: str
     blockers: list[P2CBlocker]
     legitimacy: P2CLegitimacy
+
+
+class P2CEvalV4(P2CEval):
+    # evaluate_consulting/v4, as P2EvalV4.
+    model_config = ConfigDict(extra="ignore", json_schema_extra=_require_worth_checking)
+    worth_checking: WorthChecking = Field(default_factory=list)
 
 
 # ===== P3 — doc slot selection
@@ -868,6 +892,10 @@ SCHEMA_BY_VERSION: dict[str, type[BaseModel]] = {
     # v3 adds OPERATOR_CORRECTIONS to the USER template only; the schema is v2's (D-SCORE-1).
     "evaluate/v3": P2Eval,
     "evaluate_consulting/v3": P2CEval,
+    # v4: the floor/target and location wording, the resume digest, the blocker rule and
+    # worth_checking (issue #208, D-SCORE-24).
+    "evaluate/v4": P2EvalV4,
+    "evaluate_consulting/v4": P2CEvalV4,
     "cover/v4": P4Cover,  # adds accepted stories as a source (D-LETTER-2)
     "cover/v3": P4Cover,
     "engagement_outline/v3": P4CEngagement,

@@ -9,7 +9,7 @@
   {%- else %}
   <p class="k-muted">None yet. Research found no open unknowns. Add your own below.</p>
   {%- endfor %}
-  <form class="pp-addq" hx-post="/prep/{{ opp.id }}/ask" hx-swap="none" hx-on::after-request="if(event.detail.successful)this.reset()">
+  <form class="pp-addq" hx-post="/prep/{{ opp.id }}/ask" hx-swap="none" data-k-after-request="reset-if-ok">
     <input class="k-input" name="question" maxlength="400" placeholder="Add your own question" aria-label="Add your own question" data-testid="pp-addq">
     <button type="submit" class="k-btn k-btn--sm">Add</button>
   </form>

@@ -8,9 +8,9 @@
 </div>
 {% if kestrel is not none %}
 <div class="cal-ringrow">
-  <div class="cal-ring3 {{ 'is-mid' if kestrel < 4 else '' }}" style="--p: {{ (kestrel / 5 * 100)|round|int }}" role="img" aria-label="Kestrel's score {{ '%.1f'|format(kestrel) }} of 5"><div><div><b>{{ '%.1f'|format(kestrel) }}</b><span>of 5</span></div></div></div>
+  <div class="cal-ring3 {{ 'is-mid' if kestrel < 4 else '' }}" data-k-style="--p: {{ (kestrel / 5 * 100)|round|int }}" role="img" aria-label="Kestrel's score {{ '%.1f'|format(kestrel) }} of 5"><div><div><b>{{ '%.1f'|format(kestrel) }}</b><span>of 5</span></div></div></div>
   <div class="cal-dims">
-    {% for d in dims %}<div class="cal-dim"><span>{{ d.name }}</span><i><u style="width: {{ d.score * 20 }}%"></u></i><b>{{ d.score }}</b></div>{% endfor %}
+    {% for d in dims %}<div class="cal-dim"><span>{{ d.name }}</span><i><u data-k-style="width: {{ d.score * 20 }}%"></u></i><b>{{ d.score }}</b></div>{% endfor %}
   </div>
 </div>
 {% endif %}

@@ -5,7 +5,7 @@
 {% import "partials/local_only.html" as lo with context %}
 <section class="k-card st-card" id="st-imp" data-testid="st-imp" data-step="{{ step }}">
   {{ st.head('Import past applications', 'sheet') }}
-  <ol class="k-steps st-steps" style="--k-steps: 4">
+  <ol class="k-steps st-steps" data-k-style="--k-steps: 4">
     {% for label in ['Choose file', 'Match columns', 'Review', 'Add'] %}{% set n = loop.index0 %}
     <li class="k-step{% if step == 3 or n < step %} is-done{% elif n == step %} is-now{% endif %}"{% if n == step and step < 3 %} aria-current="step"{% endif %}><span class="k-step__n">{% if step == 3 or n < step %}{{ st.sic('check', 'k-ic--sm') }}{% else %}{{ loop.index }}{% endif %}</span><span class="k-step__label">{{ label }}</span></li>
     {% endfor %}

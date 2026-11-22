@@ -16,6 +16,7 @@ import structlog
 from pydantic import BaseModel, ValidationError
 
 from kestrel.errors import classify_model_failure
+from kestrel.llm import engine_cycle
 from kestrel.llm.client import (
     LLMClient,
     ModelDeclined,
@@ -25,6 +26,7 @@ from kestrel.llm.client import (
 )
 from kestrel.llm.credit import OutOfCredit
 from kestrel.llm.docselect import build_doc_select_schema, validate_doc_selection
+from kestrel.llm.failure_kind import REPEATED, UNREADABLE, KindedReason, declined_kind
 from kestrel.llm.schemas import P3DocSelect
 
 log = structlog.get_logger()
@@ -76,6 +78,9 @@ class GuardResult:
     # The provider said the key has no credit left (D-LLM-8). Not a quarantine (there is no model
     # output to keep) and not a request error to retry: `error` is the authored sentence.
     out_of_credit: bool = False
+    # The call could not reach the local engine (typed EngineUnreachable, llm.engine_cycle): the
+    # task waits for it instead of spending a try (D-WORKER-6 amended, round 11).
+    engine_unreachable: bool = False
     # A hosted send that Kestrel refused to make before anything left the computer (Hosted mode
     # turned off, or confidential mode with no employer chosen). `error` is the reason; there is
     # no model reply, and the Quarantine row it leaves holds the prompt that was not sent.
@@ -269,7 +274,109 @@ def parse_and_validate(
     try:
         return model_cls.model_validate(data), None
     except ValidationError as exc:
-        return None, f"schema validation failed: {exc}"
+        return None, ValidationReason(exc)
+
+
+class ValidationReason(str):
+    """A schema failure, in two wordings chosen together (KF-038). The string itself is the
+    record kept on this computer (the quarantine row, the log): pydantic's full text, which
+    names the value that failed. `for_model` is the only wording a repair may quote back
+    (issue #218, KF-071, D-PRIV-804)."""
+
+    for_model: str
+
+    def __new__(cls, exc: ValidationError) -> ValidationReason:
+        self = super().__new__(cls, f"schema validation failed: {exc}")
+        self.for_model = validation_reason(exc)
+        return self
+
+
+def reason_for_model(err: object) -> str:
+    """What the repair tells the model about a failed attempt. A schema failure gives its safe
+    wording; a schema failure that lost it on the way (a plain string) is never quoted: it
+    becomes the bare fact. Every other reason is the guard's own sentence."""
+    safe = getattr(err, "for_model", None)
+    if safe is not None:
+        return safe
+    text = str(err)
+    return "schema validation failed" if "input_value=" in text else text
+
+
+def validation_reason(exc: ValidationError) -> str:
+    """A validation failure as it may be quoted back to the model in the repair: the field and
+    the kind of problem, never the reply's own value. pydantic's text quotes the input
+    (`input_value='...'`), and by then the stand-in codes are restored, so quoting it sent the
+    current employer by name in the repair (issue #218, KF-071, D-PRIV-804). Built from our own
+    fields (D-SEC-20): the location and pydantic's error type, a fixed vocabulary.
+
+    Nothing here is ever cut (KF-076, D-PRIV-810). A field path can hold a key the reply chose,
+    with a restored name in it, and this text is coded only afterwards (`outgoing`): a cut that
+    falls inside a name leaves a piece the coding no longer reads as that name. So each part
+    goes whole or not at all (`_whole`)."""
+    parts: list[str] = []
+    for err in exc.errors(include_input=False, include_context=False, include_url=False)[:12]:
+        where = ".".join(
+            "[]" if isinstance(p, int) else _whole(str(p), _PATH_PART_MAX, "(a long key)")
+            for p in err.get("loc", ())
+        )
+        kind = err.get("type", "")
+        problem = _PROBLEM.get(kind, "not valid")
+        if kind in _OUR_OWN:
+            # A rule one of our own validators wrote (a length limit, an index that is not in
+            # the list): its sentence is ours, and it tells the model what to fix. Whatever of
+            # the reply it repeats is coded with the rest of the repair (`outgoing`).
+            ours = str(err.get("msg") or problem).removeprefix("Value error, ")
+            problem = _whole(ours, _OWN_SENTENCE_MAX, problem)
+        parts.append(f"`{where or 'reply'}`: {problem}")
+    more = exc.error_count() - len(parts)
+    tail = f"; and {more} more" if more > 0 else ""
+    return f"schema validation failed: {'; '.join(parts)}{tail}"
+
+
+# The longest path part, and the longest sentence of our own, a repair quotes.
+_PATH_PART_MAX = 60
+_OWN_SENTENCE_MAX = 300
+
+
+def _whole(text: str, limit: int, instead: str) -> str:
+    """`text` when it fits in `limit`, else `instead`: never a cut of it. The one place the
+    repair's wording is bounded (KF-076, D-PRIV-810): text that may hold a restored name is
+    coded after this, and only a whole name is coded."""
+    return text if len(text) <= limit else instead
+
+
+# Errors raised by validators written in this codebase, whose message is our own sentence.
+_OUR_OWN = frozenset({"value_error", "assertion_error"})
+# pydantic error type -> what to tell the model. Anything else reads "not valid".
+_PROBLEM = {
+    "missing": "required field missing",
+    "extra_forbidden": "field not allowed",
+    "string_type": "must be a string",
+    "int_type": "must be a whole number",
+    "int_parsing": "must be a whole number",
+    "int_from_float": "must be a whole number",
+    "float_type": "must be a number",
+    "float_parsing": "must be a number",
+    "bool_type": "must be true or false",
+    "bool_parsing": "must be true or false",
+    "list_type": "must be a list",
+    "dict_type": "must be an object",
+    "model_type": "must be an object",
+    "model_attributes_type": "must be an object",
+    "enum": "must be one of the allowed values in the schema",
+    "literal_error": "must be one of the allowed values in the schema",
+    "none_required": "must be null",
+    "string_too_short": "too short",
+    "string_too_long": "too long",
+    "too_short": "too few items",
+    "too_long": "too many items",
+    "greater_than": "number too small",
+    "greater_than_equal": "number too small",
+    "less_than": "number too large",
+    "less_than_equal": "number too large",
+    "string_pattern_mismatch": "not in the required format",
+    "value_error": "not valid",
+}
 
 
 async def run_guarded(
@@ -317,7 +424,16 @@ async def run_guarded(
         try:
             return reply_filter.finish(value)
         except ValidationError as exc:
-            return None, f"schema validation failed: {exc}"
+            return None, ValidationReason(exc)
+
+    def outgoing(msgs: list[dict]) -> list[dict]:
+        """EVERY message this function sends goes through here (issue #218, KF-071, D-PRIV-804):
+        the first attempt, the retry after a cut-off reply and the repair. The caller's messages
+        arrive coded already, so this changes nothing in them; what the guard adds itself (the
+        quoted reply, the error, the loop rule) is coded here, so a repair can never carry a
+        name the first send hid."""
+        encode = getattr(reply_filter, "encode_messages", None)
+        return encode(msgs) if encode is not None else msgs
 
     if model_cls is P3DocSelect and schema is None:
         # Guardrail (hard rule 2): P3's permissive model has no per-slot enums, so the default
@@ -330,6 +446,12 @@ async def run_guarded(
         )
     if schema is None:
         schema = json_schema_for(model_cls)
+    encode_json = getattr(reply_filter, "encode_json", None)
+    if encode_json is not None:
+        # The per-call schema is sent too: an enum value or key that carries a listed name (a
+        # slot key, a title) goes coded like the message, and the reply's codes are restored
+        # before validation (D-PRIV-804). Already-coded schemas (doc select) are unchanged.
+        schema = encode_json(schema, keys=True)
 
     prompt_tokens = completion_tokens = latency = 0
     cost: float | None = None
@@ -366,7 +488,7 @@ async def run_guarded(
         try:
             res = await client.complete(
                 tier=tier,
-                messages=messages,
+                messages=outgoing(messages),
                 schema=schema,
                 temperature=temperature,
                 max_tokens=eff_max_tokens,
@@ -411,7 +533,9 @@ async def run_guarded(
                     reason += ". It was already retried once with a larger output budget"
             if on_quarantine is not None:
                 model = client.settings.llm.tiers[tier].model
-                await on_quarantine(messages, exc.raw, reason, model)
+                await on_quarantine(
+                    messages, exc.raw, KindedReason(reason, declined_kind(exc)), model
+                )
             return GuardResult(
                 ok=False, raw=exc.raw, quarantined=True, error=reason,
                 prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
@@ -432,6 +556,7 @@ async def run_guarded(
                         reason=code)
             return GuardResult(
                 ok=False, error=f"request error: {sentence}",
+                engine_unreachable=engine_cycle.engine_unreachable(exc),
                 # Whether the payload EVER REACHED the provider, as a separate fact rather than
                 # something a caller has to infer from the message. The `request error:` prefix is
                 # written for EVERY exception that is not a `ModelDeclined` -- including
@@ -483,7 +608,7 @@ async def run_guarded(
 
     # --- attempt 2: one repair at temperature 0 -----------------------------------------------
     echo = first_content
-    instruction = REPAIR_INSTRUCTION.format(error=err)
+    instruction = REPAIR_INSTRUCTION.format(error=reason_for_model(err))
     repair_kw: dict[str, Any] = {}
     if first_loop:
         # Echoing a whole loop back invites the model to continue it; the head is enough to
@@ -506,7 +631,7 @@ async def run_guarded(
     try:
         res2 = await client.complete(
             tier=tier,
-            messages=repair_messages,
+            messages=outgoing(repair_messages),
             schema=schema,
             temperature=0.0,
             max_tokens=eff_max_tokens,
@@ -518,7 +643,9 @@ async def run_guarded(
         spend(exc)
         if on_quarantine is not None:
             model = client.settings.llm.tiers[tier].model
-            await on_quarantine(messages, combined(exc.raw), exc.reason, model)
+            await on_quarantine(
+                messages, combined(exc.raw), KindedReason(exc.reason, declined_kind(exc)), model
+            )
         return GuardResult(
             ok=False,
             raw=combined(exc.raw),
@@ -546,6 +673,7 @@ async def run_guarded(
             ok=False,
             raw=first_content,
             error=f"repair request error: {sentence}",
+            engine_unreachable=engine_cycle.engine_unreachable(exc),
             egressed=True,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
@@ -569,10 +697,12 @@ async def run_guarded(
         )
 
     # --- quarantine ---------------------------------------------------------------------------
-    err2 = degenerate_repeat(res2.content, loop_limit) or err2
+    looped = degenerate_repeat(res2.content, loop_limit)
+    err2 = looped or err2
     if on_quarantine is not None:
         await on_quarantine(
-            messages, combined(res2.content), err2 or "unknown",
+            messages, combined(res2.content),
+            KindedReason(err2 or "unknown", REPEATED if looped else UNREADABLE),
             client.settings.llm.tiers[tier].model,
         )
     return GuardResult(

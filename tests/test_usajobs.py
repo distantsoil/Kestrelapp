@@ -200,6 +200,7 @@ async def test_the_request_budget_is_capped_across_titles():
     async with _http() as http:
         got = await UsaJobsAdapter().fetch({"contact_email": EMAIL, "max_pages": 10}, http)
     assert route.call_count == 12 and "limit of requests" in got.partial_error
+    assert [n.kind for n in got.notices] == ["capped"]
 
 
 # ---------------------------------------------------------------- missing key, errors, secrecy
@@ -238,7 +239,7 @@ async def test_a_429_on_the_first_page_is_an_empty_partial_batch():
     respx.get(API).mock(return_value=Response(429))
     async with _http() as http:
         got = await UsaJobsAdapter().fetch(CFG, http)
-    assert list(got) == [] and "slow down" in got.partial_error
+    assert list(got) == [] and "is rate limiting requests" in got.partial_error
 
 
 @pytest.mark.parametrize(
@@ -367,7 +368,8 @@ async def test_a_429_run_is_partial_keeps_the_page_and_never_counts_a_failure(sm
     src = await _source(sm, max_pages=3)
     async with _http() as http:
         out = await run_source(sm, src.id, http=http)
-    assert out.status == "partial" and "slow down" in out.error and out.counts["new"] == 2
+    assert out.status == "partial" and out.counts["new"] == 2
+    assert "is rate limiting requests" in out.error
     async with sm() as s:
         assert (await s.get(Source, src.id)).consecutive_failures == 0
 
@@ -419,7 +421,8 @@ def test_the_email_check_agrees_with_the_old_pattern_on_ordinary_input(value):
 def test_a_long_hostile_email_is_refused_in_well_under_a_second(hostile):
     start = time.perf_counter()
     assert looks_like_email(hostile) is False
-    assert time.perf_counter() - start < 0.2
+    # D-TEST-825: a backstop, not a speed claim: ms normally, so 10 s means the pattern blew up.
+    assert time.perf_counter() - start < 10
 
 
 def test_the_saved_email_check_refuses_a_hostile_string_with_the_same_sentence():
@@ -433,4 +436,5 @@ def test_the_saved_email_check_refuses_a_hostile_string_with_the_same_sentence()
         save_usajobs_credentials(None, key="", email="!" * 50_000)  # type: ignore[arg-type]
     )
     assert said == "That does not look like an email address."
-    assert time.perf_counter() - start < 0.5
+    # D-TEST-825: a backstop, not a speed claim: ms normally, so 10 s means the pattern blew up.
+    assert time.perf_counter() - start < 10

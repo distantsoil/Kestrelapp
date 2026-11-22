@@ -242,13 +242,17 @@ async def page(request: Request):
 
     # The top card's Check for updates button shows when the last check ran, as Settings does. A
     # database that cannot be read yet (first launch, mid-restore) shows "never" rather than a 500.
+    published: str | None = None
     try:
         async with sessionmaker()() as s:
             state = await updater.load_state(s)
             update_last_checked = relative_last_checked(state.last_checked_at)
+            published = updater.published_version(state.cached_feed)
     except (SQLAlchemyError, sqlite3.Error) as exc:
         log.warning("about_last_checked_failed", error=f"{type(exc).__name__}: {exc}")
         update_last_checked = relative_last_checked(None)
+    from kestrel.web import install_id_view
+
     ctx = {
         "title": "About",
         "query": dict(request.query_params),
@@ -258,8 +262,10 @@ async def page(request: Request):
         "data_home": str(paths.data_home()),
         "logs_dir": str(paths.logs_dir()),
         "github_url": GITHUB_URL,
-        # Release notes are the changelog in the source repository, newest version first.
-        "changelog_url": f"{GITHUB_URL}/blob/main/CHANGELOG.md",
+        # Release notes open the running version's GitHub release; "See every change" opens the
+        # full changelog, newest version first (D-UPD-11).
+        "release_notes_url": updater.release_notes_url(kestrel.__version__, published),
+        "changelog_url": updater.CHANGELOG_URL,
         "update_last_checked": update_last_checked,
         "kofi_url": KOFI_URL,
         "site_url": SITE_URL,
@@ -272,6 +278,8 @@ async def page(request: Request):
         "bundle_excluded": diagnostics.EXCLUDED,
         "desktop": desktop_bridge.can_reveal(),
         "can_open_folder": desktop_bridge.can_open_folder(),
+        # The install ID (D-INST-1); None off this computer, so it is never in that page (D-INST-2).
+        "install_id": await install_id_view.for_request(request),
     }
     return templates().TemplateResponse(request, "about.html", ctx)
 
@@ -326,14 +334,30 @@ async def open_folder(which: str = Form("")):
     )
 
 
+async def _unscored_counts() -> dict[str, int] | None:
+    """Roles with no score, counted by reason (kestrel.web.unscored), for the bundle's
+    unscored.json. Read on the event loop before the zip is built in a thread, so the file is
+    written inside the zip's .part file like every other member. None (the file then says the
+    counts were not taken) when the database cannot be read; the bundle is still delivered."""
+    from kestrel.web.unscored import reason_counts
+
+    try:
+        async with sessionmaker()() as s:
+            return await reason_counts(s)
+    except Exception as exc:  # noqa: BLE001 - optional counts: the bundle is the point (logged)
+        log.warning("diagnostics_unscored_counts_failed", error_type=type(exc).__name__,
+                    error=str(exc)[:300])
+        return None
+
 @router.get("/about/diagnostics", dependencies=[LOCAL_DOWNLOAD])
 async def download_diagnostics():
     """Stream a fresh diagnostics zip; the temp copy is deleted after the bytes have gone out."""
     settings, redaction, conservative = await _effective()
+    counts = await _unscored_counts()
     try:
         archive = await asyncio.to_thread(
             diagnostics.build_bundle_to_temp, settings, redaction=redaction,
-            conservative=conservative,
+            conservative=conservative, unscored_counts=counts,
         )
     except OSError as exc:
         log.warning("diagnostics_bundle_failed", error_type=type(exc).__name__, error=str(exc))
@@ -367,12 +391,13 @@ async def save_diagnostics(request: Request):
     """Desktop app: write the zip to Downloads (or Kestrel's exports folder when Downloads cannot
     be written) and say where, inline. No browser download, so no WebView2 flyout (D-UI-41)."""
     settings, redaction, conservative = await _effective()
+    counts = await _unscored_counts()
     errors: list[str] = []
     for folder in _save_dirs():
         try:
             archive = await asyncio.to_thread(
                 diagnostics.build_bundle, settings, out_dir=folder, redaction=redaction,
-                conservative=conservative,
+                conservative=conservative, unscored_counts=counts,
             )
         except OSError as exc:
             log.warning(

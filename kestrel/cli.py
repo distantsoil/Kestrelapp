@@ -53,7 +53,7 @@ def _mode_flag(hosted: bool, local: bool) -> str | None:
 
 
 _HOSTED_FLAG = typer.Option(
-    False, "--hosted", help="Run on the hosted models assigned under Settings > Hosted."
+    False, "--hosted", help="Run on the online models chosen on the Models page."
 )
 _LOCAL_FLAG = typer.Option(False, "--local", help="Run on the local (Ollama) models.")
 
@@ -177,8 +177,8 @@ def models_build() -> None:
         name = f"kestrel-{tier}"
         with paths.resource_path(mf) as real_path:
             typer.echo(f"Building {name} from {mf.name} ...")
-            proc = subprocess.run(
-                ["ollama", "create", name, "-f", str(real_path)],
+            proc = subprocess.run(  # noqa: S603  fixed argv list, no shell
+                ["ollama", "create", name, "-f", str(real_path)],  # noqa: S607  tool found on PATH on purpose
                 capture_output=True,
                 text=True,
             )
@@ -735,8 +735,11 @@ async def _doc_import(file: str, accept: bool, track: str, doc_kind: str) -> Non
     migrate.run_migrations()
     settings = await _db_settings()  # setting-table rows (a hosted-only install) over YAML
     sm = get_sessionmaker()
-    async with httpx.AsyncClient() as http:
-        proposal = await propose_import(LLMClient(settings, http=http), markdown)
+    async with httpx.AsyncClient() as http, sm() as plan_session:
+        # The session lets the import decide what hides the current employer, from the client
+        # that sends (issue #218, D-PRIV-800): this path used to send the resume as written.
+        proposal = await propose_import(LLMClient(settings, http=http), markdown,
+                                        session=plan_session)
     if proposal.value is None:
         typer.echo(f"import failed: {proposal.error}")
         await reset_engine()
@@ -934,7 +937,7 @@ def screenshots() -> None:
     if not script.exists():
         typer.echo(f"not found: {script} (this command runs from a source checkout)")
         raise typer.Exit(code=2)
-    raise typer.Exit(code=subprocess.run([sys.executable, str(script)]).returncode)
+    raise typer.Exit(code=subprocess.run([sys.executable, str(script)]).returncode)  # noqa: S603  fixed argv list, no shell
 
 
 @app.command()
@@ -948,6 +951,12 @@ def bench(
         help="Comma-separated prompt version(s) (e.g. evaluate/v2). Vary --models OR "
         "--prompt-version, never both in the same run.",
     ),
+    allow_online: str = typer.Option(
+        None,
+        "--allow-online",
+        help="Only when tier 2 is an online model and no terminal can ask: the service name it "
+        "sends to (for example openrouter.ai), confirming this one run.",
+    ),
 ) -> None:
     """The benchmark harness (SPEC.md 8.6): run the tier-2 evaluation prompt against the gold set
     for one or more models (prompt version fixed) or one model across prompt versions (model
@@ -955,7 +964,7 @@ def bench(
     agreement, and a projected 500-item wall-clock, per model and per track."""
     import asyncio
 
-    asyncio.run(_bench(models, prompt_version))
+    asyncio.run(_bench(models, prompt_version, allow_online))
 
 
 def _ollama_probe_client(settings):
@@ -1010,7 +1019,16 @@ def _goldset_is_placeholder(track: str) -> bool:
     return kind != "regenerated"
 
 
-async def _bench(models_csv: str, prompt_version_csv: str | None) -> None:
+def _stdin_is_terminal() -> bool:
+    """Whether kestrel bench can ask in a terminal (D-SCORE-30)."""
+    import sys
+
+    return sys.stdin.isatty()
+
+
+async def _bench(
+    models_csv: str, prompt_version_csv: str | None, allow_online: str | None = None
+) -> None:
     import httpx
 
     from kestrel.bench.harness import (
@@ -1033,6 +1051,40 @@ async def _bench(models_csv: str, prompt_version_csv: str | None) -> None:
 
     migrate.run_migrations()
     settings = await _db_settings()
+    # Nothing goes online without the same consent the app asks for (D-SCORE-30).
+    from kestrel.bench.harness import build_variants, online_bench_refusal
+    from kestrel.config import sends_resume_lines
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.pipeline._shared import plan_hosted_send
+    from kestrel.pipeline.resume_digest import digests_for_tracks
+
+    try:
+        run_versions = [v.prompt_version for vs in build_variants(model_list, version_list).values()
+                        for v in vs]
+    except BenchArgError as exc:
+        typer.echo(f"bench: {exc}")
+        await reset_engine()
+        raise typer.Exit(code=2) from exc
+    refusal = online_bench_refusal(
+        settings, allow=allow_online, interactive=_stdin_is_terminal(),
+        confirm=lambda text: typer.confirm(text, default=False), show=typer.echo,
+        prompt_versions=run_versions,
+    )
+    if refusal:
+        typer.echo(f"bench: {refusal}")
+        await reset_engine()
+        raise typer.Exit(code=2)
+    async with get_sessionmaker()() as s:
+        # A refusal before anything runs; each variant's own client decides the hiding when it
+        # sends (bench.harness._run_variant, issue #218, D-PRIV-800).
+        plan = await plan_hosted_send(s, None, "tier2", sender=settings)
+    if plan.refuse:
+        typer.echo(f"bench: {plan.refuse}. Nothing was sent.")
+        await reset_engine()
+        raise typer.Exit(code=2)
+    # Only a run that sends resume lines (a v4 version, listed in the confirmation) reads them.
+    digests = (await digests_for_tracks()
+               if any(sends_resume_lines(v) for v in run_versions) else {})
     try:
         async with httpx.AsyncClient() as http:
             _warn_unfit_models(model_list, settings, _ollama_probe_client(settings))
@@ -1041,6 +1093,7 @@ async def _bench(models_csv: str, prompt_version_csv: str | None) -> None:
                 models=model_list,
                 prompt_versions=version_list,
                 make_client=lambda s: LLMClient(s, http=http),
+                resume_digests=digests,  # each variant's client decides its own hiding
             )
     except (BenchArgError, GoldSetError) as exc:
         typer.echo(f"bench: {exc}")
@@ -1190,10 +1243,26 @@ def backup(
     """Timestamped zip of a consistent copy of the database, the YAML config, and the generated
     documents/prep packs. Never includes .env or the LAN shared key, so secrets never leave the
     machine in a backup."""
-    from kestrel.services.backup import create_backup
+    from kestrel.services.backup import (
+        LEFT_OUT_HEAD,
+        LINKS_NOT_FOLLOWED,
+        DatabaseRefused,
+        create_backup,
+        database_refused_reason,
+    )
 
-    archive = create_backup(out)
+    left_out: list[str] = []
+    try:
+        archive = create_backup(out, left_out=left_out)
+    except DatabaseRefused as exc:
+        typer.echo(f"Could not build the backup: {database_refused_reason(exc)}.", err=True)
+        raise typer.Exit(1) from exc
     typer.echo(f"backup written to {archive}")
+    if left_out:
+        typer.echo(LEFT_OUT_HEAD)
+        for item in left_out:
+            typer.echo(f"  {item}")
+        typer.echo(LINKS_NOT_FOLLOWED)
 
 
 @app.command()

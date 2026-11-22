@@ -27,7 +27,7 @@ pytestmark = [
     pytest.mark.usefixtures("_isolate_data_home"),
 ]
 
-SECTIONS = ("computer", "roles", "scoring", "privacy", "data", "preferences")
+SECTIONS = ("computer", "roles", "scoring", "privacy", "extension", "data", "preferences")
 
 _LINES = """el => {
   const tops = new Set();
@@ -161,6 +161,47 @@ def test_a_switch_saves_with_undo_and_the_rule_list_opens(live):
         ctx.close()
 
 
+def test_two_held_rule_switches_show_one_toast_each_when_the_first_answer_swaps_the_card(live):
+    """#239 round 2 (D-UI-871): two rule switches pressed with both requests held; the first
+    answer swaps #st-rules, which detaches the second switch before its answer arrives. Each
+    answer's toast names `target`, so htmx delivers it on that live card itself and kestrel-ui.js
+    must not dispatch it again: exactly one toast per switch, never a doubled one."""
+    ctx, page, errors = _page(live, "light", 1680, "#roles")
+    try:
+        page.wait_for_selector('#st-sec-roles:not([hidden]) [data-testid^="st-rule-switch-"]')
+        keys = page.eval_on_selector_all(
+            '#st-rules [data-testid^="st-rule-switch-"]', "els => els.map(e => e.dataset.testid)")
+        assert len(keys) >= 2, keys
+        held: list = []
+        page.route("**/settings/roles/rule", lambda route: held.append(route))
+
+        def press(testid: str, want: int) -> None:
+            with page.expect_request(lambda r: "/settings/roles/rule" in r.url):
+                page.click(f'[data-testid="{testid}"] + .k-switch__track')
+            for _ in range(2000):  # the route callback runs on a later Playwright call
+                if len(held) >= want:
+                    break
+                page.wait_for_timeout(5)
+            assert len(held) == want
+
+        press(keys[0], 1)
+        page.eval_on_selector(f'[data-testid="{keys[1]}"]', "el => { window.__k239s2 = el; }")
+        press(keys[1], 2)
+        held[0].continue_()
+        page.wait_for_function("() => !window.__k239s2.isConnected")
+        held[1].continue_()
+        # htmx's own delivery and any second one run in the same load handler, so once the
+        # second answer's toast is on screen, one more frame shows whether it was doubled.
+        page.wait_for_function("() => document.querySelectorAll('.k-toast').length >= 2")
+        page.evaluate("() => new Promise(r => requestAnimationFrame(() => r()))")
+        texts = page.evaluate(
+            "[...document.querySelectorAll('.k-toast')].map(t => t.textContent.trim())")
+        assert len(texts) == 2 and texts[0] != texts[1], texts
+        assert all("is off" in t for t in texts), texts
+        assert not errors, errors
+    finally:
+        ctx.close()
+
 def test_the_scene_manager_previews_and_access_asks_first(live):
     ctx, page, errors = _page(live, "dark", 1680, "#preferences")
     try:
@@ -223,7 +264,7 @@ def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(li
         assert first["timers"] == 0 and first["observers"] == 0, first
         # The palette's Settings entries are added once for the root, however often it mounts.
         assert page.evaluate("Alpine.$data(document.documentElement).pages.filter("
-                             "p => (p.label || '').startsWith('Settings: ')).length") == 29
+                             "p => (p.label || '').startsWith('Settings: ')).length") == 31
         # Mounted again, the first section shown is the one the address names, and one press of a
         # switch posts once.
         page.wait_for_selector('#st-sec-preferences:not([hidden])')
@@ -856,3 +897,6 @@ def test_a_key_holder_sees_disabled_controls_and_the_sentence_without_overlap(
         assert not errors, errors
     finally:
         ctx.close()
+
+
+SHOTS = pathlib.Path(os.environ.get("KESTREL_SHOT_DIR") or tempfile.gettempdir())

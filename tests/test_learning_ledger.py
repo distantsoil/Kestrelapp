@@ -37,6 +37,7 @@ from kestrel.db.models import (
 )
 from kestrel.learning import ledger, signing
 from kestrel.services.setting_overrides import load_settings_with_db
+from tests.symlink_probe import link_folder, symlink_or_skip
 
 pytestmark = pytest.mark.usefixtures("_isolate_data_home")
 
@@ -284,6 +285,59 @@ async def test_reset_honors_the_parts(sm):
     assert not (paths.ml_dir() / "reranker_employment_v1.pkl").exists()
 
 
+def _link(link, target, *, folder: bool = False) -> None:
+    """A link to `target`: a folder link is a junction on Windows (no privilege needed)."""
+    if folder:
+        link_folder(link, target)
+    else:
+        symlink_or_skip(link, target)
+
+
+async def test_reset_removes_a_planted_link_and_never_the_file_it_points_at(sm, tmp_path):
+    """A link in the ml folder named like a model file is removed as a link: the file it points
+    at, outside the ml folder, is still there after a reset. A row recording any other name
+    (a link or an ordinary file) removes nothing: reset goes by Kestrel's own names."""
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    by_name = outside / "kept-a.bin"
+    by_record = outside / "kept-b.bin"
+    by_name.write_bytes(b"a")
+    by_record.write_bytes(b"b")
+    async with sm() as s:
+        await _seed(s)
+        ml = paths.ml_dir()
+        _link(ml / "reranker_employment_v9.pkl", by_name)
+        _link(ml / "linked.bin", by_record)
+        s.add(MlModel(kind="reranker", track="consulting", version="v9",
+                      trained_at=_T.format(i=3), n_samples=10, metrics={},
+                      artifact_path=str(ml / "linked.bin"),
+                      pca_artifact_path=str(ml / "operator-notes.txt"),
+                      sklearn_version=sklearn.__version__, is_active=False))
+        await s.commit()
+        result = await ledger.reset_learning(s, await load_settings_with_db(s))
+    assert by_name.read_bytes() == b"a" and by_record.read_bytes() == b"b"
+    assert not (ml / "reranker_employment_v9.pkl").is_symlink()
+    assert (ml / "linked.bin").is_symlink()  # recorded by a row, but not a name Kestrel writes
+    assert sorted(result["ml_files_removed"]) == [
+        "features_employment_v1.pkl", "reranker_employment_v1.pkl", "reranker_employment_v9.pkl",
+    ]
+    assert (ml / "operator-notes.txt").read_text() == "mine"
+
+
+async def test_reset_deletes_nothing_when_the_ml_folder_is_a_link(sm, tmp_path):
+    """The ml folder itself replaced by a link: reset deletes the rows but no file through it."""
+    async with sm() as s:
+        await _seed(s)
+        ml = paths.ml_dir()
+        moved = tmp_path / "moved-ml"
+        ml.rename(moved)
+        _link(ml, moved, folder=True)
+        result = await ledger.reset_learning(s, await load_settings_with_db(s))
+    assert result["ml_models_deleted"] == 1 and result["ml_files_removed"] == []
+    assert (moved / "reranker_employment_v1.pkl").exists()
+    assert (moved / "features_employment_v1.pkl").exists()
+
+
 # ============================================================================ routes
 def _wipe_db() -> None:
     for suffix in ("", "-wal", "-shm"):
@@ -402,3 +456,48 @@ def test_reset_refuses_without_the_word_and_runs_with_it():
     assert counts == {"labels": 0, "overrides": 0, "ml": 0, "opps": 4}
     assert (paths.ml_dir() / "operator-notes.txt").exists()
     assert not (paths.ml_dir() / "features_employment_v1.pkl").exists()
+
+
+def test_an_ml_folder_that_resolves_elsewhere_is_not_used(monkeypatch, tmp_path):
+    """A Windows junction is no symlink to is_symlink(), yet it moves where the folder resolves:
+    such a folder is refused too. Here a symlink stands in for it, with is_symlink() blinded."""
+    from pathlib import Path
+
+    real = tmp_path / "somewhere-else"
+    real.mkdir()
+    ml = paths.ml_dir()
+    ml.parent.mkdir(parents=True, exist_ok=True)
+    _link(ml, real, folder=True)
+    monkeypatch.setattr(Path, "is_symlink", lambda self: False)
+    assert paths.ml_folder() is None
+
+
+async def test_the_learning_tab_lists_a_link_as_a_link_and_credits_only_kestrels_names(
+    sm, tmp_path
+):
+    """The listing sees what Reset sees: a link is described as itself (its own size, not the
+    size of what it points at), and only a model file name is "Kestrel's"."""
+    big = tmp_path / "big.bin"
+    big.write_bytes(b"b" * 5000)
+    async with sm() as s:
+        await _seed(s)
+        ml = paths.ml_dir()
+        symlink_or_skip(ml / "reranker_employment_v8.pkl", big)
+        symlink_or_skip(ml / "notes.bin", big)
+        out = await ledger.summary(s, await load_settings_with_db(s))
+    files = {f.name: f for f in out.files}
+    link_size = (ml / "reranker_employment_v8.pkl").lstat().st_size
+    assert files["reranker_employment_v8.pkl"].size == link_size != 5000
+    assert files["reranker_employment_v8.pkl"].kestrel_wrote_it
+    assert files["notes.bin"].size != 5000 and not files["notes.bin"].kestrel_wrote_it
+
+
+async def test_the_learning_tab_lists_nothing_through_a_linked_ml_folder(sm, tmp_path):
+    async with sm() as s:
+        await _seed(s)
+        ml = paths.ml_dir()
+        moved = tmp_path / "moved-ml"
+        ml.rename(moved)
+        link_folder(ml, moved)
+        out = await ledger.summary(s, await load_settings_with_db(s))
+    assert out.files == []

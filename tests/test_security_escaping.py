@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.page_source import as_written
 from tests.test_documents_review_fixes import _client
 from tests.test_pursuit_board import _fresh, _seed
 from tests.test_stream3_flow import _seed_tailor
@@ -40,8 +41,8 @@ def test_pursuit_status_error_escapes_the_stage_on_a_plain_post():
 
 
 def test_assess_progress_panel_does_not_build_html_from_the_model_name():
-    src = (Path(__file__).resolve().parents[1]
-           / "kestrel/web/templates/partials/assess_model.html").read_text(encoding="utf-8")
+    src = as_written((Path(__file__).resolve().parents[1]
+           / "kestrel/web/templates/partials/assess_model.html").read_text(encoding="utf-8"))
     start = src.index("htmx:beforeRequest")
     assert "innerHTML" not in src[start:src.index("dlg.remove()", start)]
 

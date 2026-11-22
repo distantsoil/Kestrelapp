@@ -32,14 +32,41 @@ import structlog
 from kestrel.errors import ROBOTS_SENTENCE
 from kestrel.ingest import board_discovery
 from kestrel.ingest import jobposting as jp
-from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
-from kestrel.ingest.http import UnsafeURLError
+from kestrel.ingest.base import (
+    AdapterError,
+    Notice,
+    NoticeKind,
+    PostingBatch,
+    RawPosting,
+    SourceConfigError,
+    Unread,
+    failure_kind,
+    hedged_refusal,
+    links_capped,
+    rate_limited,
+    status_kind,
+)
+from kestrel.ingest.http import UNSAFE_REFUSALS, UnsafeURLError
 
 log = structlog.get_logger()
 
 _RATE = 1.0  # requests/second to the one site
 MAX_DETAIL_PAGES = 25  # job pages followed from a list page per run; the run says when it bites
 JS_ONLY = "This page lists its jobs with JavaScript, which Kestrel cannot read yet."
+# The whole list of this reader's AdapterError sentences. The Sources check shows one of these,
+# picked by kestrel.web.errors.authored_error; a library's own text goes to the log only.
+# `{line}` stands for one whole number, here an HTTP status code (kestrel.web.errors.LINE_SLOT).
+LINK_REFUSED = "Kestrel cannot read that link: "
+_STATUS = "{line}"
+PAGE_ANSWERED = f"The careers page answered {_STATUS}."
+PAGE_LIMITED = hedged_refusal("The careers page")  # a 403: its cause is not proven
+PAGE_UNREACHABLE = "The careers page could not be reached."
+PAGE_NOT_FOUND = "The careers page was not found. Check the link."
+NO_READER = "Kestrel has no reader for that job board yet."
+PAGE_REFUSALS = (
+    ROBOTS_SENTENCE, PAGE_ANSWERED, PAGE_LIMITED, PAGE_UNREACHABLE, PAGE_NOT_FOUND, NO_READER,
+    *(LINK_REFUSED + reason for reason in UNSAFE_REFUSALS),
+)
 # A link is a likely job page when a path segment names one of these and something follows it
 # (/job/1202337/title, /jobs/view/abc), or the query carries a job id. Category pages such as
 # /careers/job-search or /c/legal-jobs name a job word but nothing follows, so they are not links
@@ -56,6 +83,12 @@ _SKIP_SUFFIXES = (
 
 def _clean(url: object) -> str:
     return url.strip() if isinstance(url, str) else ""
+
+
+def _answered(status: int) -> str:
+    """The sentence for a list page that answered `status`: a 403 proves no cause, so it is the
+    shared hedged sentence; any other status is said as it is."""
+    return PAGE_LIMITED if status == 403 else PAGE_ANSWERED.replace(_STATUS, str(status))
 
 
 def _site(url: str) -> str:
@@ -95,20 +128,20 @@ class CareersPageAdapter:
                 "careers_page source requires a 'url' (a careers page link starting with https://)"
             )
 
-    async def _get(self, url: str, client: Any):
-        """The page's HTML, or None when this one URL cannot be read. The first (list) page
-        raises through `_get_list` instead."""
+    async def _get(self, url: str, client: Any) -> str | NoticeKind:
+        """The page's HTML, or the kind of failure when this one URL cannot be read (robots.txt,
+        a 429, anything else). The first (list) page raises through `_get_list` instead."""
         try:
             r = await client.request(
                 "GET", url, rate_per_sec=_RATE, check_robots=True, retries=1, public_only=True
             )
         except (PermissionError, httpx.HTTPError, UnsafeURLError) as exc:
             log.debug("careers_page.detail_unreadable", error=type(exc).__name__)
-            return None
-        return r.text if r.status_code == 200 else None
+            return failure_kind(exc)
+        return r.text if r.status_code == 200 else status_kind(r.status_code)
 
-    async def _get_list(self, url: str, client: Any) -> tuple[str | None, str | None]:
-        """(html, partial_error) for the page the operator pasted."""
+    async def _get_list(self, url: str, client: Any) -> tuple[str | None, Notice | None]:
+        """(html, the notice it stopped with) for the page the operator pasted."""
         try:
             r = await client.request(
                 "GET", url, rate_per_sec=_RATE, check_robots=True, retries=1, public_only=True
@@ -116,19 +149,20 @@ class CareersPageAdapter:
         except PermissionError as exc:
             raise AdapterError(ROBOTS_SENTENCE) from exc
         except UnsafeURLError as exc:
-            raise AdapterError(f"Kestrel cannot read that link: {exc}") from exc
+            raise AdapterError(LINK_REFUSED + str(exc)) from exc
         except httpx.HTTPStatusError as exc:  # the client retried 429/403/503 and gave up
             if exc.response.status_code == 429:
-                return None, f"{_site(url)} is rate limiting requests. Kestrel will try again."
-            raise AdapterError(f"The careers page answered {exc.response.status_code}.") from exc
+                return None, rate_limited(_site(url))
+            raise AdapterError(_answered(exc.response.status_code)) from exc
         except httpx.HTTPError as exc:
-            raise AdapterError(f"The careers page could not be reached: {exc}") from exc
+            log.info("careers_page_unreachable", error=type(exc).__name__)
+            raise AdapterError(PAGE_UNREACHABLE) from exc
         if r.status_code == 429:
-            return None, f"{_site(url)} is rate limiting requests. Kestrel will try again."
+            return None, rate_limited(_site(url))
         if r.status_code in (404, 410):
-            raise AdapterError("The careers page was not found. Check the link.")
+            raise AdapterError(PAGE_NOT_FOUND)
         if r.status_code != 200:
-            raise AdapterError(f"The careers page answered {r.status_code}.")
+            raise AdapterError(_answered(r.status_code))
         return r.text, None
 
     async def fetch(self, config: dict, client: Any) -> list[RawPosting]:
@@ -140,7 +174,8 @@ class CareersPageAdapter:
         html, stopped = await self._get_list(url, client)
         batch = PostingBatch()
         if html is None:
-            batch.partial_error = stopped
+            if stopped is not None:
+                batch.add(stopped)
             return batch
         return await self.read_html(html, config, client)
 
@@ -165,22 +200,23 @@ class CareersPageAdapter:
         if not batch and not follow:
             follow = job_links(html, url)  # a list page that only links to its job pages
         todo = [u for u in dict.fromkeys(follow) if u not in seen and u != url]
+        unread = Unread()  # linked job pages that could not be read, by the kind each failed with
         for detail in todo[:MAX_DETAIL_PAGES]:
             page = await self._get(detail, client)
-            if page is None:
+            if isinstance(page, NoticeKind):
+                unread.add(page)
                 continue
             for obj in jp.job_postings(page, detail):
                 posting = jp.to_raw_posting(obj, detail, org_fallback=_org(config))
                 if posting is not None:
                     self._add(batch, posting, seen)
+        for notice in unread.notices(_site(url), None):
+            batch.add(notice)
         left = len(todo) - MAX_DETAIL_PAGES
         if left > 0:
-            batch.partial_error = (
-                f"This page links to {len(todo)} job pages. Kestrel reads at most "
-                f"{MAX_DETAIL_PAGES} a run, so {left} were left for later."
-            )
-        elif not batch:
-            batch.partial_error = JS_ONLY
+            batch.add(links_capped(len(todo), MAX_DETAIL_PAGES))
+        if not batch and not batch.notices:
+            batch.note(NoticeKind.STOPPED, JS_ONLY)
         return batch
 
     @staticmethod
@@ -197,7 +233,7 @@ class CareersPageAdapter:
 
         adapter = get_adapter(ref.kind)
         if adapter is None:
-            raise AdapterError(f"No reader for {ref.kind}.")
+            raise AdapterError(NO_READER)
         board_config = dict(ref.config)
         if _org(config) and ref.kind in board_discovery._NAMED_BY_COMPANY_NAME:
             board_config["company_name"] = _org(config)

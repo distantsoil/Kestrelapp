@@ -85,6 +85,9 @@ _CLOCK_SEED_NAMES = {"ago_within", "frozen_datetime", "clock_seed"}
 # (file, substring of the offending source line, reason). Only rows deliberately in the past or
 # future that no day or month count reads. Keep this short.
 SMALL_DELTA_ALLOWLIST: list[tuple[str, str, str]] = [
+    ("test_settings_extension_browser.py",
+     "at = (datetime.now(UTC) - timedelta(minutes=2, seconds=20)).isoformat()",
+     "extension.last_seen for the relative used-2-minutes-ago pill; no day count reads it"),
     ("test_run_summary.py", "lease_until=iso(datetime.now(UTC) + timedelta(minutes=5))",
      "live task lease five minutes ahead (future); no count reads it"),
     ("test_run_summary.py", "return iso(datetime.now(UTC) + timedelta(minutes=5))",

@@ -40,7 +40,6 @@ from kestrel.pipeline._shared import (
     prompt_spec,
     record_refusal,
     rescore_failure_prefix,
-    tier_is_hosted,
 )
 from kestrel.pipeline.context import (
     build_tier2_values,
@@ -81,9 +80,20 @@ def is_stub_posting(opp, source=None) -> bool:
         return len(flat) < MIN_DESCRIPTION_CHARS
     return len(text.split()) < MIN_DESCRIPTION_WORDS
 
-# v3 adds the operator's stated facts (OPERATOR_CORRECTIONS, D-LEARN-3, D-SCORE-1). Every score
-# stored under v2 then shows "Scored with older scoring instructions" (pipeline_view.warning_text).
+# v3 adds the operator's stated facts (OPERATOR_CORRECTIONS, D-LEARN-3, D-SCORE-1); v4 the plain
+# floor/target and location lines, the resume digest, the blocker rule and worth_checking (issue
+# #208, D-SCORE-24). Every score stored under an older version then shows "Scored with older
+# scoring instructions" (pipeline_view.warning_text).
 _VERSION = {"employment": "evaluate/v3", "consulting": "evaluate_consulting/v3"}
+_VERSION_V4 = {"employment": "evaluate/v4", "consulting": "evaluate_consulting/v4"}
+
+
+def evaluate_versions(settings: Settings) -> dict[str, str]:
+    """The Tier 2 and Tier 3 prompt per track: v4 unless the internal setting
+    `scoring.evaluate_version` is v3 (D-SCORE-29, D-SCORE-32). One place, so Tier 2, the deeper
+    read and the staleness check agree."""
+    scoring_cfg = getattr(settings, "scoring", None)
+    return _VERSION if getattr(scoring_cfg, "evaluate_version", "v4") == "v3" else _VERSION_V4
 
 
 async def _gather_few_shot(
@@ -206,11 +216,13 @@ def _local_overflow(settings: Settings, tier: str, messages: list[dict]) -> int:
 
 
 def _corrections_changed(
-    settings: Settings, client: LLMClient, tier: str, corrections: list, confirmed: str
+    settings: Settings, client: LLMClient, tier: str, corrections: list, confirmed: str,
+    hidden: bool,
 ) -> bool:
     """True when this call goes online (under the task's settings or the client's) and the lines
-    it would send differ from the confirmed ones (D-SCORE-3)."""
-    from kestrel.learning.correction_lines import lines_digest
+    it would send differ from the confirmed ones (D-SCORE-3), counting whether the current
+    employer is hidden in them (`hidden`: the send's own map, D-PRIV-673)."""
+    from kestrel.learning.correction_lines import bound_digest
     from kestrel.pipeline.context import operator_correction_lines
     from kestrel.services.online_consent import tier_goes_online
 
@@ -218,7 +230,8 @@ def _corrections_changed(
     online = tier_goes_online(settings, tier) or (
         isinstance(client_settings, Settings) and tier_goes_online(client_settings, tier)
     )
-    return online and lines_digest(operator_correction_lines(corrections)) != confirmed
+    lines = operator_correction_lines(corrections)
+    return online and bound_digest(lines, hidden and bool(lines)) != confirmed
 
 
 async def handle_t2(
@@ -321,14 +334,22 @@ async def handle_t2(
             return HandlerOutcome("skip", 2)
 
         profile = profiles.get(opp.track)
-        spec = prompt_spec(_VERSION[opp.track])
+        spec = prompt_spec(evaluate_versions(settings)[opp.track])
 
         from kestrel.learning.corrections import scoring_corrections
         from kestrel.pipeline.context import few_shot_block, stated_correction_ids
 
         corrections = await scoring_corrections(session, opp)
+        # Hosted mode (SPEC.md 6.4): smaller slice when metered, redact before send, refuse when
+        # confidential mode has nothing to redact with. Read before the corrections check: the
+        # check compares the hiding this very send applies (`plan.mapping`, decided by
+        # `employer_hiding`, the rule the panel showed too, D-PRIV-673). When they differ, as
+        # when only the client goes online, the panel promised a hiding this send would not
+        # apply, so the task is held, never sent.
+        plan = await plan_hosted_send(session, settings, spec.tier, sender=client)
         if corrections_digest is not None and _corrections_changed(
-            settings, client, spec.tier, corrections, corrections_digest
+            settings, client, spec.tier, corrections, corrections_digest,
+            hidden=bool(plan.mapping),
         ):
             from kestrel.services.online_consent import APPROVAL_HOLD
 
@@ -337,10 +358,13 @@ async def handle_t2(
 
         few_shot_examples, few_shot_ids = await _gather_few_shot(session, opp, settings)
 
-        # Hosted mode (SPEC.md 6.4): smaller slice when metered, redact before send, refuse when
-        # confidential mode has nothing to redact with.
-        plan = await plan_hosted_send(session, settings, spec.tier)
         comp_intel = await comp_intel_summary(session, opp)
+        # The operator's own resume lines (D-SCORE-25), capped inside the profile allowance so
+        # the prompt stays within the tier's window. Redacted with the rest by encode_send.
+        from kestrel.pipeline.context import profile_full_v4
+        from kestrel.pipeline.resume_digest import resume_digest
+
+        digest = await resume_digest(session, opp.track, profile_full_v4(profile))
         trigger_event = bool(opp.trigger_data or opp.event_date)
         posted = bool(opp.description_md)
 
@@ -356,6 +380,7 @@ async def handle_t2(
                 # The operator's stated facts (D-LEARN-3). Redacted with the rest of the message
                 # by encode_send below when the call goes online.
                 corrections=corrections,
+                resume_digest=digest,
             )
             user = render_user(
                 spec.user,
@@ -366,10 +391,14 @@ async def handle_t2(
             )
             return [{"role": "system", "content": spec.system}, {"role": "user", "content": user}]
 
-        max_jd = jd_budget(settings, spec.tier, settings.pipeline.max_jd_tokens)
+        # Sized by the plan, which counts the client that actually sends (#218, D-PRIV-679):
+        # an online send carries the hosted slice the disclosure states, whatever the held
+        # settings say.
+        max_jd = jd_budget(settings, spec.tier, settings.pipeline.max_jd_tokens,
+                           external=plan.external)
         messages = _messages(max_jd)
         over = 0
-        if not tier_is_hosted(settings, spec.tier):
+        if not plan.external:
             over = _local_overflow(settings, spec.tier, messages)
             if over > 0:
                 # A prompt at every allowance's cap leaves little room in the local window, and
@@ -428,7 +457,8 @@ async def handle_t2(
 
         if not result.ok and not result.quarantined:
             return HandlerOutcome(
-                "error", 2, error=result.error, out_of_credit=result.out_of_credit
+                "error", 2, error=result.error, out_of_credit=result.out_of_credit,
+                engine_unreachable=result.engine_unreachable,
             )
 
         if result.quarantined or result.value is None:
@@ -459,6 +489,9 @@ async def handle_t2(
             work_auth_signal=work_auth,
             requires_sponsorship=requires_sponsorship,
             settings=settings,
+            opp=opp,
+            profile=profile,
+            legitimacy=value.legitimacy.model_dump(),
         )
         if post.verdict_disagreement:
             log.info(
@@ -489,9 +522,9 @@ async def handle_t2(
                     }
                     for k in dim_scores
                 },
-                blocks=value.blocks.model_dump(),
+                blocks=scoring.blocks_with_notes(value, post.legitimacy_notes),
                 blockers=post.blockers,
-                legitimacy=value.legitimacy.model_dump(),
+                legitimacy=post.legitimacy,
                 few_shot_ids=few_shot_ids,
                 correction_ids=stated_correction_ids(corrections),
                 raw_response=result.raw,

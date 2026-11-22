@@ -34,6 +34,7 @@ from kestrel.config import get_settings
 from kestrel.llm import profiles
 from kestrel.llm import providers as prov
 from kestrel.setup import HOSTED_ROUTES
+from tests.page_source import as_written
 
 runner = CliRunner()
 root = typer.Typer()
@@ -421,10 +422,11 @@ def _template_disclosure() -> str:
     turned into the format fields setup.py uses. The macro lives in hosted_disclosure.html,
     shared by Settings > Hosted and the onboarding model step (D-UI-30)."""
     tpl = Path(paths.web_templates_dir()) / "partials" / "hosted_disclosure.html"
-    text = tpl.read_text(encoding="utf-8")
+    text = as_written(tpl.read_text(encoding="utf-8"))
     m = re.search(r'<p class="warnbox"[^>]*>(.*?)</p>', text, re.DOTALL)
     assert m, "the disclosure warnbox moved; update setup.HOSTED_DISCLOSURE and this test"
     body = re.sub(r"\{\{\s*tier_sends\.(\w+)\s*\}\}", r"{\1}", m.group(1))
+    body = re.sub(r"\{\{\s*provider_reads\s*\}\}", "{provider_reads}", body)
     body = html.unescape(re.sub(r"<[^>]+>", "", body))
     return "\n".join(line.strip() for line in body.strip().splitlines() if line.strip())
 
@@ -440,6 +442,9 @@ def test_disclosure_matches_the_settings_page_word_for_word():
     assert setup_mod.tier_sends(s) == settings_page._tier_sends(s)
     filled = setup_mod.hosted_disclosure(s)
     assert "{" not in filled and "first 1200 tokens" in filled and "up to 16000 tokens" in filled
+    from kestrel.config import HOSTED_PROVIDER_READS
+
+    assert HOSTED_PROVIDER_READS in filled  # the CLI states the provider reads too (D-REL-41)
     assert "—" not in filled + setup_mod.HOSTED_ONLY_ADDENDUM
 
 

@@ -6,6 +6,7 @@
     <label class="mo-lbl">Rating <input class="k-input mo-num" type="number" name="tier2" min="1" max="16" step="1" required value="{{ sp_t2 }}" data-testid="mo-speed-t2"></label>
     <button class="k-btn k-btn--sm" type="submit" data-testid="mo-speed-save">Save</button></div>
   {% if sp_message %}<p class="mo-msg {{ 'is-good' if sp_ok else 'is-bad' }}" role="status" data-testid="mo-speed-message">{{ sp_message }}</p>{% endif %}
-  <p class="mo-note" data-testid="mo-speed-parallel">For local models, set <code>OLLAMA_NUM_PARALLEL</code> to at least <strong>{{ sp_parallel }}</strong> in Ollama's environment, then restart Ollama. This includes the similar-role matching step. A lower value can make requests wait in line. Kestrel cannot check the environment of a separate Ollama process.</p>
+  <p class="mo-note" data-testid="mo-speed-parallel">For local models, set <code>OLLAMA_NUM_PARALLEL</code> to at least <strong>{{ sp_parallel }}</strong> in Ollama's environment, then restart Ollama. This includes the similar-role matching step. A lower value can make requests wait in line. Kestrel reads these where a separate Ollama process gets them on this computer.</p>
   <p class="mo-note">Set <code>OLLAMA_KEEP_ALIVE=2h</code> in Ollama's environment to avoid reloading models between steps. Online providers have their own request limits.</p>
+  <p class="mo-note" data-testid="mo-speed-env-link">Kestrel can check and set both for you, with Undo, under Ollama speed settings on <a class="k-link" href="/settings#computer">Settings &gt; This computer</a>.</p>
 </form>

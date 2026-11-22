@@ -11,7 +11,7 @@ import re
 import pytest
 from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from kestrel import paths
 from kestrel.db.engine import make_async_engine
@@ -438,6 +438,39 @@ def test_research_and_contacts_queue_without_running_on_the_request(ids, monkeyp
         r = c.post(f"/opportunities/{ids['strong']}/role/research", data={"kind": "contacts"})
         assert "Queued" in _toast(r)["message"]
         assert {t.type for t in _rows(Task)} >= {"org_research", "org_contacts"}
+
+
+def test_research_that_cannot_be_queued_toasts_kestrels_sentence_not_the_errors_text(
+    ids, monkeypatch
+):
+    from kestrel.research import jobs
+
+    async def _refuses(*args, **kwargs):
+        raise ValueError("invalid literal for int() with base 10: 'invented-detail'")
+
+    monkeypatch.setattr(jobs, "enqueue", _refuses)
+    with _client() as c:
+        r = c.post(f"/opportunities/{ids['strong']}/role/research", data={"kind": "company"})
+    message = _toast(r)["message"]
+    assert "invented-detail" not in message and "invalid literal" not in message
+    assert message == jobs.ENQUEUE_FALLBACK
+
+
+def test_research_refused_for_a_missing_company_toasts_kestrels_words(ids):
+    """A role with no company: the real queue refuses it, and its own sentence is the toast."""
+    async def _unlink():
+        engine = make_async_engine(paths.db_path())
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(update(Opportunity).where(Opportunity.id == ids["strong"])
+                                   .values(org_id=None))
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_unlink())
+    with _client() as c:
+        r = c.post(f"/opportunities/{ids['strong']}/role/research", data={"kind": "company"})
+    assert _toast(r)["message"] == "No company is linked to this role yet."
 
 
 def test_the_old_research_buttons_refuse_an_online_model_without_the_dialog(ids, monkeypatch):

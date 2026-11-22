@@ -24,6 +24,7 @@ from kestrel.db.models import (
     OutreachDraft,
     Pursuit,
 )
+from kestrel.phone import display_only, locale_region
 from kestrel.research import org_summary as osum
 from kestrel.research.connections import KEPT_SOURCE, SOURCE, connection_paths
 from kestrel.services.pursuit_board import stage_name
@@ -408,6 +409,11 @@ async def _drafts_for(session: AsyncSession, contact_ids: list[int]) -> dict[int
     return out
 
 
+def _phone_shown(text: str | None) -> str | None:
+    """A contact's phone formatted for display; the stored text is never rewritten (D-PHONE-2)."""
+    return display_only(text, locale_region()) if text else None
+
+
 async def public_contacts(session: AsyncSession, org_id: int) -> list[dict[str, Any]]:
     """Business contacts the company made public: never an imported connection."""
     rows = (
@@ -429,7 +435,8 @@ async def public_contacts(session: AsyncSession, org_id: int) -> list[dict[str, 
             "url": safe_url(c.source_url),
             "page": host_of(c.source_url) or "No page recorded",
             "seen": short_date(c.created_at),
-            "details": " · ".join(x for x in (c.name, c.title, c.email, c.phone) if x),
+            "details": " · ".join(
+                x for x in (c.name, c.title, c.email, _phone_shown(c.phone)) if x),
             "drafts": drafts.get(c.id, []),
         }
         for c in rows

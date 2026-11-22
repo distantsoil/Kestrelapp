@@ -271,7 +271,10 @@ async def learned_ctx(request: Request, track: str) -> dict:
              "rated, and stops using it if it starts to slip."
     )
     ag = summ.agreement
+    from kestrel.learning import signing
+
     return {
+        "key_problem": signing.key_problem(),
         "track": track, "tracks": enabled, "learn_rows": rows, "model_note": model_note,
         "agree_n": ag.n, "agree_insufficient": ag.insufficient,
         "agree_pct": None if ag.rate is None else int(round(ag.rate * 100)),
@@ -307,6 +310,32 @@ async def learn_switch(request: Request):
     msg = LEARN_MSG[key][0 if on else 1]
     return _l_card(request, await learned_ctx(request, track),
                    trigger(msg, undo=io.undo_url(row_key, prev, on), refresh=refresh))
+
+
+@router.post("/settings/scoring/new-key", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
+async def new_signing_key(request: Request):
+    """The one deliberate replacement of a signing key Kestrel cannot use: the old file (or the
+    secrets folder) is renamed aside, never deleted, and a new key is made. A usable key is
+    never replaced; the card then says nothing was changed."""
+    import asyncio
+
+    from kestrel.learning import signing
+    from kestrel.web.errors import fixed_reason
+
+    form = await request.form()
+    track = str(form.get("track") or "")
+    track = track if track in sv.TRACKS else _track(request)
+    try:
+        kept = await asyncio.to_thread(signing.replace_key)
+    except OSError as exc:
+        log.warning("signing_key_replace_failed", error_type=type(exc).__name__)
+        msg, tone = (f"No new key was made: {fixed_reason(exc)}. The old key was left as it "
+                     "is."), "warn"
+    else:
+        msg, tone = ((f"A new signing key was made. The old one is kept beside it as {kept}."
+                      if kept is not None
+                      else "The signing key is fine, so nothing was changed."), None)
+    return _l_card(request, await learned_ctx(request, track), trigger(msg, tone=tone))
 
 
 # ----------------------------------------------------------------------------- ratings

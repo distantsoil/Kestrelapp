@@ -9,7 +9,8 @@ and API tokens regardless of settings and, in confidential mode, replaces the cu
 with the operator's own placeholder (web/redact.redact_text, the same map every list view uses).
 
 The one member that can quote a posting is quarantine.json: a quarantined model response may echo
-the description it was given. It is cut to RAW_RESPONSE_CHARS characters and redacted, and the
+the description it was given. It is redacted whole, then cut to RAW_RESPONSE_CHARS characters
+(scrub_then_cut: never the other way round, or a key across the cut keeps its head), and the
 page tells the tester they can delete that file from the zip before sending it.
 
 Everything here is synchronous file and sqlite I/O plus two best-effort probes (hardware
@@ -83,6 +84,7 @@ CONTENTS: tuple[tuple[str, str], ...] = (
     ("README.txt", "this list, and what was left out"),
     (
         "summary.json",
+        "the install ID, which matches this file to your bug report, "
         "version, frozen or source checkout, Python and platform, detected hardware, the active "
         "hardware profile, data folder path, database schema revision, run mode, hosted mode "
         "state with backend names and models (never keys), row counts per table, Tier 0 set-asides "
@@ -117,6 +119,11 @@ CONTENTS: tuple[tuple[str, str], ...] = (
         "remote type, the stage and the rule that set it aside, the posting's site, and each "
         "scoring pass (tier, model, prompt version, verdict, scores, the five dimension scores and "
         "the warning signs). Never the posting text, your profile, your resume or your notes",
+    ),
+    (
+        "unscored.json",
+        "how many roles have no score, counted by the reason Pipeline shows for each (numbers "
+        "only: no titles, organizations or posting text)",
     ),
     ("packages.txt", "installed Python packages and their versions"),
 )
@@ -247,38 +254,191 @@ def mask_ip_addresses(text: str) -> str:
     return _IPV4.sub(v4, out)
 
 
+# How a saved value can be written once something has escaped it (D-PRIV-797). A log line can
+# carry the value inside JSON inside JSON, and each layer doubles every backslash and puts one
+# more in front of every quote, so no fixed list of escaped spellings is complete. The pattern
+# below matches the value at EVERY depth instead: a backslash in the value is one or more
+# backslashes in the text, a quote or slash may have any number in front of it, and a character
+# an encoder writes as an escape (`\u00e9`, `\xe9`, `\n`) matches in that form too.
+_SHORT_ESCAPES = {"\n": "n", "\r": "r", "\t": "t", "\b": "b", "\f": "f"}
+# What no encoder rewrites: letters, digits, hyphen and underscore. Everything else in a saved
+# key (`+`, `=`, `&`, `<`, a quote, a backslash) is written some other way by some encoder: Go and
+# Jinja JSON (`\u0026`), .NET JSON (`\u002B`), URL (`%2B`), HTML (`&amp;`). So a key is known by
+# its plain runs, never by a list of escapes (D-PRIV-797 round 2, D-SEC-20).
+_PLAIN_RUN = re.compile(r"[A-Za-z0-9_-]+")
+# A plain run this long, taken from a saved key, does not occur by chance: on its own it is
+# enough to mask the text around it.
+FRAGMENT_MIN_CHARS = 12
+# Shorter runs count only together, in the key's order: at least this many plain characters.
+SEQUENCE_MIN_CHARS = 8
+# How much text one rewritten character of a key may take between two plain runs (`\u0026`
+# three layers deep is 13 characters).
+GAP_CHARS_PER_CHAR = 24
+# What an encoded value is made of around a plain run (base64, URL and backslash escapes), and
+# an HTML entity (`&lt;`, `&#34;`) standing directly before or after one.
+_RUN_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-+/=.%~\\")
+_ENTITY_BEFORE = re.compile(r"&#?[A-Za-z0-9]{1,8};$")
+_ENTITY_AFTER = re.compile(r"&#?[A-Za-z0-9]{1,8};")
+
+
+def _char_pattern(ch: str) -> str:
+    """One character of a saved value, as a pattern for every way an escaper writes it."""
+    literal = re.escape(ch)
+    if ch == "\\":
+        return r"\\+"
+    if ch in "\"'/":
+        return r"\\*" + literal
+    cp = ord(ch)
+    if 0x20 <= cp < 0x7F:
+        return literal
+    forms = [literal]
+    if cp <= 0xFFFF:
+        forms.append(rf"\\+u{cp:04x}")
+    else:
+        high, low = 0xD800 + ((cp - 0x10000) >> 10), 0xDC00 + ((cp - 0x10000) & 0x3FF)
+        forms.append(rf"\\+u{high:04x}\\+u{low:04x}")
+    forms.append(rf"\\+U{cp:08x}")
+    if cp <= 0xFF:
+        forms.append(rf"\\+x{cp:02x}")
+    if ch in _SHORT_ESCAPES:
+        forms.append(r"\\+" + _SHORT_ESCAPES[ch])
+    return "(?:" + "|".join(forms) + ")"
+
+
+def escaped_value_pattern(values: Iterable[str]) -> re.Pattern[str] | None:
+    """One pattern for the given values at every escaping depth, longest value first so a value
+    that contains another is masked whole. None when there is nothing to match."""
+    ordered = sorted({v for v in values if v}, key=len, reverse=True)
+    if not ordered:
+        return None
+    return re.compile(
+        "|".join("".join(_char_pattern(ch) for ch in v) for v in ordered), re.IGNORECASE
+    )
+
+
+def key_fragments(value: str) -> list[str]:
+    """Every plain run of a saved key long enough to mask on its own, longest first. A key that
+    is one plain run has none: the exact match already is that run."""
+    runs = _PLAIN_RUN.findall(value)
+    if len(runs) == 1 and runs[0] == value:
+        return []
+    return sorted({r for r in runs if len(r) >= FRAGMENT_MIN_CHARS}, key=len, reverse=True)
+
+
+def key_sequence_pattern(value: str) -> re.Pattern[str] | None:
+    """A saved key as its plain runs in order with a bounded gap where each rewritten character
+    was, whatever it was rewritten to. This is what finds a key with no long run at all
+    (`ab12"cd34"ef56`) in an encoding nobody listed. None for a key that is one plain run, or
+    whose plain characters are too few to be told from ordinary text."""
+    pieces: list[str] = []
+    pos = plain = 0
+    for match in _PLAIN_RUN.finditer(value):
+        between = match.start() - pos
+        if pieces and between:
+            pieces.append(rf"[^\n]{{1,{between * GAP_CHARS_PER_CHAR}}}?")
+        pieces.append(re.escape(match.group(0)))
+        plain += len(match.group(0))
+        pos = match.end()
+    runs = sum(1 for piece in pieces if not piece.startswith("[^"))
+    if runs < 2 or plain < SEQUENCE_MIN_CHARS:
+        return None
+    return re.compile("".join(pieces))
+
+
+def _mask_spans(text: str, spans: Iterable[tuple[int, int]]) -> str:
+    """Mask each span widened to the unbroken run of encoded-value characters around it, so
+    what an encoder made of the key's first and last characters goes with it."""
+    parts: list[str] = []
+    pos = 0
+    for start, end in sorted(spans):
+        if start < pos:
+            continue
+        while True:
+            before, after = start, end
+            while start > pos and text[start - 1] in _RUN_CHARS:
+                start -= 1
+            while end < len(text) and text[end] in _RUN_CHARS:
+                end += 1
+            entity = _ENTITY_BEFORE.search(text, max(pos, start - 10), start)
+            if entity:
+                start = entity.start()
+            entity = _ENTITY_AFTER.match(text, end)
+            if entity:
+                end = entity.end()
+            if (start, end) == (before, after):
+                break
+        parts += [text[pos:start], REDACTED]
+        pos = end
+    parts.append(text[pos:])
+    return "".join(parts)
+
+
+def _mask_runs(text: str, fragment: str) -> str:
+    """Mask every unbroken run of encoded-value characters that contains `fragment`. This is
+    the allowlist side of the scrubber (D-SEC-20): a saved value in an encoding nobody listed
+    still shows its plain runs, so the run around each goes, whatever the encoding."""
+    spans: list[tuple[int, int]] = []
+    pos = 0
+    while (found := text.find(fragment, pos)) != -1:
+        spans.append((found, found + len(fragment)))
+        pos = found + len(fragment)
+    return _mask_spans(text, spans) if spans else text
+
+
 def make_scrubber(
     redaction: Mapping[str, str] | None, secrets: Iterable[str] = (), *,
     addresses: Iterable[str] = (),
 ) -> Scrubber:
     """Token masking always, plus every saved key value whatever its shape (a key that matches
-    no token pattern must still never ride out in a log line); employer redaction when
-    confidential mode supplied a map."""
+    no token pattern must still never ride out in a log line) and however often the line around
+    it was escaped (D-PRIV-797); employer redaction when confidential mode supplied a map."""
     from kestrel.privacy import EmployerMap, from_pairs
 
     mapping = (redaction if isinstance(redaction, EmployerMap)
                else from_pairs(dict(redaction or {}).items()))
-    raw = {v for v in secrets if v and len(v) >= MIN_SECRET_CHARS}
+    secret_values = {v for v in secrets if v and len(v) >= MIN_SECRET_CHARS}
+    raw = set(secret_values)
     addresses = set(addresses)
     short_hosts = {
         value for value in addresses if value and len(value) < MIN_SECRET_CHARS
     }
     raw.update(value for value in addresses if len(value) >= MIN_SECRET_CHARS)
-    # App events reach the log as JSON, which escapes `"` and `\`. A key containing either would
-    # appear in its escaped form and slip past an exact match on the raw value, so both are masked.
-    escaped = {json.dumps(v, ensure_ascii=False)[1:-1] for v in raw}
-    values = sorted(raw | escaped, key=len, reverse=True)
+    values = sorted(raw, key=len, reverse=True)
+    # A value that is one plain run is found by the exact match; any other value also goes
+    # through the any-depth pattern. Every saved key is then masked by its plain runs, in an
+    # encoding nobody listed: the runs in order (the sequence), and each long run on its own.
+    escapable = [v for v in values if not _PLAIN_RUN.fullmatch(v)]
+    pattern = escaped_value_pattern(escapable)
+    keys = sorted(secret_values, key=len, reverse=True)
+    sequences = [p for p in (key_sequence_pattern(v) for v in keys) if p is not None]
+    fragments: list[str] = sorted(
+        {f for v in keys for f in key_fragments(v)}, key=len, reverse=True
+    )
 
     def scrub(text: str) -> str:
         out = text
         for v in values:
             out = out.replace(v, REDACTED)
+        if pattern is not None:
+            out = pattern.sub(REDACTED, out)
+        for sequence in sequences:
+            out = _mask_spans(out, [m.span() for m in sequence.finditer(out)])
+        for fragment in fragments:
+            out = _mask_runs(out, fragment)
         for host in short_hosts:
             out = re.sub(r"(?<![\w.-])" + re.escape(host) + r"(?![\w.-])", REDACTED, out)
         return mask_ip_addresses(
             mask_tokens(redact_text(out, mapping, enabled=bool(mapping)) or ""))
 
     return scrub
+
+
+def scrub_then_cut(scrub: Scrubber, text: str, limit: int) -> str:
+    """`text` scrubbed whole, then cut to `limit` characters: the one way a bounded field of
+    the bundle is shortened (D-PRIV-812). Cutting first hides the end of a saved key from the
+    scrubber, which then leaves the key's first part in the file."""
+    return scrub(text)[:limit]
 
 
 def _is_secret_key(name: str) -> bool:
@@ -394,8 +554,12 @@ def _hosted_state(settings: Settings) -> dict[str, Any]:
 
 
 def _connect() -> sqlite3.Connection | None:
+    """A connection to the database for the bundle, or None when there is none yet or the
+    database file is one Kestrel does not read into something shared (paths.database_refusal:
+    a link, a second name, not a regular file). Only the file itself is checked, so a data
+    folder moved behind a link still reports as usual."""
     db = paths.db_path()
-    if not db.exists():
+    if not db.exists() or paths.database_refusal(db) is not None:
         return None
     conn = sqlite3.connect(str(db), timeout=5.0)
     conn.execute("PRAGMA busy_timeout=5000")
@@ -406,7 +570,7 @@ def _connect() -> sqlite3.Connection | None:
 def _grouped(conn: sqlite3.Connection, table: str, column: str) -> dict[str, int] | str:
     try:
         rows = conn.execute(
-            f"SELECT {column} AS k, COUNT(*) AS n FROM {table} GROUP BY {column} ORDER BY {column}"
+            f"SELECT {column} AS k, COUNT(*) AS n FROM {table} GROUP BY {column} ORDER BY {column}"  # noqa: S608  identifiers are code constants, values are bound
         ).fetchall()
     except sqlite3.Error as exc:
         return f"unavailable: {exc}"
@@ -415,7 +579,7 @@ def _grouped(conn: sqlite3.Connection, table: str, column: str) -> dict[str, int
 
 def _count(conn: sqlite3.Connection, table: str) -> int | str:
     try:
-        return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+        return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])  # noqa: S608  identifiers are code constants, values are bound
     except sqlite3.Error as exc:
         return f"unavailable: {exc}"
 
@@ -512,7 +676,7 @@ def task_rows(
             "ORDER BY type, status"
         ).fetchall()
         rows = conn.execute(
-            "SELECT id, type, status, priority, attempts, last_error, created_at, updated_at, "
+            "SELECT id, type, status, priority, attempts, last_error, created_at, updated_at, "  # noqa: S608  identifiers are code constants, values are bound
             "payload FROM task ORDER BY updated_at DESC, id DESC "
             f"LIMIT {TASK_ROWS}"
         ).fetchall()
@@ -540,9 +704,8 @@ def task_rows(
             "flags": [k for k in _TASK_FLAGS if payload.get(k)],
             "model_override": bool(payload.get("model_override")),
             "online_approval": "online_approval" in payload,
-            # Scrub the whole text, then cut, so a secret split by the cut cannot survive.
             "last_error": None if not err else (
-                WITHHELD if conservative else scrub(err)[:TASK_ERROR_CHARS]),
+                WITHHELD if conservative else scrub_then_cut(scrub, err, TASK_ERROR_CHARS)),
         })
     return {
         "by_type_and_status": {f"{r['type']}/{r['status']}": int(r["n"]) for r in by},
@@ -556,7 +719,7 @@ def task_rows(
 def recent_runs(conn: sqlite3.Connection) -> list[dict[str, Any]] | str:
     try:
         rows = conn.execute(
-            "SELECT id, name, status, mode, counts, started_at, finished_at FROM run "
+            "SELECT id, name, status, mode, counts, started_at, finished_at FROM run "  # noqa: S608  identifiers are code constants, values are bound
             f"ORDER BY id DESC LIMIT {RUN_ROWS}"
         ).fetchall()
     except sqlite3.Error as exc:
@@ -578,7 +741,7 @@ def recent_runs(conn: sqlite3.Connection) -> list[dict[str, Any]] | str:
 def recent_scrape_runs(conn: sqlite3.Connection, scrub: Scrubber) -> list[dict[str, Any]] | str:
     try:
         rows = conn.execute(
-            "SELECT s.id, src.kind, s.status, s.counts, s.started_at, s.finished_at, s.error "
+            "SELECT s.id, src.kind, s.status, s.counts, s.started_at, s.finished_at, s.error "  # noqa: S608  identifiers are code constants, values are bound
             "FROM scrape_run s LEFT JOIN source src ON src.id = s.source_id "
             f"ORDER BY s.id DESC LIMIT {SCRAPE_RUN_ROWS}"
         ).fetchall()
@@ -617,7 +780,7 @@ def quarantine_rows(
         return {"note": "database not initialized", "rows": []}
     try:
         rows = conn.execute(
-            "SELECT id, opportunity_id, tier, model, error, attempts, created_at, raw_response "
+            "SELECT id, opportunity_id, tier, model, error, attempts, created_at, raw_response "  # noqa: S608  identifiers are code constants, values are bound
             f"FROM quarantine ORDER BY id DESC LIMIT {QUARANTINE_ROWS}"
         ).fetchall()
     except sqlite3.Error as exc:
@@ -625,6 +788,7 @@ def quarantine_rows(
     out = []
     for r in rows:
         raw = r["raw_response"] or ""
+        shown = WITHHELD if conservative else scrub_then_cut(scrub, raw, RAW_RESPONSE_CHARS)
         out.append(
             {
                 "id": r["id"],
@@ -634,7 +798,7 @@ def quarantine_rows(
                 "error": (WITHHELD if conservative else scrub(r["error"])) if r["error"] else None,
                 "attempts": r["attempts"],
                 "created_at": r["created_at"],
-                "raw_response": WITHHELD if conservative else scrub(raw[:RAW_RESPONSE_CHARS]),
+                "raw_response": shown,
                 "raw_response_truncated": len(raw) > RAW_RESPONSE_CHARS,
             }
         )
@@ -657,7 +821,7 @@ def role_rows(
 
     try:
         opps = conn.execute(
-            "SELECT id, title, org_name, location_raw, country, state, city, remote_type, stage, "
+            "SELECT id, title, org_name, location_raw, country, state, city, remote_type, stage, "  # noqa: S608  identifiers are code constants, values are bound
             "stage_reason, url, first_seen_at, date_posted FROM opportunity "
             "WHERE source_id IS NULL OR source_id NOT IN "  # Remotive's terms (D-SRC-19)
             f"(SELECT id FROM source WHERE kind IN {NO_EXPORT_SQL}) "
@@ -668,7 +832,7 @@ def role_rows(
         if ids:
             marks = ",".join("?" * len(ids))
             for e in conn.execute(
-                "SELECT opportunity_id, tier, model, prompt_version, verdict, score, "
+                "SELECT opportunity_id, tier, model, prompt_version, verdict, score, "  # noqa: S608  identifiers are code constants, values are bound
                 "weighted_score, needs_review, dimensions, legitimacy, created_at "
                 f"FROM evaluation WHERE opportunity_id IN ({marks}) ORDER BY id", ids
             ).fetchall():
@@ -708,16 +872,36 @@ def role_rows(
     return {"note": f"newest {ROLE_ROWS} roles by ID; no posting text", "rows": out}
 
 
+def install_id_value(conn: sqlite3.Connection) -> str | None:
+    """The full install ID (D-INST-4), or None when there is none or it is damaged. Read only,
+    through the same typed allowlist the app uses: the bundle never writes one."""
+    from kestrel.services import install_id
+
+    rec = install_id.read_record_sync(conn)
+    return rec["id"] if rec else None
+
+
+def _desktop_bridge() -> dict[str, Any]:
+    from kestrel.desktop import bridge_check
+
+    return bridge_check.summary()
+
+
 def summary(
     settings: Settings, scrub: Scrubber, *, conservative: bool = False
 ) -> dict[str, Any]:
     conn = _connect()
+    refused = paths.database_refusal(paths.db_path())
+    # Say why the database is missing from the bundle: a refused file is not "not initialized".
+    missing = f"left out: {refused}" if refused else "database not initialized"
     try:
-        counts: dict[str, Any] | str = "database not initialized"
+        counts: dict[str, Any] | str = missing
         runs: list[dict[str, Any]] | str = []
         scans: list[dict[str, Any]] | str = []
-        tasks: dict[str, Any] | str = "database not initialized"
+        tasks: dict[str, Any] | str = missing
+        iid: str | None = None
         if conn is not None:
+            iid = install_id_value(conn)
             tasks = task_rows(conn, scrub, conservative=conservative)
             counts = table_counts(conn)
             runs = recent_runs(conn)
@@ -727,10 +911,14 @@ def summary(
             conn.close()
     return {
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        # The full install ID (D-INST-4): the person saves this file and decides who sees it.
+        "install_id": iid,
         "version": kestrel.__version__,
         "frozen": paths.is_frozen(),
         "python": platform.python_version(),
         "platform": platform.platform(),
+        # The desktop window's bridge under the Content-Security-Policy (D-SEC-61).
+        "desktop_bridge": _desktop_bridge(),
         "os": platform.system(),
         "arch": platform.machine(),
         "data_home": str(paths.data_home()),
@@ -907,32 +1095,56 @@ def window_log(lines: list[str]) -> tuple[list[str], str]:
     return earlier + lines[start:], header
 
 
+LOGS_LEFT_OUT = "logs/LEFT-OUT.txt"
+LOGS_LEFT_OUT_HEAD = "Kestrel left these log files out of this bundle:"
+LOGS_LINKS_NOT_FOLLOWED = (
+    "Kestrel does not follow links when it collects logs: a link is left out, and so is "
+    "whatever it leads to."
+)
+
+
 def log_tails(scrub: Scrubber) -> list[tuple[str, str]]:
     """(zip member name, scrubbed text) for each log under the log folder. A rotated file
     (kestrel.log.1, .2 ...) is older text of the same log, so it is folded in ahead of the current
     file rather than listed apart. Every included line, header too, goes through `scrub`."""
-    folder = paths.logs_dir()
-    if not folder.is_dir():
-        return []
-    groups: dict[str, list[tuple[int, Path]]] = {}
-    for f in sorted(folder.iterdir()):
-        if not f.is_file():
-            continue
-        m = _ROTATED.match(f.name)
-        base, n = (m.group("base"), int(m.group("n"))) if m else (f.name, 0)
-        groups.setdefault(base, []).append((n, f))
+    # Every log comes through paths.shareable_files (D-SEC-55): a regular file with a single
+    # name, found and read without following a link, so a link or hard link planted in the log
+    # folder (logs/kestrel.log.3 -> some other file) never puts that file in the bundle.
+    groups: dict[str, list[tuple[int, bytes]]] = {}
+    notes: dict[str, list[str]] = {}  # never windowed away: an unreadable file is always said
+
+    def _base(name: str) -> tuple[str, int]:
+        m = _ROTATED.match(name)
+        return (m.group("base"), int(m.group("n"))) if m else (name, 0)
+
+    left_out: list[str] = []
+
+    def _unreadable(name: str, why: str) -> None:
+        shown = name or "the logs folder"
+        left_out.append(f"{shown}: {why}.")
+        if not name:
+            return
+        base = _base(name)[0]
+        groups.setdefault(base, [])
+        notes.setdefault(base, []).append(f"# {name} left out: {why}")
+
+    for name, data in paths.shareable_files(paths.logs_dir(), lambda rel: True,
+                                            unreadable=_unreadable):
+        base, n = _base(name)
+        groups.setdefault(base, []).append((n, data))
     out: list[tuple[str, str]] = []
+    if left_out:
+        # One entry that names every log left out, whatever group it belongs to (D-SEC-55).
+        out.append((LOGS_LEFT_OUT, scrub("\n".join(
+            [LOGS_LEFT_OUT_HEAD, *(f"- {item}" for item in left_out), LOGS_LINKS_NOT_FOLLOWED]
+        ) + "\n")))
     for base in sorted(groups):
         lines: list[str] = []
-        notes: list[str] = []  # never windowed away: a file that could not be read is always said
         # Highest number is the oldest rotation; number 0 is the current file, written last.
-        for _n, f in sorted(groups[base], key=lambda item: -item[0]):
-            try:
-                lines.extend(f.read_text(encoding="utf-8", errors="replace").splitlines())
-            except OSError as exc:
-                notes.append(f"# {f.name} unreadable: {exc}")
+        for _n, data in sorted(groups[base], key=lambda item: -item[0]):
+            lines.extend(data.decode("utf-8", errors="replace").splitlines())
         kept, why = window_log(lines)
-        head = "\n".join([f"# {base}: {why}", *notes])
+        head = "\n".join([f"# {base}: {why}", *notes.get(base, [])])
         out.append((f"logs/{base}", scrub(head + "\n" + "\n".join(kept) + "\n")))
     return out
 
@@ -953,11 +1165,15 @@ def build_bundle(
     out_dir: str | Path,
     redaction: Mapping[str, str] | None = None,
     conservative: bool = False,
+    unscored_counts: Mapping[str, int] | None = None,
 ) -> Path:
     """Write the zip under `out_dir` and return its path. `redaction` is the confidential-mode
     map (web/redact.redaction_map) when that mode is on; the caller resolves it on the event loop
     and this function runs in a thread. `conservative` drops the quarantine excerpts (see
-    quarantine_rows) for a caller that cannot guarantee the employer is hidden."""
+    quarantine_rows) for a caller that cannot guarantee the employer is hidden.
+    `unscored_counts` is the count of roles with no score per reason key (kestrel.web.unscored.
+    reason_counts), resolved by the caller on the event loop like `redaction`; None writes the
+    file saying the counts were not taken."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     archive = _unique_archive(out)
@@ -989,6 +1205,7 @@ def build_bundle(
                 z.writestr(name, text)
             z.writestr("quarantine.json", _json(_scrub_values(quarantine, scrub, key_scrub)))
             z.writestr("roles.json", _json(_scrub_values(roles, scrub, key_scrub)))
+            z.writestr("unscored.json", _json(unscored_file(unscored_counts)))
             z.writestr("packages.txt", packages_text())
         os.replace(part, archive)
         finished = True
@@ -996,6 +1213,25 @@ def build_bundle(
         if not finished:
             part.unlink(missing_ok=True)
     return archive
+
+
+UNSCORED_NOTE = (
+    "Roles with no score, counted by reason. The keys are the reasons Pipeline shows; t0_reject "
+    "and t1_reject are roles set aside by a rule or by the quick screen."
+)
+
+
+def unscored_file(counts: Mapping[str, int] | None) -> dict[str, Any]:
+    """unscored.json: reason keys and whole numbers only. Anything else in `counts` is dropped,
+    so no title, organization or posting text can reach the file through it."""
+    if counts is None:
+        return {"note": UNSCORED_NOTE, "counts": "not counted"}
+    kept = {
+        str(k): int(v) for k, v in counts.items()
+        if isinstance(k, str) and re.fullmatch(r"[a-z0-9_]{1,32}", k)
+        and isinstance(v, int) and not isinstance(v, bool)
+    }
+    return {"note": UNSCORED_NOTE, "counts": dict(sorted(kept.items()))}
 
 
 def _unique_archive(out: Path) -> Path:
@@ -1012,14 +1248,16 @@ def _unique_archive(out: Path) -> Path:
 
 
 def build_bundle_to_temp(
-    settings: Settings, *, redaction: Mapping[str, str] | None = None, conservative: bool = False
+    settings: Settings, *, redaction: Mapping[str, str] | None = None, conservative: bool = False,
+    unscored_counts: Mapping[str, int] | None = None,
 ) -> Path:
     """The same zip in a private temp directory for the web route to stream and then discard
     through `discard_bundle`; a failure during the build removes the directory itself."""
     staging = Path(tempfile.mkdtemp(prefix=_TEMP_PREFIX))
     try:
         return build_bundle(
-            settings, out_dir=staging, redaction=redaction, conservative=conservative
+            settings, out_dir=staging, redaction=redaction, conservative=conservative,
+            unscored_counts=unscored_counts,
         )
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)

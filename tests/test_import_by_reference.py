@@ -218,12 +218,18 @@ def test_pdf_cleanup_keeps_content_that_only_looks_repeated():
     assert joined.count("\n12\n") == 2  # a mid-page number is not a page number
 
 
-def test_a_wrapped_bullet_is_rejoined_but_a_heading_after_it_is_not():
-    from kestrel.docs.convert import _rejoin_wrapped_bullets
+def test_a_wrapped_bullet_is_never_rejoined_and_a_heading_after_it_stays_too():
+    from kestrel.docs.convert import convert_to_markdown
+    from tests.pdf_layout import bullet, make_pdf, margin
 
-    assert _rejoin_wrapped_bullets(["- Cut costs by consolidating", "three data centers.",
-                                    "Beta Freight", "- Next"]) == [
-        "- Cut costs by consolidating three data centers.", "Beta Freight", "- Next"]
+    # Round 7 (D-SCORE-31): a PDF line is never joined to the bullet above, even where the
+    # layout looks like a wrap; the person joins a real wrap in review.
+    runs = [margin(84, 740, "Cut costs by consolidating")]
+    runs += bullet(72, 700, "Cut costs by consolidating") + [(84, 688, "three data centers.")]
+    runs += [(72, 670, "Beta Freight")] + bullet(72, 658, "Next")
+    md = convert_to_markdown(make_pdf(runs), filename="r.pdf").markdown
+    assert [ln for ln in md.splitlines() if ln.strip()][1:] == [
+        "- Cut costs by consolidating", "three data centers.", "Beta Freight", "- Next"]
 
 
 # ------------------------------------------------------------------------- P7c suggestions

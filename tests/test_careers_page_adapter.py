@@ -14,6 +14,7 @@ import json
 from html import unescape
 from pathlib import Path
 
+import httpx
 import pytest
 import respx
 from httpx import Response
@@ -181,7 +182,11 @@ async def test_a_links_only_list_page_follows_job_pages_one_level_and_skips_the_
     assert [p.title for p in got] == ["Senior Data Scientist"]
     assert listing.call_count == 1 and detail.call_count == 1  # the #apply twin is the same page
     assert other.call_count == 1 and gone.call_count == 1
-    assert got.partial_error is None
+    # the linked page that did not load is said, so the run is partial (D-ERR-24 round 8)
+    assert got.partial_error == ("careers.northwind.example did not return the details of 1 of "
+                                 "its roles. They were left out this run. Kestrel will try again "
+                                 "next run.")
+    assert [n.kind for n in got.notices] == ["body_unread"]
     p = got[0]
     assert p.external_id == "1202337" and p.org_name == "Northwind"
     assert p.location_raw == "Sunnyvale, California, United States of America"
@@ -259,6 +264,17 @@ async def test_robots_not_found_rate_limit_and_server_errors_are_reported_not_hi
     respx.get("https://down.example/careers").mock(return_value=Response(500))
     with pytest.raises(AdapterError, match="500"):
         await _fetch("https://down.example/careers")
+
+
+@respx.mock
+async def test_an_unreachable_page_says_so_without_the_librarys_text():
+    _robots("quiet.example")
+    respx.get("https://quiet.example/careers").mock(
+        side_effect=httpx.ConnectError("refused by 10.9.8.7:443 (invented library detail)"))
+    with pytest.raises(AdapterError) as caught:
+        await _fetch("https://quiet.example/careers")
+    assert str(caught.value) == cp.PAGE_UNREACHABLE
+    assert "10.9.8.7" not in str(caught.value)
 
 
 @respx.mock

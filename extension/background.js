@@ -1,165 +1,85 @@
-// Kestrel Capture — background service worker (Manifest V3).
-// Capture: the toolbar button and a right-click item send the CURRENT page's URL plus its extracted
-// readable text to POST /api/opportunities/ingest. It reads the page the operator is already looking
-// at. It never crawls, never navigates, and never acts externally.
+// Kestrel Capture: background (Manifest V3 service worker in Chrome and Edge, event page in
+// Firefox). It answers the board badges' lookups, keeps the toolbar count, and offers Capture on
+// the right-click menu. It reads a page only when the person clicks, never navigates or reloads
+// one, never applies, fills or submits anything, and talks only to Kestrel on this computer.
 
-const DEFAULTS = { host: "127.0.0.1" };
+if (typeof importScripts === "function" && typeof self.KestrelApi === "undefined") {
+  importScripts("api.js");
+}
+const Api = self.KestrelApi;
 
-// The app binds the first free port from this ladder and records it in runtime.json. A service
-// worker cannot read runtime.json (no filesystem access), so we probe the same ladder instead.
-// 8765 is only the first rung, never an assumption.
-const PORT_LADDER = [8765, 8766, 8767, 8768, 8769, 8770, 8771, 8772, 8773, 8774];
+const CONFIG_EVERY_MS = 5 * 60 * 1000;
+const FLASH_MS = 2500;
+const flashUntil = {}; // tabId -> time the capture flash ends
+// The toolbar badge API takes a color value, not CSS, so these three are copies of theme.css's
+// --brand, --good and --bad (light). They are the only color values outside theme.css.
+const BADGE_COLORS = { count: "#4F5BD5", ok: "#1E8E5A", fail: "#C2413B" };
 
-// A rung that accepts the connection but never answers must not wedge a capture forever.
-const PROBE_TIMEOUT_MS = 1500;
-
-async function config() {
-  const c = await chrome.storage.local.get(["host", "port", "secret"]);
-  // Legacy migration: every build before port discovery shipped 8765 as the options default and
-  // saved it unconditionally, so nearly every existing install has 8765 pinned. Left as-is that
-  // stored value would suppress probing and reintroduce the exact bug discovery fixes. 8765 is the
-  // first rung anyway, so treating it as "auto" costs nothing when it is right and self-heals when
-  // it is not. A port the operator genuinely wants pinned to rung 0 is indistinguishable here, and
-  // discovery still finds it first.
-  const stored = c.port === 8765 ? 0 : c.port || 0;
-  return { host: c.host || DEFAULTS.host, port: stored, secret: c.secret || "" };
+// Kestrel's switches and the hosts with waiting roles, refreshed at most every five minutes.
+async function kestrelConfig({ fresh = false } = {}) {
+  const cached = await Api.session.get(["config", "configAt"]);
+  if (!fresh && cached.config && Date.now() - (cached.configAt || 0) < CONFIG_EVERY_MS) {
+    return cached.config;
+  }
+  const r = await Api.call("/api/extension/config");
+  if (!r.ok || !r.body || typeof r.body !== "object") return cached.config || null;
+  const config = {
+    version: String(r.body.version || ""),
+    features: Object.assign({ badges: true, waiting: true, toolbar_count: true },
+      r.body.features || {}),
+    waiting_hosts: Array.isArray(r.body.waiting_hosts) ? r.body.waiting_hosts : [],
+  };
+  await Api.session.set({ config, configAt: Date.now() });
+  return config;
 }
 
-// Confirm a Kestrel is really listening here. We POST the text of the page the operator is reading,
-// so "something answered" is not good enough: it must identify itself as Kestrel before we send
-// anything to it. An unrelated local server on a ladder port must never receive page content.
-// The shared secret is deliberately NOT sent on the probe: /health needs no auth, and sending it
-// would hand the operator's key to every unidentified server on the ladder before we know what
-// they are, which is the very thing this check exists to prevent.
-async function isKestrel(host, port) {
-  try {
-    const r = await fetch(`http://${host}:${port}/health`, {
-      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-    });
-    if (!r.ok) return false;
-    const body = await r.json();
-    return body && body.service === "kestrel";
-  } catch (e) {
-    return false; // not listening, not Kestrel, or too slow to be the local app
-  }
-}
-
-// How long a failed sweep is remembered. content.js re-scans on every DOM mutation batch, and job
-// boards mutate constantly, so without this a Kestrel that is simply not running would cost ten
-// loopback connections per scan, forever. That is both wasteful and indistinguishable from a port
-// scan to endpoint security software.
-const NEGATIVE_CACHE_MS = 10000;
-
-// Resolve once, then cache in session storage. Callers drop the cache when a request fails in a way
-// that suggests the app moved, so a restart onto another rung self-heals.
-// `force` skips the negative cache. The operator clicking Capture is an explicit request and must
-// never be answered from a stale "nothing found" note; the passive content-script lookup is the
-// caller that needs the throttle.
-async function resolveBase({ force = false } = {}) {
-  const { host, port } = await config();
-  // An explicitly configured port is authoritative, so it is checked BEFORE the cache. Consulting
-  // the cache first would let a previously discovered rung outrank a port the operator just pinned.
-  if (port) {
-    return (await isKestrel(host, port)) ? `http://${host}:${port}` : null;
-  }
-  const cached = await chrome.storage.session.get(["resolvedPort", "lastSweepFailedAt"]);
-  if (cached.resolvedPort && (await isKestrel(host, cached.resolvedPort))) {
-    return `http://${host}:${cached.resolvedPort}`;
-  }
-  if (
-    !force &&
-    cached.lastSweepFailedAt &&
-    Date.now() - cached.lastSweepFailedAt < NEGATIVE_CACHE_MS
-  ) {
-    return null; // swept recently and found nothing; do not walk the ladder again yet
-  }
-  for (const p of PORT_LADDER) {
-    if (await isKestrel(host, p)) {
-      await chrome.storage.session.set({ resolvedPort: p, lastSweepFailedAt: 0 });
-      return `http://${host}:${p}`;
+// The count of roles waiting for a description from this tab's exact host (www. aside), never a
+// total and never a parent domain's: a role on greenhouse.io does not count on a company's
+// boards.greenhouse.io page. The host is matched here from the list Kestrel sent, so drawing the
+// count sends Kestrel nothing about the tab (D-EXT-771).
+async function showCount(tabId, host) {
+  if (!tabId || (flashUntil[tabId] || 0) > Date.now()) return;
+  const config = await kestrelConfig();
+  let n = 0;
+  if (config && config.features.toolbar_count && config.features.waiting && host) {
+    for (const row of config.waiting_hosts) {
+      // The same rule as the server's same_site (D-EXT-774): the exact host, www. aside.
+      if (row && host && String(row.host || "") === host) n += Number(row.count) || 0;
     }
   }
-  await chrome.storage.session.set({ lastSweepFailedAt: Date.now() });
-  return null;
+  await chrome.action.setBadgeText({ tabId, text: n ? String(Math.min(n, 99)) : "" });
+  if (n) await chrome.action.setBadgeBackgroundColor({ tabId, color: BADGE_COLORS.count });
 }
 
-async function clearResolved() {
-  await chrome.storage.session.remove(["resolvedPort"]);
+async function flash(tabId, ok, message) {
+  if (!tabId) return;
+  flashUntil[tabId] = Date.now() + FLASH_MS;
+  await chrome.action.setBadgeText({ tabId, text: ok ? "OK" : "!" });
+  await chrome.action.setBadgeBackgroundColor({ tabId, color: ok ? BADGE_COLORS.ok : BADGE_COLORS.fail });
+  if (message) await chrome.action.setTitle({ tabId, title: message });
+  setTimeout(() => {
+    flashUntil[tabId] = 0;
+    chrome.action.setTitle({ tabId, title: "Kestrel Capture" });
+  }, FLASH_MS);
 }
 
-// Only a transport failure or a server-side fault means "it moved". A 4xx came from a confirmed
-// Kestrel answering about this particular request, so keep the resolution.
-function movedAway(status) {
-  return status >= 500;
-}
-
-function headers(secret) {
-  const h = { "Content-Type": "application/json" };
-  // Required on every real request: Kestrel refuses an extension-origin request without a valid
-  // key (403), which is what stops any OTHER installed extension with a localhost permission from
-  // driving it. Sent only to a server that already identified itself as Kestrel (see isKestrel).
-  if (secret) h["X-Kestrel-Key"] = secret;
-  return h;
-}
-
-// Kestrel's own explanation for a refused extension request, so the badge title tells the operator
-// what to do (generate the secret under Settings > LAN, paste it into options) rather than "403".
-async function refusalMessage(r) {
-  if (r.status !== 403) return `Kestrel capture failed (${r.status})`;
-  try {
-    const body = await r.json();
-    if (body && body.detail) return body.detail;
-  } catch (e) {
-    // not JSON; fall through to the generic message
-  }
-  return "Kestrel refused the capture: set the shared secret (Settings > LAN) in the extension options.";
-}
-
-// Ask the tab for its own URL + readable text. The extension only reads the active tab the operator
-// chose; it injects a one-shot extractor, never a persistent crawler.
-async function extract(tabId) {
-  const [res] = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: () => {
-      const text = (document.body ? document.body.innerText : "").slice(0, 40000);
-      return { url: location.href, title: document.title, text };
-    },
-  });
-  return res.result;
-}
-
-async function capture(tab) {
+// Capture from the right-click menu: the page the person right-clicked, once.
+async function captureFromMenu(tab) {
   if (!tab || !tab.id) return;
-  try {
-    const page = await extract(tab.id);
-    const { secret } = await config();
-    const base = await resolveBase({ force: true }); // operator clicked; never answer from cache
-    if (!base) {
-      await notify("Kestrel not running, or not on its usual ports. Start it, or set a port in options.", false);
-      return;
-    }
-    const r = await fetch(`${base}/api/opportunities/ingest`, {
-      method: "POST",
-      headers: headers(secret),
-      body: JSON.stringify({ url: page.url, text: page.text, title: page.title }),
-    });
-    const ok = r.ok;
-    const body = ok ? await r.json() : null;
-    if (!ok && movedAway(r.status)) await clearResolved();
-    await notify(ok ? `Captured: ${body.title || page.title}` : await refusalMessage(r), ok);
-  } catch (e) {
-    await clearResolved(); // transport failure: it may have restarted onto another rung
-    await notify(`Kestrel not reachable. Set the port in the extension options. (${e.message})`, false);
+  if (Api.isLinkedIn(tab.url || "")) {
+    return flash(tab.id, false, "Kestrel doesn't read LinkedIn pages. Paste the posting in Kestrel.");
   }
-}
-
-async function notify(message, ok = true) {
-  // Best-effort badge text on the toolbar icon; no notifications permission needed. The badge must
-  // reflect the outcome: a failure that renders as "OK" is worse than no badge at all.
-  await chrome.action.setBadgeText({ text: ok ? "OK" : "!" });
-  await chrome.action.setBadgeBackgroundColor({ color: ok ? "#D4622A" : "#8A1C1C" });
-  await chrome.action.setTitle({ title: message });
-  setTimeout(() => chrome.action.setBadgeText({ text: "" }), 2500);
+  try {
+    const page = await Api.readTab(tab.id);
+    const r = await Api.call("/api/opportunities/ingest", {
+      method: "POST", force: true, body: { url: page.url, text: page.text, title: page.title },
+    });
+    if (r.offline) return flash(tab.id, false, "Open Kestrel on this computer, then try again.");
+    if (r.status === 403) return flash(tab.id, false, "Set up the extension: click its icon.");
+    return flash(tab.id, r.ok, r.ok ? "Added to Kestrel." : "Kestrel couldn't add this page.");
+  } catch (e) {
+    return flash(tab.id, false, "Kestrel couldn't read this page.");
+  }
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -169,31 +89,47 @@ chrome.runtime.onInstalled.addListener(() => {
     contexts: ["page", "selection", "link"],
   });
 });
+chrome.contextMenus.onClicked.addListener((_info, tab) => captureFromMenu(tab));
 
-chrome.contextMenus.onClicked.addListener((info, tab) => capture(tab));
-chrome.action.onClicked.addListener((tab) => capture(tab));
-
-// The content script asks the background to look up which visible URLs are already known, so the
-// lookup (and any shared secret) stays out of the page context.
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg && msg.type === "lookup") {
+// Messages come only from this extension's own pages and content script.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || typeof msg !== "object" || sender.id !== chrome.runtime.id) return false;
+  if (msg.type === "lookup") {
     (async () => {
-      try {
-        const { secret } = await config();
-        const base = await resolveBase();
-        if (!base) return sendResponse({});
-        const r = await fetch(`${base}/api/opportunities/lookup`, {
-          method: "POST",
-          headers: headers(secret),
-          body: JSON.stringify({ urls: msg.urls || [] }),
-        });
-        if (!r.ok && movedAway(r.status)) await clearResolved();
-        sendResponse(r.ok ? await r.json() : {});
-      } catch (e) {
-        await clearResolved();
-        sendResponse({});
+      const config = await kestrelConfig();
+      const host = Api.hostOf(sender.url || "");
+      const hidden = (await chrome.storage.local.get(["hiddenSites"])).hiddenSites || [];
+      if (sender.tab) showCount(sender.tab.id, host);
+      if ((config && !config.features.badges) || hidden.includes(host)) {
+        return sendResponse({ known: {}, off: true });
       }
-    })();
-    return true; // async response
+      const urls = Array.isArray(msg.urls) ? msg.urls.filter((u) => typeof u === "string") : [];
+      const r = await Api.call("/api/opportunities/lookup", {
+        method: "POST", body: { urls: urls.slice(0, 100) },
+      });
+      sendResponse({ known: r.ok && r.body && typeof r.body === "object" ? r.body : {} });
+    })().catch(() => sendResponse({ known: {} }));
+    return true;
   }
+  if (msg.type === "theme") {
+    // The badges' tokens: this extension's own theme.css, read from the package, never the web.
+    fetch(chrome.runtime.getURL("theme.css"))
+      .then((r) => r.text())
+      .then((css) => sendResponse({ css }), () => sendResponse({ css: "" }));
+    return true;
+  }
+  if (msg.type === "count" && Number.isInteger(msg.tabId)) {
+    (async () => {
+      if (msg.fresh) await kestrelConfig({ fresh: true });
+      await showCount(msg.tabId, typeof msg.host === "string" ? msg.host : "");
+      sendResponse({ done: true });
+    })().catch(() => sendResponse({ done: false }));
+    return true;
+  }
+  if (msg.type === "flash" && Number.isInteger(msg.tabId)) {
+    flash(msg.tabId, Boolean(msg.ok), typeof msg.message === "string" ? msg.message : "")
+      .then(() => sendResponse({ done: true }), () => sendResponse({ done: false }));
+    return true;
+  }
+  return false;
 });

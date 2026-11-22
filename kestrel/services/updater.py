@@ -1,6 +1,7 @@
-"""The update checker (SPEC-INTERFACES.md 1.5, D-UPD-1..5): tells the operator a newer Kestrel
-exists and what changed, and points them at the download page. It never downloads or installs
-anything; the operator chooses if and when to update.
+"""The update checker (SPEC-INTERFACES.md 1.5, D-UPD-1..10): tells the operator a newer Kestrel
+exists and what changed, and points them at this platform's installer on the GitHub release (or
+the download page when the feed has no valid entry). It never downloads or installs anything; the
+browser saves the file and the operator chooses if and when to run it.
 
 Two public promises bind this module:
 1. Asking is fine; installing on its own is not. The only outbound call is a GET of the static
@@ -18,6 +19,7 @@ import asyncio
 import html
 import json
 import re
+import sys
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -37,6 +39,14 @@ log = structlog.get_logger()
 FEED_URL = "https://kestrelapp.co/latest.json"
 DOWNLOAD_PAGE = "https://kestrelapp.co/download"
 _DOWNLOAD_HOSTS = frozenset({"kestrelapp.co", "www.kestrelapp.co"})
+# The one place an installer may be opened from (D-UPD-8, D-UPD-9): the Kestrelapp release
+# assets. The URL the app opens is rebuilt from these parts, never taken from the feed.
+RELEASE_HOST = "github.com"
+RELEASE_PATH = "/distantsoil/Kestrelapp/releases/download/"
+# Every validator uses fullmatch and ASCII classes: `$` would accept a trailing newline and `\d`
+# accepts non-ASCII digits.
+_SAFE_FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 FEED_SCHEMA = 1
 USER_AGENT = "Kestrel-Updater"
 STATE_KEY = "update_state"
@@ -50,7 +60,13 @@ BASE_HEADERS = {"User-Agent": USER_AGENT, "Accept": "application/json"}
 
 _RETRY_BACKOFF_SECONDS = 1.0
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
-_VERSION = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$")
+# The running version in a release tag address (D-UPD-11): plain X.Y.Z or X.Y.Z-prerelease, ASCII
+# digits, no leading "v" and nothing else.
+_TAG_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?")
+RELEASE_TAG_PATH = "/distantsoil/Kestrelapp/releases/tag/"
+CHANGELOG_URL = "https://github.com/distantsoil/Kestrelapp/blob/main/CHANGELOG.md"
+_VERSION = re.compile(r"v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z.-]+))?")
+_VERSION_MAX_LEN = 64  # no real tag is longer; a longer string is not a version
 
 
 # --- feed contract (shared with scripts/build_latest_json.py) ---------------------------------
@@ -67,6 +83,17 @@ class ReleaseNote(BaseModel):
     version: str
     date: str  # YYYY-MM-DD
     notes_md: str
+
+
+class ReleaseFile(BaseModel):
+    """A validated installer link (D-UPD-9): `url` is rebuilt from `version` and `file`, so it is
+    always exactly https://github.com/distantsoil/Kestrelapp/releases/download/v<version>/<file>."""
+
+    platform: str
+    version: str
+    file: str
+    sha256: str
+    url: str
 
 
 class LatestFeed(BaseModel):
@@ -107,7 +134,9 @@ class UpdateState(BaseModel):
 def parse_version(text: str) -> tuple[int, int, int, tuple[Any, ...]] | None:
     """`v1.2.3`, `1.2.3`, `1.2.3-rc.1` -> a sortable key; anything else -> None. A release sorts
     after any prerelease of the same number. No third-party dependency."""
-    m = _VERSION.match(text.strip()) if isinstance(text, str) else None
+    if not isinstance(text, str) or len(text) > _VERSION_MAX_LEN:
+        return None  # bounds the match below (CodeQL py/polynomial-redos)
+    m = _VERSION.fullmatch(text.strip())
     if m is None:
         return None
     major, minor, patch, pre = int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4)
@@ -131,9 +160,19 @@ def pending_releases(feed: LatestFeed, current: str) -> list[ReleaseNote]:
     return newer
 
 
+_BOLD = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*")
+
+
+def _bold(escaped_line: str) -> str:
+    """`**text**` -> <strong>text</strong> on an already escaped line (D-UPD-10). Only a pair on
+    one line with non-empty text that does not start or end with whitespace; a lone, unpaired or
+    empty `**` stays literal. The captured text is escaped already, so no other tag can appear."""
+    return _BOLD.sub(r"<strong>\1</strong>", escaped_line)
+
+
 def render_notes_html(notes_md: str) -> str:
-    """Escape everything, then render only `### heading`, `- bullet` and paragraphs. Raw HTML in
-    the notes is always shown as text."""
+    """Escape everything, then render only `### heading`, `- bullet`, paragraphs and `**bold**`.
+    Raw HTML in the notes is always shown as text; the feed can never place a link."""
     out: list[str] = []
     bullets: list[str] = []
     para: list[str] = []
@@ -149,7 +188,7 @@ def render_notes_html(notes_md: str) -> str:
             para.clear()
 
     for raw in html.escape(notes_md or "").splitlines():
-        line = raw.strip()
+        line = _bold(raw.strip())
         if not line:
             flush_bullets()
             flush_para()
@@ -193,6 +232,101 @@ def safe_download_page(url: object) -> str | None:
         log.warning("update_download_page_rejected", value=url[:80])
         return None
     return urlunsplit((parts.scheme, parts.netloc.lower(), parts.path, "", ""))
+
+
+def feed_platform(platform: str | None = None) -> str | None:
+    """The feed's `downloads` key for this machine: windows, macos or linux; None elsewhere."""
+    p = sys.platform if platform is None else platform
+    if p.startswith("win"):
+        return "windows"
+    if p == "darwin":
+        return "macos"
+    if p.startswith("linux"):
+        return "linux"
+    return None
+
+
+def published_version(cached_feed: Any) -> str | None:
+    """The newest published version in a cached feed (a dict), or None when there is none."""
+    value = cached_feed.get("version") if isinstance(cached_feed, dict) else None
+    return value if isinstance(value, str) else None
+
+
+def release_notes_url(version: str, published: str | None = None) -> str:
+    """The GitHub release page of the running version (D-UPD-11), rebuilt from the version alone.
+    The tag is opened only when the feed confirms it exists: a stable version when the newest
+    published version (`published`) is at least this one; a prerelease version only when the feed
+    names exactly that version (the feed never carries prereleases, so in practice never). Any
+    doubt (a dev or unparseable version, no feed yet, a build ahead of the feed, since a
+    prerelease build reports its base version whose tag exists only with the stable release)
+    opens the full CHANGELOG. Nothing is fetched and nothing about the person is in the address."""
+    if not (isinstance(version, str) and _TAG_VERSION.fullmatch(version)):
+        return CHANGELOG_URL
+    if "-" in version:
+        known = published == version
+    else:
+        known = (
+            bool(published) and parse_version(published) is not None
+            and parse_version(version) is not None and not is_newer(version, published)
+        )
+    if not known:
+        return CHANGELOG_URL
+    return urlunsplit(("https", RELEASE_HOST, f"{RELEASE_TAG_PATH}v{version}", "", ""))
+
+
+def release_download(
+    feed: LatestFeed | dict[str, Any] | None, *, platform: str | None = None
+) -> ReleaseFile | None:
+    """This platform's installer on the GitHub release, or None when the feed has no entry the
+    allowlist accepts (D-UPD-8, D-UPD-9). The feed is remote input: every part is checked and the
+    returned URL is rebuilt from the checked parts, never the feed's own string. None means the
+    caller falls back to the download page. Nothing here fetches anything."""
+    if feed is None:
+        return None
+    if isinstance(feed, dict):
+        try:
+            feed = LatestFeed.model_validate(feed)
+        except ValidationError:
+            return None
+    key = feed_platform(platform)
+    entry = feed.downloads.get(key) if key else None
+    if entry is None:
+        return None
+    version = feed.version.strip()
+    if version != feed.version or parse_version(version) is None or version.startswith("v"):
+        log.warning("update_release_rejected", reason="version", value=version[:40])
+        return None
+    file = entry.file
+    if not _SAFE_FILE.fullmatch(file) or ".." in file:
+        log.warning("update_release_rejected", reason="file", value=file[:80])
+        return None
+    sha = entry.sha256.lower()
+    if not _SHA256.fullmatch(sha):
+        log.warning("update_release_rejected", reason="sha256", value=entry.sha256[:80])
+        return None
+    expected_path = f"{RELEASE_PATH}v{version}/{file}"
+    url = urlunsplit(("https", RELEASE_HOST, expected_path, "", ""))
+    given = entry.url
+    try:
+        parts = urlsplit(given)
+    except ValueError:
+        parts = None
+    ok = (
+        parts is not None
+        and given == url  # byte for byte: urlsplit drops leading blanks and control characters
+        and given.isprintable()
+        and parts.scheme == "https"
+        and parts.netloc.lower() == RELEASE_HOST  # equality excludes userinfo and a port
+        and parts.path == expected_path
+        and not parts.query
+        and not parts.fragment
+        and "?" not in given
+        and "#" not in given
+    )
+    if not ok:
+        log.warning("update_release_rejected", reason="url", value=given[:120])
+        return None
+    return ReleaseFile(platform=key or "", version=version, file=file, sha256=sha, url=url)
 
 
 def seconds_until_next_check(state: UpdateState, check_hours: int, now: datetime) -> float:
@@ -336,7 +470,7 @@ async def check_now(
             await NotificationService(notify_sessionmaker or get_sessionmaker()).notify(
                 "update",
                 f"Kestrel {notify_version} is available",
-                body="See what's new and get it from kestrelapp.co when you're ready.",
+                body="See what's new and download it when you're ready.",
                 severity="info",
             )
         except Exception as exc:  # a notice must never fail the check; the banner still shows

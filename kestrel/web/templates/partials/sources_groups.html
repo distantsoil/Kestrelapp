@@ -7,7 +7,7 @@
   <div class="src-note" role="status" data-testid="consent-held-note">{{ consent_held }} source check{{ '' if consent_held == 1 else 's' }} waiting for your confirmation. The model or online service changed. Choose Check all now to review and approve the current destination.</div>
   {% endif %}
   {% if checking %}
-  <div class="src-note" role="status" data-testid="checking-note" hx-get="/sources/list" hx-trigger="every 6s [srcPollOk()]" hx-target="#src-list" hx-swap="outerHTML">{{ ui.icon('scan', 'k-ic--sm') }} Checking {{ checking }} source{{ '' if checking == 1 else 's' }}. Each row updates when its check finishes.</div>
+  <div class="src-note" role="status" data-testid="checking-note" hx-get="/sources/list" hx-trigger="every 6s" data-k-when="poll=sources-poll-ok" hx-target="#src-list" hx-swap="outerHTML">{{ ui.icon('scan', 'k-ic--sm') }} Checking {{ checking }} source{{ '' if checking == 1 else 's' }}. Each row updates when its check finishes.</div>
   {% endif %}
 
   {% if suggestions %}

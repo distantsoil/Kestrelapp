@@ -12,6 +12,7 @@ import math
 from datetime import UTC, datetime
 from typing import Any
 
+from kestrel.pipeline.scoring import counted_blockers
 from kestrel.web import pipeline_view as pv
 from kestrel.web.calibrate_view import DIM_WORDS
 
@@ -178,8 +179,10 @@ def _weak_reasons(opp, ev_json: dict | None) -> list[str]:
     Nothing is composed beyond joining them; empty when the model gave none of these."""
     ev = ev_json or {}
     parts: list[str] = []
-    for bl in ev.get("blockers") or []:
-        if isinstance(bl, dict) and _s(bl.get("detail")):
+    # Only the blockers that counted: one the operator's own data did not uphold is a Worth
+    # checking note, never a reason the role is not a fit (D-SCORE-22).
+    for bl in counted_blockers(ev.get("blockers")):
+        if _s(bl.get("detail")):
             sentence = _sentence(bl["detail"])
             if sentence not in parts:
                 parts.append(sentence)

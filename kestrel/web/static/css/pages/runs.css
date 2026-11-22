@@ -207,6 +207,12 @@
 .rn-srcs li:first-child { border-top: 0; }
 .rn-srcs li > span:first-child { overflow-wrap: anywhere; min-width: 0; }
 .rn-srcs .k-pill { margin-left: auto; flex: none; }
+.rn-srcs li:has(.rn-code) { flex-wrap: wrap; }
+/* A stable error code: small and plain, under or beside the sentence it belongs to. */
+.rn-code { display: block; font-size: 12.5px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+.rn-note .rn-code { margin-top: 2px; }
+.rn-feed .rn-code { display: inline; }
+.rn-code--cell { display: block; font-size: 12px; }
 .rn-dr__foot { display: flex; gap: 8px; flex-wrap: wrap; }
 .rn-pick { border: 0; padding: 0; margin: 0 0 12px; display: flex; flex-direction: column; gap: 8px; }
 .rn-opt { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: var(--r-lg); padding: 10px 12px; cursor: pointer; }
@@ -246,3 +252,13 @@
 .rn-q li { align-items: center; }
 .rn-q .k-btn { align-self: center; }
 
+
+/* Why roles have no score (partials/runs_unscored.html): one block per reason. */
+.rn-why { margin-top: 16px; }
+.rn-why__list, .rn-why__roles { list-style: none; margin: 0; padding: 0; }
+.rn-why__item { padding: 12px 0; border-top: 1px solid var(--border); min-width: 0; }
+.rn-why__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.rn-why__n { font-weight: 600; }
+.rn-why__act { margin-left: auto; }
+.rn-why__tip { margin: 6px 0; overflow-wrap: anywhere; }
+.rn-why__roles li { padding: 2px 0; overflow-wrap: anywhere; font-size: var(--fs-sm); }

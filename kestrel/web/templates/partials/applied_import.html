@@ -1,27 +1,27 @@
 <div id="applied-panel">
-  {% if error %}<p class="warnbox" style="padding:.6rem 1rem">{{ error }}</p>{% endif %}
+  {% if error %}<p class="warnbox u-p-06-1">{{ error }}</p>{% endif %}
 
   {% if result %}
-  <div class="panel" data-testid="applied-result" style="padding:.8rem 1rem; margin-bottom:1rem">
-    <h3 style="margin-top:0">Imported</h3>
-    <p style="margin:.2rem 0">
+  <div class="panel u-p-08-1 u-mb-1" data-testid="applied-result">
+    <h3 class="u-mt-0">Imported</h3>
+    <p class="u-m-02-0">
       <b>{{ result.imported }}</b> new pursuit{{ '' if result.imported == 1 else 's' }},
       <b>{{ result.updated }}</b> updated,
       <b>{{ result.skipped }}</b> skipped.
       {% if result.pursuit_ids %}They are on <a href="/pursuits?view=table">Pursuits</a>; each one's posting is under the Hidden chip on Opportunities with the reason "applied".{% endif %}
     </p>
-    {% for p in result.problems %}<div class="warnbox" style="margin-top:.4rem">{{ p }}</div>{% endfor %}
-    <p class="muted" style="margin:.6rem 0 0">A new posting that matches one of these (same organization, near-identical title) is hidden on arrival as a re-post. Tick "allow re-posts" on a pursuit, here or on the Pursuits table, to see such listings anyway.</p>
+    {% for p in result.problems %}<div class="warnbox u-mt-04">{{ p }}</div>{% endfor %}
+    <p class="muted u-m-06-0-0">A new posting that matches one of these (same organization, near-identical title) is hidden on arrival as a re-post. Tick "allow re-posts" on a pursuit, here or on the Pursuits table, to see such listings anyway.</p>
   </div>
   {% endif %}
 
   {# Collapsed by default (operator request, D-UI-20): the form is the point, the format help
      is there when a file is rejected. #}
-  <details style="margin-bottom:1rem">
+  <details class="u-mb-1">
     <summary><b>How to format the file</b></summary>
-    <div class="grid2" style="margin-top:.6rem">
+    <div class="grid2 u-mt-06">
       <div>
-        <p class="muted" style="margin:0 0 .4rem">A CSV, or a Markdown table (the kind a notes app keeps). The first row names the columns, in any order and any case. Other columns are kept in the notes.</p>
+        <p class="muted u-m-0-0-04">A CSV, or a Markdown table (the kind a notes app keeps). The first row names the columns, in any order and any case. Other columns are kept in the notes.</p>
         <table class="data">
           <thead><tr><th>Column</th><th>Headers accepted</th></tr></thead>
           <tbody>
@@ -30,10 +30,10 @@
             {% endfor %}
           </tbody>
         </table>
-        <p class="muted" style="margin:.6rem 0 0">Dates: <span class="mono">YYYY-MM-DD</span> (also M/D/YYYY and "Oct 2, 2026"). Track: <span class="mono">employment</span> (default) or <span class="mono">consulting</span>.</p>
+        <p class="muted u-m-06-0-0">Dates: <span class="mono">YYYY-MM-DD</span> (also M/D/YYYY and "Oct 2, 2026"). Track: <span class="mono">employment</span> (default) or <span class="mono">consulting</span>.</p>
       </div>
       <div>
-        <p class="muted" style="margin:0 0 .4rem">Status words. Kestrel's own names (shortlisted, applied, screening, interviewing, final, offer, accepted, rejected, withdrawn, ghosted) pass as written; these common tracker words are mapped. Any other word gets a picker in the review.</p>
+        <p class="muted u-m-0-0-04">Status words. Kestrel's own names (shortlisted, applied, screening, interviewing, final, offer, accepted, rejected, withdrawn, ghosted) pass as written; these common tracker words are mapped. Any other word gets a picker in the review.</p>
         <table class="data">
           <thead><tr><th>You wrote</th><th>Becomes</th></tr></thead>
           <tbody>
@@ -42,17 +42,17 @@
             {% endfor %}
           </tbody>
         </table>
-        <p class="muted" style="margin:.6rem 0 0">Rows whose company starts with Self, Networking, Workshop or Event, or whose notes say "activity type:", are listed as not an application and left unticked.</p>
+        <p class="muted u-m-06-0-0">Rows whose company starts with Self, Networking, Workshop or Event, or whose notes say "activity type:", are listed as not an application and left unticked.</p>
       </div>
     </div>
-    <details style="margin-top:.6rem"><summary class="muted">Example, Markdown</summary><pre class="mono" style="white-space:pre-wrap; margin:.4rem 0 0">{{ example_md }}</pre></details>
-    <details><summary class="muted">Example, CSV</summary><pre class="mono" style="white-space:pre-wrap; margin:.4rem 0 0">{{ example_csv }}</pre></details>
+    <details class="u-mt-06"><summary class="muted">Example, Markdown</summary><pre class="mono u-ws-pre-wrap u-m-04-0-0">{{ example_md }}</pre></details>
+    <details><summary class="muted">Example, CSV</summary><pre class="mono u-ws-pre-wrap u-m-04-0-0">{{ example_csv }}</pre></details>
   </details>
 
   <form hx-post="/settings/applied/review" hx-target="#applied-panel" hx-swap="outerHTML" hx-encoding="multipart/form-data" hx-indicator="#applied-busy" data-testid="applied-form">
-    <label style="display:block">Paste the table
-      <textarea name="text" rows="8" style="width:100%; box-sizing:border-box; font-family:var(--mono); font-size:var(--fs-sm)" placeholder="| Company | Role | Date | Status | ...">{{ text or '' }}</textarea></label>
-    <div style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap; margin-top:.5rem">
+    <label class="u-d-block">Paste the table
+      <textarea name="text" rows="8" class="u-w-100p u-bs-border-box u-ff-mono u-fs-fs-sm" placeholder="| Company | Role | Date | Status | ...">{{ text or '' }}</textarea></label>
+    <div class="u-d-flex u-gap-1 u-ai-center u-fw-wrap u-mt-05">
       <label>or choose a file <input type="file" name="file" accept=".csv,.md,.txt,text/csv,text/markdown,text/plain"></label>
       <button class="btn" type="submit">Review</button>
       <span id="applied-busy" class="htmx-indicator muted">reading the table…</span>
@@ -61,14 +61,14 @@
   </form>
 
   {% if review %}
-  <div class="panel" data-testid="applied-review" style="padding:.8rem 1rem; margin-top:1rem">
-    <h3 style="margin-top:0">Review</h3>
-    {% for e in review.errors %}<div class="warnbox" style="margin-bottom:.5rem">{{ e }}</div>{% endfor %}
+  <div class="panel u-p-08-1 u-mt-1" data-testid="applied-review">
+    <h3 class="u-mt-0">Review</h3>
+    {% for e in review.errors %}<div class="warnbox u-mb-05">{{ e }}</div>{% endfor %}
     {% if review.rows %}
-    <p class="muted" style="margin:.2rem 0 .6rem">Read as {{ review.fmt }}: {% for c, h in review.columns.items() %}<span class="mono">{{ c }}</span> from "{{ h }}"{% if not loop.last %}, {% endif %}{% endfor %}. {{ review.rows|length }} row{{ '' if review.rows|length == 1 else 's' }}. Ticked rows are imported; a row with a problem cannot be ticked until the file is fixed.</p>
+    <p class="muted u-m-02-0-06">Read as {{ review.fmt }}: {% for c, h in review.columns.items() %}<span class="mono">{{ c }}</span> from "{{ h }}"{% if not loop.last %}, {% endif %}{% endfor %}. {{ review.rows|length }} row{{ '' if review.rows|length == 1 else 's' }}. Ticked rows are imported; a row with a problem cannot be ticked until the file is fixed.</p>
     <form hx-post="/settings/applied/import" hx-target="#applied-panel" hx-swap="outerHTML" hx-indicator="#import-busy" data-testid="applied-import-form">
       <textarea name="text" hidden>{{ text }}</textarea>
-      <div style="overflow-x:auto">
+      <div class="u-ovx-auto">
       <table class="data">
         <thead><tr><th></th><th>#</th><th>Company</th><th>Title</th><th>Applied</th><th>Status</th><th>Allow re-posts</th><th>Reads as</th></tr></thead>
         <tbody>
@@ -90,7 +90,7 @@
             </td>
             <td><input type="checkbox" name="reposts_{{ r.index }}" value="on" aria-label="Allow re-posts for row {{ r.index }}"></td>
             <td class="muted">
-              {% for p in r.problems %}<span class="warnbox" style="padding:0 .3rem">{{ p }}</span> {% endfor %}
+              {% for p in r.problems %}<span class="warnbox u-p-0-03">{{ p }}</span> {% endfor %}
               {% if r.activity %}not an application{% endif %}
               {% if r.existing_pursuit_id %}already tracked ({{ r.existing_label }}); ticking updates that pursuit's status and date{% endif %}
               {% if r.possible_duplicate_id %}possible duplicate ({{ r.possible_duplicate_label }}); ticking adds it as a new application{% endif %}
@@ -101,7 +101,7 @@
         </tbody>
       </table>
       </div>
-      <div style="display:flex; gap:1rem; align-items:center; margin-top:.6rem">
+      <div class="u-d-flex u-gap-1 u-ai-center u-mt-06">
         <button class="btn pri" type="submit">Import ticked rows</button>
         <span id="import-busy" class="htmx-indicator muted">writing…</span>
         <span class="muted">Each becomes a pursuit on the board and a hidden opportunity (reason: applied). Kestrel never applies for you; this records what you already did.</span>

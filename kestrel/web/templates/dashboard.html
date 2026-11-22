@@ -27,6 +27,7 @@
   <div id="whats-new-slot" hx-get="/updates/whats-new-card" hx-trigger="load" hx-swap="innerHTML"></div>
   {# The one-time local announcement (D-UI-157): Today only, under the what's-new card. #}
   <div id="announcement-slot" hx-get="/announcements" hx-trigger="load" hx-swap="innerHTML"></div>
+  {% if first_break %}{% include "partials/first_run_break.html" %}{% endif %}
 
   {% if readiness.show_notice or rescoring %}
   <div class="sf-notice" role="status" data-testid="thin-profile-notice" data-next-step="{{ readiness.next_step }}">

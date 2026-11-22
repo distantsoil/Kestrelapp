@@ -42,12 +42,12 @@
     <div class="run-head"><h3 data-testid="run-headline">{{ rs.headline }}</h3><span class="sp"></span><span class="run-when">last activity {{ rs.last_activity_words }}</span></div>
     {% if rs.stage == 'quick_screen' %}
       {% set b = rs.bars[1] %}
-      <div class="run-prog" role="progressbar" aria-label="Quick screen" aria-valuemin="0" aria-valuemax="{{ b.total }}" aria-valuenow="{{ b.done }}"><i class="s-run" style="width:{{ b.pct }}%"></i></div>
+      <div class="run-prog" role="progressbar" aria-label="Quick screen" aria-valuemin="0" aria-valuemax="{{ b.total }}" aria-valuenow="{{ b.done }}"><i class="s-run" data-k-style="width:{{ b.pct }}%"></i></div>
       <p class="run-line"><span class="run-good">{{ rs.quick_screen_kept }} kept</span> · <span class="quiet">{{ rs.quick_screen_total - rs.quick_screen_done }} waiting for the quick screen</span></p>
     {% else %}
       {% set rw = rs.rate_widths %}
       <div class="run-prog" role="progressbar" aria-label="Rating progress" aria-valuemin="0" aria-valuemax="{{ rs.to_rate }}" aria-valuenow="{{ rs.rated + rs.failed }}">
-        <i class="s-good" style="width:{{ rw.scored }}%" title="{{ rs.rated }} scored"></i><i class="s-bad" style="width:{{ rw.failed }}%" title="{{ rs.failed }} failed"></i><i class="s-run" style="width:{{ rw.running }}%" title="{{ rs.rating_now }} rating now"></i>
+        <i class="s-good" data-k-style="width:{{ rw.scored }}%" title="{{ rs.rated }} scored"></i><i class="s-bad" data-k-style="width:{{ rw.failed }}%" title="{{ rs.failed }} failed"></i><i class="s-run" data-k-style="width:{{ rw.running }}%" title="{{ rs.rating_now }} rating now"></i>
       </div>
       <p class="run-line" data-testid="run-legend"><span class="run-good">{{ rs.rated }} scored</span> · <span class="run-bad">{{ rs.failed }} failed</span> · <span class="run-accent">{{ rs.rating_now }} rating now</span> · <span class="quiet">{{ rs.waiting }} waiting{% if rate_model %} on {{ rate_model }}{% endif %}</span></p>
     {% endif %}

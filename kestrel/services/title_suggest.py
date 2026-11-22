@@ -40,6 +40,7 @@ from kestrel.db.models import (
     Task,
     TitleSuggestion,
 )
+from kestrel.llm.engine_cycle import engine_unreachable
 from kestrel.llm.schemas import P15TitleCore, P15TitleSuggestions, _cap, _dedupe_cap, _max_items
 
 log = structlog.get_logger()
@@ -223,6 +224,8 @@ class Outcome:
     error: str | None = None
     # The online key is out of credit (D-LLM-8): the task is deferred and no error run recorded.
     out_of_credit: bool = False
+    # The call could not reach the local engine: the task waits, its try given back.
+    engine_unreachable: bool = False
 
 
 def _target_titles() -> list[str]:
@@ -338,7 +341,8 @@ async def generate(
     if not result.ok or result.value is None:
         await session.rollback()
         return Outcome(
-            "error", error=result.error or "no reply", out_of_credit=result.out_of_credit
+            "error", error=result.error or "no reply", out_of_credit=result.out_of_credit,
+            engine_unreachable=result.engine_unreachable,
         )
 
     # Retire waiting suggestions whose resume is no longer active (archived or gone), or that the
@@ -407,13 +411,18 @@ async def drain_title_suggestions(
     back to the queue while attempts remain; a quarantined reply completes the task, since the
     raw reply is kept for review and retrying would loop. Never raises into the worker cycle."""
     from kestrel.interview.story_task import LEASE_S, _renew
+    from kestrel.pipeline.worker import engine_lost_for, local_engine_ready
     from kestrel.queue.queue import REASON_CREDIT, TaskQueue
     from kestrel.services.online_consent import held_at_run_time
 
+    if not await local_engine_ready(settings, "tier2"):
+        return 0  # Ollama is not answering or lacks the model: nothing leased, no try spent
     queue = TaskQueue(sm)
     wid = "pipeline-titles"
     done = 0
     while stop is None or not stop.is_set():
+        if engine_lost_for(settings, "tier2"):
+            break  # a call this cycle could not reach Ollama: lease nothing more (round 6)
         task = await queue.lease(wid, types=[TASK_TYPE], lease_seconds=LEASE_S)
         if task is None:
             break
@@ -435,7 +444,8 @@ async def drain_title_suggestions(
 
             log.warning("title_suggestions_failed", task=task.id, error_type=type(exc).__name__,
                         reason=classify_model_failure(exc)[0])
-            await queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True)
+            await queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True,
+                             engine_wait=engine_unreachable(exc))
             await _record_failure(sm)
             continue
         finally:
@@ -450,7 +460,8 @@ async def drain_title_suggestions(
             )
             break
         if outcome.status == "error":
-            await queue.fail(task.id, outcome.error or "error", worker_id=wid, retry=True)
+            await queue.fail(task.id, outcome.error or "error", worker_id=wid, retry=True,
+                             engine_wait=outcome.engine_unreachable)
             await _record_failure(sm)
             continue
         await queue.complete(task.id, worker_id=wid)

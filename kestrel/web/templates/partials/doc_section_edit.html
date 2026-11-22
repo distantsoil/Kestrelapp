@@ -41,7 +41,7 @@
       {% set chips = (section.hide_names or default_hide_names(section.org_label)) if is_current else default_hide_names(section.org_label) %}
       <span x-show="current">Names to hide</span>
       <div class="hide-names" x-show="current" data-testid="hide-names"
-           x-data="{ names: {{ chips | tojson | forceescape }}, adding: '' }">
+           x-data="hideNames({{ chips | tojson | forceescape }})">
         <ul class="hide-chips">
           {% for n in chips %}
           <li class="hide-chip" x-show="names.includes({{ n | tojson | forceescape }})">
@@ -49,7 +49,7 @@
                    x-bind:disabled="!names.includes({{ n | tojson | forceescape }})">
             <span>{{ n }}</span>
             <button type="button" class="btn small ghost" aria-label="Remove {{ n }}"
-                    @click="names = names.filter(x => x !== {{ n | tojson | forceescape }})">Remove</button>
+                    @click="drop({{ n | tojson | forceescape }})">Remove</button>
             {% if is_common_word(n) %}<span class="warn hide-chip-warn" role="note">{{ common_word_warning }}</span>{% endif %}
           </li>
           {% endfor %}

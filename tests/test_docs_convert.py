@@ -30,6 +30,8 @@ from kestrel.docs.convert import (
     convert_to_markdown,
 )
 from kestrel.docs.imports import _verbatim
+from tests.page_source import as_written
+from tests.pdf_layout import bullet, make_pdf, margin
 
 _TERMS = _HostedMode().disclosure_terms()
 
@@ -116,7 +118,7 @@ def test_pdf_warns_only_when_a_hyphen_was_kept(monkeypatch):
         def __init__(self, text):
             self._t = text
 
-        def extract_text(self):
+        def extract_text(self, **_kw):
             return self._t
 
     class _Reader:
@@ -496,7 +498,7 @@ def test_web_import_converts_off_the_event_loop_and_bounds_the_upload(monkeypatc
     big = io.BytesIO(b"x" * 65)
     r = client.post("/api/documents/import", data={"track": "employment"},
                     files={"file": ("big.md", big, "text/markdown")})
-    assert r.status_code == 200 and 'class="warnbox"' in r.text
+    assert r.status_code == 200 and 'class="warnbox"' in as_written(r.text)
     assert "over the" in r.text and "import limit" in r.text
     assert seen == {} and not _FakeP7LLM.calls  # never converted, never sent to the model
     r = client.post("/api/documents/import", data={"track": "employment"},
@@ -520,12 +522,12 @@ def test_web_import_conversion_errors_render_as_a_warnbox_never_a_500(monkeypatc
     r = client.post("/api/documents/import", data={"track": "employment"},
                     files={"file": ("resume.rtf", io.BytesIO(b"{\\rtf1 hi}"), "text/rtf")})
     assert r.status_code == 200
-    assert 'class="warnbox"' in r.text and "unsupported file type" in r.text
+    assert 'class="warnbox"' in as_written(r.text) and "unsupported file type" in r.text
     assert not _FakeP7LLM.calls  # nothing was sent to the model
     # Corrupt docx.
     r = client.post("/api/documents/import", data={"track": "employment"},
                     files={"file": ("bad.docx", io.BytesIO(b"not a zip"), "application/zip")})
-    assert r.status_code == 200 and 'class="warnbox"' in r.text
+    assert r.status_code == 200 and 'class="warnbox"' in as_written(r.text)
     # .doc without LibreOffice.
     monkeypatch.setattr(convert.shutil, "which", lambda _name: None)
     r = client.post("/api/documents/import", data={"track": "employment"},
@@ -571,3 +573,160 @@ def test_fixtures_are_fictional():
         assert "Jordan Rivera" in md
         assert "Northwind Freight" in md and "Cascade Regional Health" in md
     assert os.path.getsize(FIXTURES / "sample.docx") < 100_000
+
+
+# ------------------------------------------------- line wraps never split a bullet (issue #208)
+_WRAP_HEAD = "Moved fleet scheduling for the ferry line onto one shared booking platform"
+_WRAP_TAIL = "Harbor Operations across three ports, saving twelve hours a week."
+
+
+def _docx_with_soft_breaks() -> bytes:
+    import docx
+
+    d = docx.Document()
+    p = d.add_paragraph(_WRAP_HEAD, style="List Bullet")
+    p.add_run().add_break()  # Shift+Enter: one paragraph, two lines
+    p.add_run(_WRAP_TAIL)
+    d.add_paragraph("Earlier Roles", style="Heading 2")
+    p = d.add_paragraph("Dispatcher, Gullwing Ports;", style="Normal")
+    p.add_run().add_break()
+    p.add_run("Systems Support covering forty desks")
+    p = d.add_paragraph("Larkspur Ferries | Bend, OR", style="Normal")
+    p.add_run().add_break()
+    p.add_run("Terminal Lead | 2019 to 2023")  # a header block's own break is kept
+    p = d.add_paragraph("Ran the crane rota for", style="Normal")
+    p.add_run().add_break()
+    p.add_run("Pier Operations")  # an open ending outside a list: kept as two lines too
+    buf = io.BytesIO()
+    d.save(buf)
+    return buf.getvalue()
+
+
+def test_a_docx_bullet_with_a_soft_line_break_imports_as_one_bullet(monkeypatch):
+    md = convert_to_markdown(_docx_with_soft_breaks(), filename="r.docx").markdown
+    assert f"- {_WRAP_HEAD} {_WRAP_TAIL}" in md.splitlines()
+    # Outside a list paragraph a soft break is kept as written (round 7): only Word's own list
+    # structure says two lines are one item, never the words.
+    assert "Dispatcher, Gullwing Ports;\nSystems Support covering forty desks" in md
+    assert "Larkspur Ferries | Bend, OR\nTerminal Lead | 2019 to 2023" in md
+    assert "Ran the crane rota for\nPier Operations" in md
+    # Through the real import route: what the operator reviews has the one bullet, and the
+    # model is sent that text.
+    client = _import_client(monkeypatch)
+    r = client.post(
+        "/api/documents/import",
+        data={"track": "employment", "doc_kind": "resume", "text": ""},
+        files={"file": ("r.docx", _docx_with_soft_breaks(),
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+    )
+    assert r.status_code == 200
+    assert f"- {_WRAP_HEAD} {_WRAP_TAIL}" in r.text
+    sent = _FakeP7LLM.calls[0]["user"]
+    assert f"\n[1] - {_WRAP_HEAD[:40]}" in sent  # the bullet is one numbered line
+    assert "] Harbor Operations" not in sent  # its tail never starts a line of its own
+    assert "\n[3] Dispatcher, Gullwing Ports;\n[4] Systems Support covering forty desks" in sent
+
+
+def test_a_full_width_bullet_never_swallows_a_heading_or_an_employer_line(monkeypatch):
+    class _Page:
+        def __init__(self, text):
+            self._t = text
+
+        def extract_text(self, **_kw):
+            return self._t
+
+    class _Reader:
+        is_encrypted = False
+
+        def __init__(self, _fh):
+            self.pages = [_Page(PAGE)]
+
+    PAGE = "\n".join([
+        "\u2022 Rebuilt the weekly freight reporting stack for the regional planning desk",
+        "EDUCATION",
+        "\u2022 Rebuilt the weekly freight reporting stack for the regional planning desk",
+        "Gullwing Freight Lines, Tacoma, WA",
+    ])
+    import pypdf
+
+    monkeypatch.setattr(pypdf, "PdfReader", _Reader)
+    lines = convert_to_markdown(b"%PDF-fake", filename="r.pdf").markdown.splitlines()
+    assert "EDUCATION" in lines and "Gullwing Freight Lines, Tacoma, WA" in lines
+
+
+def test_a_word_contact_header_keeps_its_line_breaks():
+    import docx
+
+    d = docx.Document()
+    p = d.add_paragraph("Rowan Ellery", style="Normal")
+    p.add_run().add_break()
+    p.add_run("rowan@example.com | www.example.com")
+    buf = io.BytesIO()
+    d.save(buf)
+    md = convert_to_markdown(buf.getvalue(), filename="r.docx").markdown
+    assert "Rowan Ellery\nrowan@example.com | www.example.com" in md
+
+
+def _pdf_lines(runs):
+    return convert_to_markdown(make_pdf(runs), filename="r.pdf").markdown.splitlines()
+
+
+# ------------------------------------- wrapped PDF lines are never joined (D-SCORE-31, round 7)
+# Neither the words (case, punctuation, an open ending) nor the layout (alignment, width, weight)
+# can prove a wrap: two review rounds found silent merges that wrote into the person's bullets
+# (hard rule 2). So a PDF line is never joined to the bullet above; the person joins a real wrap
+# in review. Each case below is one the earlier rules joined, or nearly did.
+NO_JOIN_CASES = [
+    # Round 4/5: lowercase-starting company lines under a bullet with no closing stop.
+    ("Built the payments platform", "eBay Inc., San Jose, CA"),
+    ("Built the payments platform", "iPhone and iPad team, Cupertino, CA"),
+    ("Built the payments platform", "iOS Platform Group, Remote"),
+    # Open endings with a capitalized tail (rounds 1 to 3 joined these).
+    ("Cut cloud spend 30% by consolidating vendors for", "Harbor Freight Logistics."),
+    ("Built deployment pipelines in Python, Go,", "Kubernetes and Terraform."),
+    ("Ran the migration between 2021 and", "2023 Q4."),
+    # A lowercase continuation after an unfinished bullet (the base rule joined it).
+    ("Moved billing to the shared ledger", "to cut month-end close to two days."),
+    # Round 6 review, probes C and D: a heading and a glyph-less sub-item in the same font.
+    ("Rebuilt the weekly freight reporting stack for the regional planning desk", "Education"),
+    ("Rebuilt the weekly freight reporting stack for the regional planning desk",
+     "Cut month-end close to two days"),
+]
+
+
+@pytest.mark.parametrize("words, tail", NO_JOIN_CASES)
+def test_a_line_under_a_pdf_bullet_is_never_joined_to_it(words, tail):
+    want = [f"- {words}", tail]
+    edge = [margin(84, 740, words)]  # another line as wide as the bullet's: a full line
+    # Under the bullet's words, one line lower, same size and weight, after a full line: the
+    # strongest layout a wrap can have, and still two lines.
+    assert _pdf_lines(edge + bullet(72, 700, words) + [(84, 688, tail)])[1:] == want
+    # At the margin, after a short line, and in bold: two lines as well.
+    assert _pdf_lines(bullet(72, 700, words) + [(72, 688, tail)]) == want
+    assert _pdf_lines(bullet(72, 700, words) + [(84, 688, tail)]) == want
+    assert _pdf_lines(edge + bullet(72, 700, words) + [(84, 688, tail, 10, True)])[1:] == want
+
+
+def test_a_justified_line_is_never_measured_into_a_join():
+    """Round 6 review, probe A2: word spacing (Tw) made a short line look full. With no join
+    at all, word spacing cannot cause one."""
+    words = "Cut cloud spend by consolidating vendors for"
+    runs = [margin(84, 740, words + " the regional desk")] + bullet(72, 700, words)
+    runs += [(84, 688, "Harbor Freight Logistics")]
+    assert _pdf_lines(runs)[1:] == [f"- {words}", "Harbor Freight Logistics"]
+
+
+def test_a_bullet_wrapped_over_three_lines_stays_three_lines_and_the_words_are_kept():
+    words = "Moved fleet scheduling for the ferry line onto"
+    tail = ["one shared booking platform for the Harbor", "Operations at three ports"]
+    runs = [margin(84, 740, words)] + bullet(72, 700, words)
+    runs += [(84, 688, tail[0]), (84, 676, tail[1]), (72, 664, "Gullwing Ports, Tacoma, WA")]
+    assert _pdf_lines(runs)[1:] == [f"- {words}", *tail, "Gullwing Ports, Tacoma, WA"]
+
+
+def test_the_pdf_warning_says_a_wrapped_bullet_arrives_as_two_lines():
+    words = "Moved billing to the shared ledger"
+    r = convert_to_markdown(make_pdf(bullet(72, 700, words) + [(84, 688, "to cut close")]),
+                            filename="r.pdf")
+    assert any("arrives as two lines; join them in review" in w for w in r.warnings)
+    assert "\u2014" not in " ".join(r.warnings)

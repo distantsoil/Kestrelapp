@@ -40,15 +40,32 @@
   var current = 'computer';
   var shown = false;
 
+  /* One reload per pane at a time (D-UI-860). The pane itself is the request's source: without
+     one, htmx files every reload under the page body, where a later Settings load replaces a
+     queued one and the promise settles before the request is even sent. A save answered while
+     a reload is on its way asks for another: the reload in flight was rendered before that save,
+     so a fresh one follows once it lands (htmx would queue it on the pane it is about to replace
+     and then drop it, leaving the older render on screen). */
+  var reloading = {};
   function refreshPane(pane, then) {
+    var busy = reloading[pane];
+    if (busy) { busy.again = true; if (then) busy.thens.push(then); return; }
     var el = $('#st-pane-' + pane);
     if (!el || !root.htmx) return;
     var url = '/settings/section/' + pane;
     var track = $('[data-testid^="st-track-"].is-on', el);
     if (track) url += '?track=' + track.getAttribute('data-testid').replace('st-track-', '');
-    root.htmx.ajax('GET', url, { target: '#st-pane-' + pane, swap: 'outerHTML' }).then(function () {
-      if (then) then();
-    });
+    busy = reloading[pane] = { again: false, thens: then ? [then] : [] };
+    var landed = function () {
+      reloading[pane] = null;
+      if (busy.again) {
+        refreshPane(pane, function () { busy.thens.forEach(function (fn) { fn(); }); });
+      } else {
+        busy.thens.forEach(function (fn) { fn(); });
+      }
+    };
+    root.htmx.ajax('GET', url, { source: el, target: el, swap: 'outerHTML' })
+      .then(landed, landed);
   }
 
   /* A message from a save, with an Undo that asks the server to put back exactly that change and
@@ -94,7 +111,7 @@
   }
 
   /* ---------------------------------------------------------------------------- the section */
-  var SECTIONS = ['computer', 'roles', 'scoring', 'privacy', 'data', 'preferences'];
+  var SECTIONS = ['computer', 'roles', 'scoring', 'privacy', 'extension', 'data', 'preferences'];
   // Old links keep working: #system, #hosted, #applied ... open the section that holds it now.
   var LEGACY = {
     system: ['computer'], hosted: ['computer', 'st-mode'], models: ['computer', 'st-chk'],
@@ -334,10 +351,45 @@
     }
   }
 
+  /* The install ID's Copy buttons (D-INST-1): the person's own copy is the only way the ID
+     leaves this computer (D-INST-2). "Copied" and a short pulse (install_id.css), then the label
+     comes back; reduced motion turns the pulse off. */
+  function copyTarget(button) {
+    var src = doc.getElementById(button.getAttribute('data-copy-target'));
+    if (!src) return;
+    if (!button.getAttribute('data-label')) button.setAttribute('data-label', button.textContent);
+    var label = button.getAttribute('data-label');
+    var c = cx;
+    var done = function () {
+      if (!c) return;
+      button.textContent = 'Copied';
+      button.classList.remove('is-copied');
+      void button.offsetWidth;
+      button.classList.add('is-copied');
+      // Said to a screen reader too: the button's new text alone is not announced.
+      var box = button.closest('.k-iid');
+      var said = box && box.querySelector('[data-iid-said]');
+      if (said) { said.textContent = ''; said.textContent = 'Copied'; }
+      c.after(1400, function () {
+        button.textContent = label;
+        button.classList.remove('is-copied');
+        if (said) said.textContent = '';  // no stale "Copied" for a screen reader to find later
+      });
+    };
+    var refused = function () { toast('Could not copy. Select the ID and copy it.'); };
+    try {
+      var p = root.navigator.clipboard.writeText(src.textContent.trim());
+      if (p && p.then) p.then(done, refused);
+      else done();
+    } catch (e) { refused(); }
+  }
+
   /* Segmented controls and tiles that save as they are pressed. */
   function onClick(e) {
     var t = e.target;
     if (!t || !t.closest) return;
+    var cp = t.closest('.k-iid [data-copy-target]');
+    if (cp) { copyTarget(cp); return; }
     var seg = t.closest('[data-st-ui-seg]');
     if (seg) {
       var b = t.closest('button');
@@ -415,6 +467,8 @@
       t.closest('#st-key-show').textContent = shown ? 'Show' : 'Hide';
       return;
     }
+    var xk = t.closest('[data-st-xkey-copy]');
+    if (xk) { copyKey(xk); return; }
     var cp = t.closest('[data-st-copy]');
     if (cp) { copy(cp.getAttribute('data-st-copy')); return; }
     if (t.closest('[data-st-backup]')) { backup(t.closest('[data-st-backup]')); return; }
@@ -475,6 +529,37 @@
       if (p && p.then) p.then(function () { toast('Address copied.'); });
       else toast('Address copied.');
     } catch (e) { toast('Could not copy. Select the address and copy it.'); }
+  }
+
+  /* Copy key (Browser extension): the key is never in the page. Kestrel hands it over on the
+     press (this computer only), making one only if there is none, and the note beside the button
+     says Copied for a moment. */
+  var copySeq = 0;
+  function copyKey(btn) {
+    var note = $('[data-testid="xt-copied"]');
+    function tell(text, bad) {
+      if (!note) return;
+      var mine = ++copySeq;
+      note.textContent = text;
+      note.classList.toggle('is-bad', !!bad);
+      note.classList.remove('is-on');
+      void note.offsetWidth;
+      note.classList.add('is-on');
+      cx.after(bad ? 4000 : 1800, function () { if (mine === copySeq) note.classList.remove('is-on'); });
+    }
+    btn.disabled = true;
+    post('/settings/extension/key', {}).then(function (res) {
+      btn.disabled = false;
+      if (!res || !res.ok || !res.key) { tell((res && res.message) || 'Could not copy.', true); return; }
+      var field = $('[data-testid="xt-keyfield"]');
+      if (field && !field.value) field.value = new Array(21).join('\u2022');
+      var done = function () { tell('Copied'); };
+      var fail = function () { tell('Could not copy.', true); };
+      try {
+        var p = root.navigator.clipboard.writeText(res.key);
+        if (p && p.then) p.then(done, fail); else done();
+      } catch (e) { fail(); }
+    });
   }
 
   function applyTextSize(v) {
@@ -905,6 +990,8 @@
     ['Confidential mode (hide employer)', 'privacy', 'st-conf'],
     ['Access from other devices (phone, wifi, QR code)', 'privacy', 'st-access'],
     ['Connect an AI assistant (MCP, Claude Desktop)', 'privacy', 'st-mcp'],
+    ['Browser extension (Chrome, Firefox, connection key)', 'extension', 'st-xt-key'],
+    ['Extension switches (scores on job boards, toolbar count)', 'extension', 'st-xt-does'],
     ['Backups (download, restore)', 'data', 'st-backups'],
     ['Import past applications (csv, spreadsheet)', 'data', 'st-imp'],
     ['Your contacts (LinkedIn connections)', 'data', 'st-ct'],

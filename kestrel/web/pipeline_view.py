@@ -186,12 +186,15 @@ def near_floor(opp) -> bool:
 OLDER_TEXT = "Scored with older scoring instructions. Score again to refresh it."
 
 
-def warning_text(opp, ev, older: bool | None = None) -> str | None:
+def warning_text(opp, ev, older: bool | None = None,
+                 versions: dict[str, str] | None = None) -> str | None:
     """The one tooltip behind a row's single warning icon, or None for a healthy row (a healthy
     row carries no badges). Ghost score, legitimacy, a needs-review divergence, liveness and an
     out-of-date score, in that order of how much they change what the operator does. `older` is
     `kestrel.learning.score_age`'s answer for the role (issue 179, D-SCORE-4), which reads the
-    corrections; None decides from the prompt version alone, as if no correction bore on it."""
+    corrections; None decides from the prompt version alone, as if no correction bore on it,
+    using `versions` (`score_age.effective_versions`, read once per request). With neither, no
+    older mark is claimed: this never reads the settings from inside a row (round 6)."""
     parts: list[str] = []
     legit = getattr(ev, "legitimacy", None) if ev is not None else None
     status = legit.get("status") if isinstance(legit, dict) else None
@@ -209,10 +212,11 @@ def warning_text(opp, ev, older: bool | None = None) -> str | None:
         parts.append("The model and your past ratings disagree on this one. Worth a second look.")
     if getattr(opp, "liveness", None) == "closed":
         parts.append("This posting looks closed.")
-    if older is None:
-        from kestrel.learning.score_age import is_older
+    if older is None and versions is not None:
+        from kestrel.learning.score_age import is_older, pinned
 
-        older = is_older(opp, ev)
+        with pinned(versions):
+            older = is_older(opp, ev)
     if older:
         parts.append(OLDER_TEXT)
     return " ".join(parts) or None
@@ -439,11 +443,95 @@ def ring_tone(word: str | None) -> str:
     return "good" if word in ("strong fit", "good fit") else "warn"
 
 
+# Where Kestrel found a role (the source pill on a Pipeline row), from the source that brought
+# it in, never from the posting's link: a pasted Indeed link was pasted, not found on Indeed.
+# A JobSpy search names its board per row (raw["site"]). A kind not listed shows no pill.
+_JOBSPY_SITES = {
+    "indeed": "Indeed", "glassdoor": "Glassdoor", "google": "Google Jobs",
+    "zip_recruiter": "ZipRecruiter", "bayt": "Bayt", "naukri": "Naukri",
+}
+_SOURCE_WORDS = {
+    "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby", "workday": "Workday",
+    "smartrecruiters": "SmartRecruiters", "rippling": "Rippling", "adp": "ADP",
+    "paylocity": "Paylocity", "workable": "Workable", "recruitee": "Recruitee",
+    "teamtailor": "Teamtailor", "personio": "Personio", "breezy": "Breezy HR",
+    "jobvite": "Jobvite", "usajobs": "USAJobs", "adzuna": "Adzuna",
+    "himalayas": "Himalayas", "weworkremotely": "We Work Remotely", "jobicy": "Jobicy",
+    "arbeitnow": "Arbeitnow", "fourdayweek": "4 Day Week", "hn_hiring": "Hacker News",
+    "remoterocketship": "RemoteRocketship", "remotive": "Remotive",
+    "careers_page": "Company site", "rss": "Feed", "pe_portfolio": "Portfolio page",
+    "sec_edgar": "SEC filing", "sam_gov": "SAM.gov",
+    "manual": "Pasted", "import": "Imported", "page": "Single page",
+}
+# Who sent a posting without its description, as the subject of a sentence. A role you pasted
+# or imported was not sent by anyone, so it has none (empty_reason words that case itself).
+_SENDERS = {"careers_page": "The company's site", "rss": "The feed",
+            "pe_portfolio": "The portfolio page"}
+_NOT_SENT = ("manual", "import", "page")
+
+
+def source_word(kind: str | None, site: str | None = None) -> str | None:
+    """The pill's word for where Kestrel found a role: the board for a job board search, the
+    platform for a company board, "Pasted" for a capture, None when it is not known."""
+    if kind == "jobspy":
+        return _JOBSPY_SITES.get((site or "").lower(), "Job board")
+    return _SOURCE_WORDS.get(kind or "")
+
+
+def empty_reason(kind: str | None, site: str | None = None) -> str:
+    """The sentence after "The posting has no description." for a role with none: who sent it
+    that way, true and grammatical for every source."""
+    if kind in _NOT_SENT or kind is None:
+        return "It was saved without one, so there is nothing to score."
+    if kind == "jobspy":
+        board = _JOBSPY_SITES.get((site or "").lower())
+        sender = board or "The job board"
+    else:
+        sender = _SENDERS.get(kind) or _SOURCE_WORDS.get(kind) or "The source"
+    return f"{sender} sent it without one, so there is nothing to score."
+
+
+def blocked_note(kind: str | None) -> str | None:
+    """The "may have been blocked" sentence for a role with no description, from a search board
+    only (issue 182). General wording, never a claim; the role stays visible."""
+    from kestrel.ingest.empty_bodies import role_note
+
+    return role_note(kind)
+
+
+async def attach_sources(session, rows: list) -> None:
+    """Set `source_kind` and `source_site` on list rows in one statement (the list query defers
+    `raw`, so the JobSpy board is read here). Read only."""
+    from sqlalchemy import func, select
+
+    from kestrel.db.models import Opportunity, Source
+
+    ids = [r.opp.id for r in rows]
+    if not ids:
+        return
+    got = {
+        int(oid): (kind, site)
+        for oid, kind, site in (
+            await session.execute(
+                select(Opportunity.id, Source.kind, func.json_extract(Opportunity.raw, "$.site"))
+                .join(Source, Source.id == Opportunity.source_id, isouter=True)
+                .where(Opportunity.id.in_(ids))
+            )
+        ).all()
+    }
+    for r in rows:
+        r.source_kind, r.source_site = got.get(r.opp.id, (None, None))
+
+
 def row_view(r) -> dict[str, Any]:
     """The parts of one list row a template prints, from a queries.OppRow."""
     o = r.opp
     org = r.org_name or o.org_name
     return {
+        "source": source_word(getattr(r, "source_kind", None), getattr(r, "source_site", None)),
+        "empty_why": empty_reason(getattr(r, "source_kind", None),
+                                  getattr(r, "source_site", None)),
+        "blocked_note": blocked_note(getattr(r, "source_kind", None)),
         "org": org,
         "mono": monogram(org),
         "found": found_age(o),
@@ -451,7 +539,7 @@ def row_view(r) -> dict[str, Any]:
         "estimate": is_estimate(o),
         "place": place_text(o),
         "value": engagement_value(o, r.ev),
-        "warn": warning_text(o, r.ev, getattr(r, "older", None)),
+        "warn": warning_text(o, r.ev, getattr(r, "older", None), getattr(r, "versions", None)),
         "near_floor": near_floor(o),
     }
 

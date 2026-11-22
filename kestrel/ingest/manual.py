@@ -38,6 +38,19 @@ def _title_from(text: str | None, url: str | None) -> str | None:
     return url
 
 
+# The one place captured content is cut to size (D-EXT-777, D-SEC-20): every caller (the capture
+# route the browser extension posts to, the MCP ingest tool, the applied-roles import) passes
+# through manual_ingest, so the limits hold whichever door the text came in by. Overlong values are
+# cut, never refused; a value that is not text is dropped.
+TEXT_MAX = 40000
+URL_MAX = 2048
+NAME_MAX = 500
+
+
+def cut(value: object, limit: int) -> str | None:
+    return value[:limit] if isinstance(value, str) else None
+
+
 async def manual_ingest(
     session: AsyncSession,
     *,
@@ -49,12 +62,14 @@ async def manual_ingest(
 ) -> Opportunity | None:
     """Create (or re-see) one opportunity from a captured page and enqueue its embed. Returns the
     opportunity, or None if there is neither a url nor text to work with."""
+    url, text = cut(url, URL_MAX), cut(text, TEXT_MAX)
+    title, org_name = cut(title, NAME_MAX), cut(org_name, NAME_MAX)
     if not (url or text):
         return None
     if track not in ("employment", "consulting"):
         track = "employment"
     source = await _manual_source(session, track)
-    external_id = url or "manual:" + hashlib.sha1((text or "").encode("utf-8")).hexdigest()[:16]
+    external_id = url or "manual:" + hashlib.sha1((text or "").encode("utf-8")).hexdigest()[:16]  # noqa: S324  content id, not a security hash
     raw = RawPosting(
         external_id=external_id,
         url=url,

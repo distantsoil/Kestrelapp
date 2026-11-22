@@ -32,7 +32,17 @@ from typing import Any
 import httpx
 import structlog
 
-from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
+from kestrel.ingest.base import (
+    AdapterError,
+    Notice,
+    PostingBatch,
+    Problem,
+    RawPosting,
+    SourceConfigError,
+    hedged_problem,
+    rate_limited_problem,
+    server_error_problem,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -85,7 +95,7 @@ class RemotiveAdapter:
             message = _problem(r.status_code)
             if r.status_code in (403, 429) or r.status_code >= 500:
                 batch = PostingBatch()
-                batch.partial_error = message
+                batch.add(Notice.of(message))
                 return batch
             raise AdapterError(message)
 
@@ -119,16 +129,15 @@ class RemotiveAdapter:
 
 
 def _problem(status: int) -> str:
-    if status in (403, 429):
-        return (
-            "Remotive's rate limit was reached (it advises at most 4 fetches a day); "
-            "the next check tries again"
-        )
+    if status == 429:
+        return rate_limited_problem("Remotive", status)
+    if status == 403:
+        return hedged_problem("Remotive", status)
     if status >= 500:
-        return "Remotive had a problem on their side; the next check tries again"
+        return server_error_problem("Remotive", status)
     if status in (400, 404):
-        return "Remotive rejected the request; the API may have moved"
-    return f"Remotive answered with an unexpected status ({status})"
+        return Problem("Remotive rejected the request; the API may have moved", status)
+    return Problem(f"Remotive answered with an unexpected status ({status})", status)
 
 
 def _map_job(job: dict[str, Any]) -> RawPosting | None:

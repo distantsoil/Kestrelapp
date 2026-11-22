@@ -626,7 +626,10 @@ class _ImportFake:
 
     def __init__(self, outline=_OUTLINE, settings=None, http=None, **_):
         self.outline = outline if isinstance(outline, dict) else _OUTLINE
-        self.settings = settings
+        # Built as the route builds the real client, `LLMClient(settings, http=...)`, the first
+        # argument is the settings: the fake keeps them, because the import now decides what
+        # hides the employer from the client that sends (issue #218, D-PRIV-800).
+        self.settings = settings if isinstance(outline, dict) or settings else outline
 
     async def complete(self, *, tier, messages, schema=None, schema_name="", **kw):
         from kestrel.llm.client import ChatResult

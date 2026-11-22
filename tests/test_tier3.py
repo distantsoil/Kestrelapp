@@ -104,7 +104,8 @@ async def test_missing_api_key_makes_preview_unavailable_and_blocks_send(sm, mon
     async with sm() as s:
         preview = await tier3.build_escalation_preview(s, settings, oid)
         assert preview.unavailable and "OpenRouter key" in preview.unavailable
-        assert "Settings > Hosted" in preview.unavailable and ".env" not in preview.unavailable
+        assert "Settings > This computer" in preview.unavailable
+        assert ".env" not in preview.unavailable
         client = _RecordingClient(settings, forbid_calls=True)
         res = await tier3.transmit_escalation(
             s, client, settings, oid, confirmation_token=preview.confirmation_token

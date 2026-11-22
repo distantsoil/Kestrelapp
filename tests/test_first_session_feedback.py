@@ -15,6 +15,7 @@ from httpx import Response
 
 from kestrel.config import get_settings
 from kestrel.llm.client import LLMClient, ModelDeclined, chat_stop_problem
+from tests.page_source import as_written
 
 ROOT = Path(__file__).resolve().parents[1]
 OR_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -280,7 +281,7 @@ def test_read_step_shows_the_text_and_a_processing_step_that_starts_on_load(monk
                     data={"track": "employment", "doc_kind": "resume", "text": ""},
                     files={"file": ("cv.md", SAMPLE_MD.encode(), "text/markdown")})
     assert r.status_code == 200
-    html = r.text
+    html = as_written(r.text)
     assert 'data-testid="import-extracted"' in html and "cv.md" in html
     assert 'class="import-result"' in html
     form = html.split('class="import-processing"')[1].split("</form>")[0]
@@ -304,7 +305,7 @@ def test_a_failed_proposal_offers_a_retry_on_the_same_text(monkeypatch):
                     data={"track": "employment", "doc_kind": "resume", "text": SAMPLE_MD,
                           "filename": "cv.md", "source_format": "md", "extracted_shown": "1"})
     assert r.status_code == 200
-    html = r.text
+    html = as_written(r.text)
     assert 'data-testid="import-error"' in html and "max_tokens 12000" in html
     assert 'data-testid="import-extracted"' not in html  # step one already showed it
     retry = html.split('class="import-processing"')[1].split("</form>")[0]
@@ -315,12 +316,12 @@ def test_a_failed_proposal_offers_a_retry_on_the_same_text(monkeypatch):
 
 def test_import_form_posts_to_the_read_step_and_long_requests_skip_the_busy_cursor():
     tpl = ROOT / "kestrel" / "web" / "templates"
-    docs = (tpl / "partials" / "documents_body.html").read_text(encoding="utf-8")
+    docs = as_written((tpl / "partials" / "documents_body.html").read_text(encoding="utf-8"))
     form = docs.split('id="import-form"')[1].split(">")[0]
     assert 'hx-post="/api/documents/import/read"' in form and "data-no-busy" in form
     assert 'id="import-proposal" class="import-result"' in docs
     assert "htmx:xhr:progress" in docs and "Uploading" in docs and "Reading" in docs
-    base = (tpl / "base.html").read_text(encoding="utf-8")
+    base = as_written((tpl / "base.html").read_text(encoding="utf-8"))
     assert "closest('[data-no-busy], [data-busy-text]:not([data-busy-text=\"\"])')" in base
 
 

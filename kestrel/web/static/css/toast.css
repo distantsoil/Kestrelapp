@@ -1,0 +1,41 @@
+/* The scan toast and the scan button's pulse, from templates/partials/toast.html (moved out of
+   an inline style element for the Content-Security-Policy, D-INST-8). Linked after every page sheet,
+   where the inline block sat (at the end of <body>), so it wins the same ties. */
+/* One toast look (D-UI-187, the surfaces design): the scan toast sits in the shared
+   bottom region (#k-toasts, kestrel-ui.js) and wears the same green chip as every toast. */
+#kestrel-toast { pointer-events: auto; display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px 10px 16px; max-width: min(92vw, 520px);
+  background: var(--toast-bg); color: var(--toast-ink); border-radius: 12px; font-weight: 700;
+  box-shadow: var(--shadow-pop); font-size: var(--fs-md);
+  transform: translateY(220%); visibility: hidden;
+  transition: transform .38s var(--ease), visibility 0s .38s; }
+#kestrel-toast[data-show] { transform: none; visibility: visible;
+  transition: transform .38s var(--ease), visibility 0s; }
+#kestrel-toast[data-tone="warn"] { background: var(--warn-bg); color: var(--warn-ink); }
+#kestrel-toast:has(a[data-toast-text][href]) { cursor: pointer; }
+#kestrel-toast [data-toast-text] { color: inherit; text-decoration: none; }
+#kestrel-toast a[data-toast-text][href]:hover,
+#kestrel-toast a[data-toast-text][href]:focus-visible { text-decoration: underline; }
+#kestrel-toast[hidden] { display: none; }
+#kestrel-toast [data-toast-close] { border: 0; background: var(--wash); color: inherit;
+  border-radius: 7px; font-size: 16px; line-height: 1; cursor: pointer; padding: 3px 8px; }
+#kestrel-toast [data-toast-close]:hover { filter: brightness(1.15); }
+#scan-btn { display: inline-flex; align-items: center; gap: 8px; }
+#scan-btn [data-scan-msg] { color: var(--muted); }
+#scan-btn [data-state="scanning"] { border-color: var(--accent); color: var(--accent-deep);
+  animation: scan-glow 2.2s ease-in-out infinite; }
+#scan-btn [data-state="scanning"] [data-label="cancel"] { display: none; }
+#scan-btn [data-state="scanning"]:hover, #scan-btn [data-state="scanning"]:focus-visible {
+  animation: none; border-color: var(--bad); color: var(--bad); }
+#scan-btn [data-state="scanning"]:hover [data-label="busy"],
+#scan-btn [data-state="scanning"]:focus-visible [data-label="busy"] { display: none; }
+#scan-btn [data-state="scanning"]:hover [data-label="cancel"],
+#scan-btn [data-state="scanning"]:focus-visible [data-label="cancel"] { display: inline; }
+@keyframes scan-glow {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-tint); opacity: .78; }
+  50% { box-shadow: 0 0 0 4px var(--accent-tint), 0 0 10px 1px var(--accent); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #kestrel-toast { transition: none; }
+  #scan-btn [data-state="scanning"] { animation: none; box-shadow: 0 0 0 3px var(--accent-tint); }
+}

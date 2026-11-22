@@ -65,8 +65,8 @@ Requirements: a domain on Cloudflare DNS (any registrar; the free plan is enough
    made on that start. The key check is implemented and tested against a simulated tunnel request; verifying it against a live tunnel
    is operator-required, so test one POST from the phone before trusting it.
 5. Open the hostname on your phone, enter the PIN from your email, then give Kestrel the shared
-   secret once: open `https://kestrel.yourdomain.com/auth?key=YOUR-KEY` (the key is shown under
-   Settings > LAN). The browser stores it as a cookie and the phone is in until the cookie is
+   secret once: open `https://kestrel.yourdomain.com/auth?key=YOUR-KEY` (Copy key under
+   Settings > Browser extension copies it). The browser stores it as a cookie and the phone is in until the cookie is
    cleared.
 
 ### Gotchas

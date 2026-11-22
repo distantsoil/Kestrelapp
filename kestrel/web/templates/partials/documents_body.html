@@ -24,8 +24,8 @@ out by position, so check the extracted text before accepting.</p>
     <label for="import-file">File</label>
     <input id="import-file" type="file" name="file" accept=".md,.txt,.pdf,.docx,.doc">
   </div>
-  <p class="muted" style="margin:.5rem 0 0">Or paste markdown (a chosen file takes precedence):</p>
-  <textarea name="text" rows="8" style="width:100%; margin:.5rem 0" placeholder="Paste here…"></textarea>
+  <p class="muted u-m-05-0-0">Or paste markdown (a chosen file takes precedence):</p>
+  <textarea name="text" rows="8" class="u-w-100p u-m-05-0" placeholder="Paste here…"></textarea>
   <button class="btn" type="submit">Propose import</button>
   <div class="import-status" role="status" aria-live="polite" data-testid="import-reading">
     <span class="spin" aria-hidden="true"></span><span class="import-stage">Uploading…</span>
@@ -33,55 +33,7 @@ out by position, so check the extracted text before accepting.</p>
 </form>
 <div id="import-proposal" class="import-result"></div>
 </section>
-<script>
-  // Import status (D-IMPORT-2). Step one reports Uploading with a percentage, then Reading once
-  // the bytes are sent; step two (partials/import_processing.html) counts the seconds it has run.
-  // The listeners sit on this section, not on the document (D-UI-210): a request from inside it
-  // bubbles up through it, and a swap that brings a new section leaves nothing of the old one
-  // listening. Running this again for the same section replaces its set. The seconds counter
-  // stops by itself once its line has left the page.
-  (function () {
-    var form = document.getElementById('import-form');
-    var host = form.closest('#pf-import') || form;
-    var stage = form.querySelector('.import-stage');
-    if (host.kImport) host.kImport.abort();
-    var ac = host.kImport = new AbortController();
-    var sig = { signal: ac.signal };
-    form.addEventListener('htmx:beforeRequest', function () {
-      var f = form.querySelector('input[type=file]');
-      stage.textContent = (f && f.files && f.files.length) ? 'Uploading…' : 'Reading…';
-    }, sig);
-    form.addEventListener('htmx:xhr:progress', function (evt) {
-      var d = evt.detail;
-      if (!d || !d.lengthComputable || !d.total) return;
-      stage.textContent = d.loaded < d.total
-        ? 'Uploading… ' + Math.floor(100 * d.loaded / d.total) + '%'
-        : 'Reading the file and extracting its text…';
-    }, sig);
-    var timers = new WeakMap();
-    host.addEventListener('htmx:beforeRequest', function (evt) {
-      var el = evt.detail && evt.detail.elt;
-      if (!el || !el.classList || !el.classList.contains('import-processing')) return;
-      // One import at a time: a second click would orphan a billed call still running.
-      var btn = form.querySelector('button[type=submit]');
-      if (btn) btn.disabled = true;
-      var out = el.querySelector('.import-elapsed'), t0 = Date.now();
-      var tick = setInterval(function () {
-        if (!el.isConnected) { clearInterval(tick); timers.delete(el); return; }
-        if (out) out.textContent = Math.round((Date.now() - t0) / 1000) + ' s elapsed.';
-      }, 1000);
-      timers.set(el, tick);
-    }, sig);
-    host.addEventListener('htmx:afterRequest', function (evt) {
-      var el = evt.detail && evt.detail.elt;
-      if (el && timers.has(el)) {
-        clearInterval(timers.get(el)); timers.delete(el);
-        var btn = form.querySelector('button[type=submit]');
-        if (btn) btn.disabled = false;
-      }
-    }, sig);
-  })();
-</script>
+<script src="{{ static_url('js/partials/documents-body-1.js') }}"></script>
 {% endmacro %}
 
 <div class="pf-drow">
@@ -199,11 +151,17 @@ out by position, so check the extracted text before accepting.</p>
             <div class="pf-swatches" role="group" aria-labelledby="look-accent-l" data-pf-swatches>
               <input type="hidden" id="accent" name="accent" value="{{ 'custom' if accent_is_custom else (accent_saved or '') }}">
               <button type="button" class="pf-swatch pf-swatch--none{% if not accent_saved %} is-on{% endif %}" data-accent="" title="Layout default" aria-label="Layout default accent" aria-pressed="{{ 'false' if accent_saved else 'true' }}"></button>
-              {% for name, hex in accent_presets.items() %}<button type="button" class="pf-swatch{% if accent_saved == hex %} is-on{% endif %}" data-accent="{{ hex }}" title="{{ name }}" aria-label="{{ name }}" aria-pressed="{{ 'true' if accent_saved == hex else 'false' }}" style="--sw: {{ hex }}"></button>{% endfor %}
+              {% for name, hex in accent_presets.items() %}<button type="button" class="pf-swatch{% if accent_saved == hex %} is-on{% endif %}" data-accent="{{ hex }}" title="{{ name }}" aria-label="{{ name }}" aria-pressed="{{ 'true' if accent_saved == hex else 'false' }}" data-k-style="--sw: {{ hex }}"></button>{% endfor %}
               <label class="pf-swatch pf-swatch--custom{% if accent_is_custom %} is-on{% endif %}" title="Your own color"><span class="k-sr-only">Your own color</span>
                 <input type="color" id="accent_custom" name="accent_custom" value="{{ (accent_saved if accent_is_custom else '#1F3A5F') | lower }}"></label>
             </div>
             <small class="pf-hint">The accent colors the resume's headings and rules. It does not change Kestrel's own colors.</small>
+          </div>
+          <div class="pf-f" data-testid="doc-linkedin">
+            <span class="pf-check"><input id="show-linkedin" type="checkbox" name="show_linkedin" value="on"{% if (selected.look or {}).get('linkedin') != 'off' %} checked{% endif %}>
+              <label for="show-linkedin">Show my LinkedIn link in the contact line</label></span>
+            <input type="hidden" name="show_linkedin_sent" value="1">
+            <small class="pf-hint">Only when you have saved one under Profile. Applies to this document and its cover letters.</small>
           </div>
         </div>
         <span id="look-status" class="pf-look__status" aria-live="polite"></span>
@@ -254,38 +212,11 @@ out by position, so check the extracted text before accepting.</p>
               data-busy-text="Opening the model choice.">Assess this {{ "resume" if selected.doc_kind == "resume" else "capability statement" }}</button>
       <div id="assess-dialog-slot"></div>
       {% if assess_host %}
-      <span class="muted" data-testid="assess-hosted" style="flex-basis:100%">The assessment runs on
+      <span class="muted u-fb-100p" data-testid="assess-hosted">The assessment runs on
         your hosted model ({{ assess_host }}): it sends your resume text, every bullet, role
         title and date, to that provider.</span>
       {% endif %}
-      <script>
-        // The test render uses the layout, font and alignment chosen here, so the review
-        // matches the preview. Each control holds one set of listeners (D-UI-210): if this runs
-        // again for the same control, the earlier set ends first, so a swap never doubles them.
-        (function () {
-          var a = document.getElementById('test-render');
-          var ids = ['layout', 'font', 'header_align', 'accent', 'accent_custom'];
-          if (!a) return;
-          var base = a.getAttribute('href');
-          function sync() {
-            var href = base;
-            ids.forEach(function (id) {
-              var el = document.getElementById(id);
-              if (el && el.value) href += '&' + id + '=' + encodeURIComponent(el.value);
-            });
-            a.setAttribute('href', href);
-          }
-          ids.forEach(function (id) {
-            var el = document.getElementById(id);
-            if (!el) return;
-            if (el.kSync) el.kSync.abort();
-            var ac = el.kSync = new AbortController();
-            el.addEventListener('change', sync, { signal: ac.signal });
-            el.addEventListener('input', sync, { signal: ac.signal });
-          });
-          sync();
-        })();
-      </script>
+      <script src="{{ static_url('js/partials/documents-body-2.js') }}"></script>
     </div>
     <div id="assessment" data-testid="assessment"></div>
     {# One true-size page, scaled with a transform and never re-flowed, so it matches Enlarge

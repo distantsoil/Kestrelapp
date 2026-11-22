@@ -66,6 +66,11 @@ FAILED_WHY = "scoring failed"
 # names the max_tokens it ran into, and the loop is the truer reason.
 _FAILURE_WORDS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("leave no room for this posting",), "too long for your local model"),  # D-SCORE-21
+    (("no redaction map is configured",), "waiting for you to choose your current employer"),
+    (("hosted mode was turned off",), "online sending was turned off before this was sent"),
+    (("invalid confidential mode",),
+     "Kestrel could not read your privacy setting, so nothing was sent"),
+    (("safety classifier declined",), "the online service declined to answer"),
     (("generation loop", "degenerate", "repeated"), "the model repeated itself"),
     (("finish_reason: length", "finish_reason length", "max_tokens", "hit the cap"),
      "the reply ran out of room"),
@@ -74,6 +79,9 @@ _FAILURE_WORDS: tuple[tuple[tuple[str, ...], str], ...] = (
      "the reply was not in the expected shape"),
 )
 FAILURE_FALLBACK = "scoring did not finish"
+# Marks a quarantine row written for a scoring task that used up its tries (D-WORKER-5,
+# pipeline.deadletter): the reader names the cause the way the Stopped state does.
+DEAD_TASK_MARK = "[scoring task stopped after its tries] "
 
 # Hidden as applied before any model read it (issue #59): the applied-history import
 # (D-IMPORT-1) and a re-post of a role already applied for (SPEC.md 5.6). Tier 0 skips hidden
@@ -94,7 +102,9 @@ _REPOST = re.compile(r"Re-post of (pursuit|hidden opportunity) #(\d+)")
 SCORING_CHIPS: dict[str, tuple[str, str, str]] = {
     "not_queued": ("Waiting", "Kestrel has not reached this role. It scores on its own.", "wait"),
     "queued": ("Waiting", "Kestrel has not reached this role. It scores on its own.", "wait"),
-    "stuck": ("Stopped", "Scoring stopped before it finished. Score it again.", "wait"),
+    "stuck": ("Stopped",
+              "Scoring stopped again after Kestrel tried once more, so nothing will score it on "
+              "its own. Score it again.", "wait"),
     "held": ("Paused", "Its track is off, so it waits until you turn the track on.", "wait"),
     "background": ("Paused", "It waits for a free slot and scores when Kestrel is idle.", "wait"),
     "approval": ("Waiting for your OK",
@@ -109,6 +119,33 @@ SCORING_CHIPS: dict[str, tuple[str, str, str]] = {
                 "You took this off the list. It was not rejected. Undo to put it back in line.",
                 "final"),
     "failed": ("Scoring failed", "Scoring failed.", "final"),
+    # Set by kestrel.web.unscored.apply_holds: states that read Waiting before but that nothing
+    # scores until the person acts.
+    "dead": ("Stopped",
+             "Scoring gave up after three tries, so Kestrel moves it to Needs another try. Fix "
+             "the cause, then score it again.", "wait"),
+    "app_paused": ("Paused",
+                   "Kestrel is paused, so nothing is scored. Resume on Runs to score it.", "wait"),
+    "dead_final": ("Stopped",
+                   "Scoring gave up after three tries, and Kestrel will not try again on its own. "
+                   "Fix the cause, then score it again.", "wait"),
+    "maintenance": ("Paused",
+                    "Kestrel is restoring or resetting your data, so nothing is scored. Scoring "
+                    "starts again on its own when that finishes.", "wait"),
+    "credit": ("On hold: no credit",
+               "Your online model is out of credit. Nothing was sent. Add credit or choose "
+               "another model on Models.", "wait"),
+    "local_only": ("Paused",
+                   "Background roles score only on a local model, and scoring is online now. "
+                   "Choose local scoring on Models, or score it now.", "wait"),
+    # Set by apply_holds from the worker's preflight (D-WORKER-6): nothing is leased, so no try
+    # is spent, and scoring starts again on its own once the engine or model is back.
+    "engine_down": ("Paused",
+                    "Kestrel cannot reach the AI engine on this computer, so scoring waits. Make "
+                    "sure Ollama is open. Scoring starts again on its own.", "wait"),
+    "model_missing": ("Paused",
+                      "The model for this step is not installed, so scoring waits. Install it "
+                      "on Models and scoring starts again on its own.", "wait"),
 }
 
 
@@ -151,11 +188,26 @@ def hidden_unscored_why(opp: Any) -> str | None:
 
 def failure_words(error: str | None) -> str:
     """A quarantine row's error as the operator would say it (D-UI-56). Never empty."""
-    low = (error or "").lower()
+    from kestrel.llm.failure_kind import split_stored
+
+    low = split_stored(error)[1].lower()  # the stored kind line is typing, not a message
     for needles, words in _FAILURE_WORDS:
         if any(n in low for n in needles):
             return words
     return FAILURE_FALLBACK
+
+
+def failure_sentence(error: str | None) -> str:
+    """failure_words as a sentence (D-WORKER-9): a capital first letter and a full stop, since
+    the Pipeline row, its panel, the role page and the Runs card each print it as a sentence of
+    its own. A dead scoring task's row (DEAD_TASK_MARK) names the cause the way Stopped does."""
+    text = error or ""
+    if DEAD_TASK_MARK in text:
+        from kestrel.web.unscored import stopped_words
+
+        return stopped_words(text.split(DEAD_TASK_MARK, 1)[1])
+    words = failure_words(error)
+    return words[:1].upper() + words[1:] + ("" if words.endswith(".") else ".")
 
 # The scoring thresholds are apply at 4.0 and consider at 3.0 (kestrel/pipeline/scoring.py), so
 # "good fit" is an apply at the threshold and "strong fit" is well above it.
@@ -280,12 +332,75 @@ def forced_words(forced_by: str | None) -> str:
             add(_humanize(part))
     out: list[str] = []
     if phrases:
-        lead = "Capped by your rules" if known else "Adjusted by a rule"
+        # A blocker is the model's reading of the posting, checked against the operator's own
+        # data before it counted (D-SCORE-22): it is never the operator's rule (issue #208).
+        lead = "The model flagged" if known else "Adjusted by a rule"
         out.append(f"{lead}: {'; '.join(phrases)}.")
     # The posting-looks-suspect caps come from the legitimacy check, not from the operator's
     # rules, so they are worded apart from them.
     out.extend(("Also c" + w[1:]) if out else w for w in legit)
     return " ".join(out)
+
+
+# The blocker check's reasons (kestrel.pipeline.scoring.check_blockers), as the clause after
+# "but" in "The model flagged location, but the role is remote in your country, so it did not
+# count." Only reasons for a blocker that did not count appear here.
+_BLOCKER_KIND_WORDS = {
+    "comp": "pay", "rate": "the rate", "location": "location", "geography": "location",
+    "work_authorization": "work authorization", "other": "a dealbreaker",
+    "clearance": "a clearance", "licensure": "a license", "employment_type": "the employment type",
+    "duration": "the engagement length", "sector": "the sector", "capacity": "your capacity",
+    "conflict_of_interest": "a possible conflict",
+}
+_CHECK_REASONS = {
+    "band_reaches_floor": "the posted pay reaches your minimum",
+    "no_band": "the employer does not state a pay band",
+    "not_checkable": "Kestrel cannot check this against your profile",
+    "currency_unknown": "the posting does not say which currency the pay is in",
+    "willing_to_relocate": "you said you would relocate",
+    "remote_anywhere": "the role is remote and you did not limit remote work to any country",
+    "implausible": "the figure is too low to be a yearly salary, so Kestrel did not compare it",
+    "no_top": "the posting gives one figure, not a band, so its top is unknown",
+    "no_interval": "the posting does not say whether the pay is per day, hour or year",
+    "remote_not_chosen": "you did not ask for remote work, and that is a preference, not a rule",
+    "location_unknown": "the posting does not say where the role is",
+    "citizenship_required": "the posting asks for citizenship, which Kestrel cannot check",
+    "other_currency": "the pay is in another currency, so Kestrel could not compare it",
+    "no_floor": "you have not set a minimum",
+    "near_floor": "the top of the band is just under your minimum, within the margin you set",
+    "remote_in_allowed_country": "the role is remote in your country",
+    "onsite_place_matches": "the role is in a place you listed",
+    "remote_country_unknown": "the role is remote and the posting does not name the country",
+    "remote_type_unknown": "the posting does not say whether it is remote",
+    "no_onsite_places": "you have not listed places for on-site work",
+    "no_location_rules": "you have not set where you can work",
+    "no_sponsorship_needed": "you do not need sponsorship",
+    "sponsorship_not_stated": "the posting does not say it refuses sponsorship",
+}
+_NOT_COUNTED = ("contradicted", "needs_confirming")
+
+
+def blocker_lines(blockers: Any) -> list[dict[str, Any]]:
+    """The Worth checking rows for an evaluation's blockers (D-SCORE-22). A counted blocker shows
+    as before: its kind and the model's detail. One the check did not uphold leads with why it did
+    not count, then the model's own detail. Rows stored before the check counted then."""
+    rows: list[dict[str, Any]] = []
+    for bl in blockers or []:
+        if not isinstance(bl, dict):
+            continue
+        kind = str(bl.get("kind") or "other")
+        detail = str(bl.get("detail") or "")
+        label = kind.replace("_", " ").capitalize()
+        if bl.get("check") in _NOT_COUNTED:
+            words = _BLOCKER_KIND_WORDS.get(kind) or _humanize(kind)
+            reason = _CHECK_REASONS.get(str(bl.get("check_reason") or ""))
+            note = (f"The model flagged {words}, but {reason}, so it did not count." if reason
+                    else f"The model flagged {words}, but Kestrel could not confirm it, so it "
+                         "did not count.")
+            rows.append({"counted": False, "label": label, "note": note, "detail": detail})
+        else:
+            rows.append({"counted": True, "label": label, "note": "", "detail": detail})
+    return rows
 
 
 # Stripe/pill color per fit word: never green next to red in shade (the old keep/kill pills).

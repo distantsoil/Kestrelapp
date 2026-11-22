@@ -16,7 +16,7 @@
 {%- endmacro %}
 
 {% macro ring(score, pct, tone) -%}
-  <div class="pl-ring pl-ring--{{ tone }}" style="--p: {{ pct }}" data-p="{{ pct }}" role="img" aria-label="{{ '%.1f'|format(score) }} out of 5">
+  <div class="pl-ring pl-ring--{{ tone }}" data-k-style="--p: {{ pct }}" data-p="{{ pct }}" role="img" aria-label="{{ '%.1f'|format(score) }} out of 5">
     <div><div><b>{{ '%.1f'|format(score) }}</b><br><small>out of 5</small></div></div></div>
 {%- endmacro %}
 
@@ -108,7 +108,7 @@
       {% elif scoring == 'hidden' %}<span data-testid="panel-hidden-why">{{ hidden_why }} Kestrel does not score {{ w.roles }} you already applied for. Put it back to score it.</span>
       {% elif scoring == 'held' %}This track is switched off, so the role waits until you turn the track back on.
       {% elif scoring == 'background' %}This company-board role scores in the background when Kestrel is idle.
-      {% elif scoring == 'stuck' %}Scoring stopped before it finished. Score it again.
+      {% elif scoring in ('stuck', 'dead', 'dead_final', 'app_paused', 'maintenance', 'credit', 'engine_down', 'model_missing', 'local_only') %}{% if failed_reason and scoring in ('dead', 'dead_final') %}{{ failed_reason }} {% endif %}{{ chip.tip }}
       {% elif rescoring %}<span data-testid="panel-rescoring">{{ rescoring.hint }} Details appear when the review finishes.</span>
       {% elif scoring == 'not_queued' %}Kestrel has not reached this role yet. It scores on its own.
       {% else %}Being scored now. Details appear when the review finishes.{% endif %}</div>
@@ -142,7 +142,7 @@
       <div class="pl-dims">
         <div class="pl-dims__top"><span class="k-pill {{ 'k-pill--good' if tone == 'good' else 'k-pill--warn' }}" data-fit="{{ fit.word }}">{{ ui.icon('check' if tone == 'good' else 'alert') }}{{ fit.word|capitalize }}</span>
           {% if hidden %}<span class="pl-tag">hidden</span>{% endif %}{% if saved %}<span class="pl-tag">Saved</span>{% endif %}</div>
-        {% for d in dims %}<div class="pl-dim"><span>{{ d.name }}</span><i><u style="--w: {{ d.pct }}%" data-w="{{ d.pct }}"></u></i><b>{{ '%.1f'|format(d.score) }}</b></div>{% endfor %}
+        {% for d in dims %}<div class="pl-dim"><span>{{ d.name }}</span><i><u data-k-style="--w: {{ d.pct }}%" data-w="{{ d.pct }}"></u></i><b>{{ '%.1f'|format(d.score) }}</b></div>{% endfor %}
       </div>
     </div>
     {% if override_note %}<div class="pl-dsm" data-testid="panel-override-note">{{ override_note }}</div>{% endif %}
@@ -151,7 +151,7 @@
     <div class="pl-dgrid">
       <div class="pl-dbox"><div class="pl-dl">{{ pay.label }}</div>
         <div class="pl-pay">{{ pay.text }}{% if pay.estimate %}<span class="pl-est" tabindex="0">est.<span class="pl-tip" role="tooltip">Kestrel's estimate from similar roles. The posting does not list pay.</span></span>{% endif %}</div>
-        {% if pay.pos is not none %}<div class="pl-tgt"><i style="left: {{ pay.pos }}%"></i></div>{% endif %}
+        {% if pay.pos is not none %}<div class="pl-tgt"><i data-k-style="left: {{ pay.pos }}%"></i></div>{% endif %}
         <div class="pl-dsm" data-testid="pay-note">{{ pay.note }}</div></div>
       {% if level %}<div class="pl-dbox"><div class="pl-dl">{{ level.label }}</div><div class="pl-strong">{{ level.text }}</div><div class="pl-dsm">{{ level.note }}</div></div>{% endif %}
     </div>

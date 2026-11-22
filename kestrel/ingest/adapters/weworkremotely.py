@@ -39,7 +39,17 @@ import httpx
 import structlog
 
 from kestrel.errors import ROBOTS_SENTENCE
-from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
+from kestrel.ingest.base import (
+    AdapterError,
+    Notice,
+    PostingBatch,
+    Problem,
+    RawPosting,
+    SourceConfigError,
+    hedged_problem,
+    rate_limited_problem,
+    server_error_problem,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -126,11 +136,13 @@ def to_posting(item: ElementTree.Element, *, now: datetime | None = None) -> Raw
 
 
 def _problem(status: int) -> str:
-    if status in (403, 429):
-        return "We Work Remotely asked Kestrel to slow down; it is fetched on the next check"
+    if status == 429:
+        return rate_limited_problem("We Work Remotely", status)
+    if status == 403:
+        return hedged_problem("We Work Remotely", status)
     if status >= 500:
-        return "We Work Remotely had a problem on their side; it is fetched on the next check"
-    return f"We Work Remotely answered with an unexpected status ({status})"
+        return server_error_problem("We Work Remotely", status)
+    return Problem(f"We Work Remotely answered with an unexpected status ({status})", status)
 
 
 class WeWorkRemotelyAdapter:
@@ -160,14 +172,14 @@ class WeWorkRemotelyAdapter:
         if r.status_code != 200:
             log.warning("wwr_error", status=r.status_code)
             if r.status_code in (403, 429) or r.status_code >= 500:
-                batch.partial_error = _problem(r.status_code)
+                batch.add(Notice.of(_problem(r.status_code)))
                 return batch
             raise AdapterError(_problem(r.status_code))
         text = r.text
         try:
             if _DOCTYPE.search(text[:4096]):
                 raise ValueError("DOCTYPE")
-            root = ElementTree.fromstring(text)
+            root = ElementTree.fromstring(text)  # noqa: S314  stdlib XML on fetched data; expat caps entity expansion; a hardened parser is under review
             items = root.findall("./channel/item")
         except (ValueError, ElementTree.ParseError) as exc:
             raise AdapterError(

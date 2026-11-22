@@ -30,6 +30,7 @@ from kestrel.research import org_summary as osum
 from kestrel.services import hidden_orgs
 from kestrel.services.online_consent import destination_id
 from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.services.setup_state import online_send_held, send_refusal
 from kestrel.web import company_view as cv
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.redact import redact_name, redaction_map
@@ -163,10 +164,13 @@ async def refresh_summary_route(
                 ctx = await _summary_ctx(s, org, dialog=await _ask_dialog(s, org, settings))
                 return _card(request, ctx)
             # The dialog posts the model it showed. Checked here too, whatever the page said.
-            if not settings.llm.hosted_mode.active:
+            why_not = online_send_held(settings)
+            if why_not is not None:
                 ctx = await _summary_ctx(
                     s, org,
-                    notice="Nothing was sent. Online models need Hosted mode, which is off.",
+                    notice=send_refusal(
+                        why_not, "Nothing was sent. Online models need Hosted mode, which is off."
+                    ),
                 )
                 return _card(request, ctx)
             if model.strip() != _online_model(settings, True) or (

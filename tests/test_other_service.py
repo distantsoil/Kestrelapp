@@ -13,7 +13,6 @@ import httpx
 import pytest
 import respx
 from pydantic import ValidationError
-from sqlalchemy import select
 
 from kestrel import config, paths
 from kestrel.db.engine import get_sessionmaker
@@ -42,11 +41,31 @@ def _post(client, op="save", **values):
 
 
 def _rows():
-    async def read():
-        async with get_sessionmaker()() as s:
-            return dict((await s.execute(select(Setting.key, Setting.value))).all())
+    """Every setting row, read with its own sqlite3 connection (safe while the app runs on its
+    own event loop)."""
+    import sqlite3
 
-    return asyncio.run(read())
+    con = sqlite3.connect(str(paths.db_path()))
+    try:
+        return {k: json.loads(v) for k, v in con.execute("SELECT key, value FROM setting")}
+    finally:
+        con.close()
+
+
+def _after_startup() -> dict:
+    """The rows once the app has started: none. Startup writes the install ID, which lives in its
+    own table (D-INST-1, D-INST-15), not in `setting`. The routes under test must leave every row
+    as it is here."""
+    import sqlite3
+
+    rows = _rows()
+    assert set(rows) == set(), sorted(rows)
+    con = sqlite3.connect(str(paths.db_path()))
+    try:
+        assert con.execute("SELECT count(*) FROM install_identity").fetchone() == (1,)
+    finally:
+        con.close()
+    return rows
 
 
 @pytest.mark.parametrize(
@@ -83,16 +102,18 @@ def test_valid_addresses(url):
 )
 def test_invalid_addresses_never_write_or_contact_service(url):
     with _client() as c, respx.mock(assert_all_called=False) as router:
+        startup = _after_startup()
         r = _post(c, base_url=url)
         assert r.status_code == 200
         assert not router.calls
     assert not paths.dotenv_path().exists()
-    assert not _rows()
+    assert _rows() == startup
     assert KEY not in r.text
 
 
 def test_save_is_env_only_and_survives_a_reload(tmp_path):
     with _client() as c, respx.mock(assert_all_called=False) as router:
+        startup = _after_startup()
         r = _post(c)
         assert not router.calls
         assert r.text.count(' id="st-mode"') == 1
@@ -104,7 +125,7 @@ def test_save_is_env_only_and_survives_a_reload(tmp_path):
     text = paths.dotenv_path().read_text(encoding="utf-8")
     assert f"{URL_ENV}={URL}" in text and f"{KEY_ENV}={KEY}" in text
     assert URL_ENV not in os.environ and KEY_ENV not in os.environ
-    assert not _rows()
+    assert _rows() == startup
     config._dotenv_state["mtime"] = None
     settings = config.load_settings()
     backend = settings.llm.backends["other"]
@@ -128,6 +149,7 @@ def test_save_is_env_only_and_survives_a_reload(tmp_path):
 def test_connection_test_only_lists_models_and_saves_nothing(status, caplog):
     caplog.set_level(logging.INFO, logger="httpx")
     with _client() as c, respx.mock as router:
+        startup = _after_startup()
         models = router.get(URL + "/models").respond(status, json=MODELS)
         r = _post(c, "test")
         assert models.call_count == 1
@@ -135,7 +157,7 @@ def test_connection_test_only_lists_models_and_saves_nothing(status, caplog):
         assert request.headers["authorization"] == f"Bearer {KEY}"
         assert not request.content
     assert ("The connection works" if status == 200 else "The connection failed") in r.text
-    assert not paths.dotenv_path().exists() and not _rows()
+    assert not paths.dotenv_path().exists() and _rows() == startup
     assert KEY not in r.text and URL in r.text  # preserve the address draft, never the key
     assert KEY not in caplog.text and "private-service.example" not in caplog.text
 

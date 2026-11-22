@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import glob
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -71,11 +72,21 @@ def use_browser_fallback(monkeypatch: pytest.MonkeyPatch) -> str | None:
     return path
 
 
+TEST_BROWSER_ENV = "KESTREL_TEST_BROWSER"
+
+
 def _launch_kwargs() -> list[dict[str, Any]]:
+    """Edge first, then Playwright's Chromium. D-TEST-817: KESTREL_TEST_BROWSER=chromium puts
+    Chromium first. On a Windows PC someone is using, every Edge launch leaves objects in
+    Explorer (measured: +14 USER objects per 10 browser tests; Chromium +0), and a long run
+    exhausts Explorer's 10,000 GDI limit. The default is unchanged."""
     attempts: list[dict[str, Any]] = [{"channel": "msedge"}]
     fb = fallback_chromium()
     if fb:
-        attempts.append({"executable_path": fb})
+        if os.environ.get(TEST_BROWSER_ENV, "").strip().lower() == "chromium":
+            attempts.insert(0, {"executable_path": fb})
+        else:
+            attempts.append({"executable_path": fb})
     return attempts
 
 
@@ -148,30 +159,144 @@ def set_tracker(tracker: ArtifactTracker | None) -> None:
     _TRACKER = tracker
 
 
+# The Content-Security-Policy watch (D-INST-8, D-SEC-60). Every context a browser test makes
+# through launch_sync records each securitypolicyviolation event, each console message about the
+# policy, and each Alpine expression error (the CSP build reports an expression it cannot run
+# that way), from every page and frame it loads. tests/conftest.py fails the test that saw any.
+# A test about the policy itself takes them with take_csp_violations() and asserts on them.
+CSP_VIOLATIONS: list[dict[str, Any]] = []
+_CSP_WATCH_JS = """(() => {
+  const log = (window.__kCspLog = window.__kCspLog || []);
+  document.addEventListener('securitypolicyviolation', (e) => {
+    const rec = { kind: 'violation', directive: e.effectiveDirective || e.violatedDirective,
+      blocked: String(e.blockedURI || ''), source: String(e.sourceFile || ''),
+      line: e.lineNumber || 0, sample: String(e.sample || '').slice(0, 120),
+      page: String(location.href) };
+    log.push(rec);
+    try { window.__kestrelCspSeen(JSON.stringify(rec)); } catch (err) { /* page closing */ }
+  }, true);
+})();"""
+_CONSOLE_MARKS = ("Content Security Policy", "Content-Security-Policy", "Alpine Expression Error",
+                  "CSP Parser Error")
+
+
+def take_csp_violations() -> list[dict[str, Any]]:
+    """Everything the watch recorded since the last call, deduplicated, and clear the record."""
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for rec in CSP_VIOLATIONS:
+        key = repr(sorted(rec.items()))
+        if key not in seen:
+            seen.add(key)
+            out.append(rec)
+    CSP_VIOLATIONS.clear()
+    return out
+
+
+def describe_csp_violations(found: list[dict[str, Any]]) -> str:
+    lines = [f"{len(found)} Content-Security-Policy problem(s) (D-INST-8: no page may violate the "
+             "policy; move the inline script, style or handler into a static file):"]
+    for rec in found[:20]:
+        lines.append("  " + ", ".join(f"{k}={str(v)[:160]}" for k, v in rec.items()))
+    return "\n".join(lines)
+
+
+def _watch_csp(ctx: Any) -> None:
+    import json
+
+    def seen(_source: Any, payload: str) -> None:
+        try:
+            CSP_VIOLATIONS.append(json.loads(payload))
+        except ValueError:
+            CSP_VIOLATIONS.append({"kind": "violation", "raw": str(payload)[:200]})
+
+    def console(msg: Any) -> None:
+        text = msg.text
+        if any(mark in text for mark in _CONSOLE_MARKS):
+            page = getattr(msg, "page", None)
+            CSP_VIOLATIONS.append({"kind": "console", "type": msg.type, "text": text[:300],
+                                   "page": getattr(page, "url", "")})
+
+    def page_error(err: Any) -> None:
+        text = str(err)
+        if any(mark in text for mark in _CONSOLE_MARKS) or "EvalError" in text:
+            CSP_VIOLATIONS.append({"kind": "pageerror", "text": text[:300]})
+
+    ctx.expose_binding("__kestrelCspSeen", seen)
+    ctx.add_init_script(_CSP_WATCH_JS)
+    ctx.on("console", console)
+    ctx.on("weberror", lambda web_error: page_error(web_error.error))
+
+
+def _collect_page_logs(ctx: Any) -> None:
+    """Before a context closes, read what each live page kept (a binding call still in flight
+    when the context closes would be lost)."""
+    for page in list(getattr(ctx, "pages", [])):
+        for frame in list(getattr(page, "frames", [])):
+            try:
+                CSP_VIOLATIONS.extend(frame.evaluate("() => window.__kCspLog || []"))
+            except Exception:  # noqa: BLE001, S112 (a closed or crashed frame has nothing to read)
+                continue
+
+
 def _prepare_context(ctx: Any) -> Any:
-    """The default timeouts and failure capture for one context."""
+    """The default timeouts, the policy watch, and failure capture for one context."""
     import sys
 
     ms = default_timeout_ms()
     ctx.set_default_timeout(ms)
     ctx.set_default_navigation_timeout(ms)
+    _watch_csp(ctx)
     tracker = _TRACKER
-    if tracker is None:
-        return ctx
-    tracker.track(ctx)
     original_close = ctx.close
 
     def close(*args: Any, **kwargs: Any) -> Any:
+        _collect_page_logs(ctx)
         # An exception in flight (the finally: ctx.close() of a failing test) or a failure
         # already reported by the hook means the evidence is worth keeping.
-        tracker.capture(ctx, keep=tracker.failed or sys.exc_info()[0] is not None)
+        if tracker is not None:
+            tracker.capture(ctx, keep=tracker.failed or sys.exc_info()[0] is not None)
         return original_close(*args, **kwargs)
 
+    if tracker is not None:
+        tracker.track(ctx)
     ctx.close = close
     return ctx
 
 
+# Playwright runs a wait_for_function predicate given as an expression ("window.x === 1") with
+# eval() on every poll, from the page's own timers. The app's policy has no 'unsafe-eval', so the
+# second poll is refused (D-INST-8). A predicate given as a function is compiled once, inside the
+# evaluate call Playwright makes through DevTools, and then only called. So every expression is
+# handed to Playwright as `() => (expression)`: the same predicate, compiled once.
+_FUNCTION_SOURCE = re.compile(
+    r"^\s*(async\s+)?(function\b|\([^()]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)")
+
+
+def as_function_predicate(expression: Any) -> Any:
+    if not isinstance(expression, str) or _FUNCTION_SOURCE.match(expression):
+        return expression
+    return f"() => ({expression})"
+
+
+def _patch_wait_for_function() -> None:
+    from playwright.sync_api import Frame, Page
+
+    for cls in (Page, Frame):
+        original = cls.wait_for_function
+        if getattr(original, "_kestrel_function_form", False):
+            continue
+
+        def wait_for_function(self: Any, expression: str, *args: Any, _o: Any = original,
+                              **kwargs: Any) -> Any:
+            return _o(self, as_function_predicate(expression), *args, **kwargs)
+
+        wait_for_function._kestrel_function_form = True  # type: ignore[attr-defined]
+        cls.wait_for_function = wait_for_function  # type: ignore[method-assign]
+
+
 def _wrap_browser(browser: Any) -> Any:
+    _patch_wait_for_function()
     original_new_context = browser.new_context
 
     def new_context(*args: Any, **kwargs: Any) -> Any:
@@ -213,6 +338,10 @@ def wait_for_app_ready(page: Page) -> None:
 
 
 _SWAP_JS = """async ([path, trigger, read, arg, ms]) => {
+  // Both bodies are compiled here, inside the evaluate call: compiling `read` later, in the
+  // swap's event listener, is eval from the page, which the app's policy refuses (D-INST-8).
+  const readFn = new Function('arg', read);
+  const triggerFn = new Function('arg', trigger);
   const wait = new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       document.removeEventListener('htmx:afterSwap', onSwap);
@@ -225,11 +354,11 @@ _SWAP_JS = """async ([path, trigger, read, arg, ms]) => {
       if (!p.includes(path)) return;   // another swap (a poll, a toast) is not this one
       clearTimeout(timer);
       document.removeEventListener('htmx:afterSwap', onSwap);
-      try { resolve(new Function('arg', read)(arg)); } catch (err) { reject(err); }
+      try { resolve(readFn(arg)); } catch (err) { reject(err); }
     }
     document.addEventListener('htmx:afterSwap', onSwap);
   });
-  new Function('arg', trigger)(arg);
+  triggerFn(arg);
   return await wait;
 }"""
 
@@ -295,38 +424,104 @@ def wait_for_layout(page: Page) -> None:
 # far ridges fade in from nothing under a mask, so neither the box nor a shape's bounds says where
 # a title would meet the drawing. Two screenshots of the band, the scene shown and hidden (its
 # motion and the seasonal touch paused or hidden), and the first column that differs clearly.
+# Both shots hide every other layer that crosses the art's box (the title row, its button, any
+# text), so the art is the only difference: on Windows, hiding the art changed how the button
+# label was anti-aliased and the diff read the glyphs as art (D-TEST-796). Hiding them, rather
+# than leaving their rectangles out of the diff, also exposes art drawn under the button.
+# art_visible_left hides things for two screenshots and must leave the page as it found it
+# (D-TEST-801, issue #236). Each element it touches records whether it had a `style` attribute
+# (data-k-style: "N" none, "S" some) and its own visibility and transition values, and the restore
+# puts those back and drops an attribute it created, so no `style=""` is left behind. Hidden
+# elements also get `transition: none`, so a visibility transition cannot make the "hidden" frame
+# still show the art. The writes go through element.style, never setAttribute('style'): the app's
+# Content-Security-Policy (style-src 'self') refuses the second.
+_ART_KHIDE_JS = """(e) => {
+      if (!e.hasAttribute('data-k-style')) {
+        e.setAttribute('data-k-style', e.hasAttribute('style') ? 'S' : 'N');
+        for (const [k, p] of [['vis', 'visibility'], ['tr', 'transition']]) {
+          e.setAttribute('data-k-' + k,
+            e.style.getPropertyValue(p) + '|' + e.style.getPropertyPriority(p));
+        }
+      }
+      e.style.setProperty('visibility', 'hidden', 'important');
+      e.style.setProperty('transition', 'none', 'important');
+    }"""
+
+_ART_RESTORE_JS = """() => {
+    document.querySelectorAll('[data-k-style]').forEach(e => {
+      for (const [k, p] of [['vis', 'visibility'], ['tr', 'transition']]) {
+        const raw = e.getAttribute('data-k-' + k) || '|';
+        const cut = raw.lastIndexOf('|');
+        const value = raw.slice(0, cut), prio = raw.slice(cut + 1);
+        if (value) e.style.setProperty(p, value, prio); else e.style.removeProperty(p);
+        e.removeAttribute('data-k-' + k);
+      }
+      // Reading the attribute first makes Chromium sync it from the CSSOM; removing it before
+      // that read leaves it dirty and it comes back as style="".
+      if (e.getAttribute('data-k-style') === 'N' && !e.getAttribute('style')) {
+        e.removeAttribute('style');
+      }
+      e.removeAttribute('data-k-style');
+    });
+    const b = document.querySelector('.k-scene[data-was-animate]');
+    if (b) {
+      b.setAttribute('data-animate', b.getAttribute('data-was-animate'));
+      b.removeAttribute('data-was-animate');
+    } }"""
+
+_ART_VEIL_JS = """() => {
+    const KHIDE = __KHIDE__;
+    const a = document.querySelector('.k-scene__art:not(.k-scene__touch)');
+    if (!a) return null;
+    const band = a.closest('.k-scene');
+    if (band) {
+      band.setAttribute('data-was-animate', band.getAttribute('data-animate') || '');
+      band.setAttribute('data-animate', '0');
+    }
+    document.querySelectorAll('.k-scene__touch').forEach(KHIDE);
+    const r = a.getBoundingClientRect();
+    // Every element over the art's box that is not the art, inside it or holding it.
+    for (const e of document.querySelectorAll('body *')) {
+      if (e === a || a.contains(e) || e.contains(a) || e.closest('.k-scene__art')) continue;
+      const b = e.getBoundingClientRect();
+      if (b.right <= r.left || b.left >= r.right || b.bottom <= r.top || b.top >= r.bottom)
+        continue;
+      KHIDE(e);
+    }
+    return {x: r.left, y: r.top, width: r.width, height: r.height}; }"""
+_ART_VEIL_JS = _ART_VEIL_JS.replace("__KHIDE__", _ART_KHIDE_JS)
+
+_ART_HIDE_ART_JS = """() => {
+    const KHIDE = __KHIDE__;
+    KHIDE(document.querySelector('.k-scene__art:not(.k-scene__touch)')); }"""
+_ART_HIDE_ART_JS = _ART_HIDE_ART_JS.replace("__KHIDE__", _ART_KHIDE_JS)
+
+
 def art_visible_left(page, threshold: int = 28, min_pixels: int = 2) -> float | None:
     import io
 
     from PIL import Image, ImageChops
 
-    box = page.evaluate("""() => {
-        const a = document.querySelector('.k-scene__art:not(.k-scene__touch)');
-        if (!a) return null;
-        const band = a.closest('.k-scene');
-        if (band) {
-          band.setAttribute('data-was-animate', band.getAttribute('data-animate') || '');
-          band.setAttribute('data-animate', '0');
-        }
-        document.querySelectorAll('.k-scene__touch').forEach(t => t.style.visibility = 'hidden');
-        const r = a.getBoundingClientRect();
-        return {x: r.left, y: r.top, width: r.width, height: r.height}; }""")
-    if not box or box["width"] < 2 or box["height"] < 2:
-        return None
-    page.wait_for_timeout(120)
-    shown = Image.open(io.BytesIO(page.screenshot(clip=box))).convert("RGB")
-    page.evaluate("""() => {
-        document.querySelector('.k-scene__art:not(.k-scene__touch)').style.visibility = 'hidden';
-    }""")
-    page.wait_for_timeout(60)
-    hidden = Image.open(io.BytesIO(page.screenshot(clip=box))).convert("RGB")
-    page.evaluate("""() => {
-        document.querySelectorAll('.k-scene__art').forEach(a => { a.style.visibility = ''; });
-        const b = document.querySelector('.k-scene[data-was-animate]');
-        if (b) {
-          b.setAttribute('data-animate', b.getAttribute('data-was-animate'));
-          b.removeAttribute('data-was-animate');
-        } }""")
+    done = False
+    try:
+        box = page.evaluate(_ART_VEIL_JS)
+        if not box or box["width"] < 2 or box["height"] < 2:
+            done = True
+            return None
+        page.wait_for_timeout(120)
+        shown = Image.open(io.BytesIO(page.screenshot(clip=box))).convert("RGB")
+        page.evaluate(_ART_HIDE_ART_JS)
+        page.wait_for_timeout(60)
+        hidden = Image.open(io.BytesIO(page.screenshot(clip=box))).convert("RGB")
+        done = True
+    finally:
+        # Always put the page back, also when a screenshot raised; a failure here must not hide
+        # the original error.
+        try:
+            page.evaluate(_ART_RESTORE_JS)
+        except Exception:  # noqa: BLE001 (a closed page has nothing left to restore)
+            if done:
+                raise
     diff = ImageChops.difference(shown, hidden).convert("L")
     w, h = diff.size
     px = diff.load()

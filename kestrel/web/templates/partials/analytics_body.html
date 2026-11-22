@@ -60,7 +60,7 @@
     <div class="an-sbhead"><b>{{ st.total }}</b> {{ st.sent_verb }}<span class="an-sub">{{ st.short_n }} {{ st.short_verb }}, {{ st.not_sent }} {{ st.not_sent_label }}</span></div>
     {% if st.total %}
     <div class="an-sbar" role="img" aria-label="{{ st.title }}: {% for s in st.segments if s.n %}{{ s.label }} {{ s.n }}{{ ', ' if not loop.last }}{% endfor %}">
-      {%- for s in st.segments if s.n %}<i class="an-st-{{ s.key }}" style="flex: {{ s.n }}" data-tip="{{ s.label }}: {{ s.n }} of {{ st.total }}"></i>{% endfor -%}
+      {%- for s in st.segments if s.n %}<i class="an-st-{{ s.key }}" data-k-style="flex: {{ s.n }}" data-tip="{{ s.label }}: {{ s.n }} of {{ st.total }}"></i>{% endfor -%}
     </div>
     {% endif %}
     <div class="an-slegend">
@@ -82,7 +82,7 @@
       {%- for f in group %}
       <div class="an-frow" data-tip="{{ f.label }}: {{ '{:,}'.format(f.n) }}{% if f.base is not none %} of {{ '{:,}'.format(f.base) }} {{ f.prev_label|lower }}{% if f.pct is not none %} ({{ f.pct }}%){% endif %}{% if f.few %}. Fewer than {{ min_n }}, so this rate is not reliable.{% endif %}{% endif %}">
         <div class="an-frow__lab">{{ f.label }}</div>
-        <div class="an-frow__bar"><u class="{{ 'is-few' if f.few }}" style="width: {{ f.width }}%"></u></div>
+        <div class="an-frow__bar"><u class="{{ 'is-few' if f.few }}" data-k-style="width: {{ f.width }}%"></u></div>
         <span class="an-frow__v">{{ '{:,}'.format(f.n) }}{% if f.base is not none %} <em>{{ 'too few' if f.few else ((f.pct ~ '%') if f.pct is not none else '') }}</em>{% endif %}</span>
       </div>
       {%- endfor %}
@@ -143,7 +143,7 @@
     <table class="an-at"><thead><tr><th>{{ label }}</th>{% for c in w.breakdown_cols %}<th class="c">{{ c }}</th>{% endfor %}<th>Reply rate</th></tr></thead><tbody>
       {%- for row in tb.rows %}
       <tr><td><b>{{ row.name }}</b></td><td class="c">{{ row.found }}</td><td class="c">{{ row.short }}</td><td class="c">{{ row.sent }}</td>
-        <td>{% if row.few %}{{ few_cell(row.sent) }}{% else %}<span class="an-rate"><i><u style="width: {{ row.rate }}%"></u></i>{{ row.rate }}% <span class="an-sub">({{ row.replied }} of {{ row.sent }})</span></span>{% endif %}</td></tr>
+        <td>{% if row.few %}{{ few_cell(row.sent) }}{% else %}<span class="an-rate"><i><u data-k-style="width: {{ row.rate }}%"></u></i>{{ row.rate }}% <span class="an-sub">({{ row.replied }} of {{ row.sent }})</span></span>{% endif %}</td></tr>
       {%- else %}<tr><td colspan="5" class="an-sub">Nothing in this period yet.</td></tr>
       {%- endfor %}
     </tbody></table>
@@ -176,7 +176,7 @@
   <summary>{{ w.pace_title }}</summary>
   <div class="an-pace" data-testid="an-pace">
     <div class="an-wk an-chart" role="img" aria-label="{{ w.pace_title }}: {{ pc.total }} in {{ pc.bars|length }} weeks">
-      {%- for bar in pc.bars %}<div data-tip="Week of {{ bar.label }}: {{ bar.n }}"><u style="height: {{ bar.height }}%"></u></div>{% endfor -%}
+      {%- for bar in pc.bars %}<div data-tip="Week of {{ bar.label }}: {{ bar.n }}"><u data-k-style="height: {{ bar.height }}%"></u></div>{% endfor -%}
     </div>
     <div class="an-wkl an-chart">{% for bar in pc.bars %}<span>{% if loop.first or loop.last or loop.index0 % 4 == 0 %}{{ bar.label }}{% endif %}</span>{% endfor %}</div>
     <div class="an-table"><table class="an-at"><thead><tr><th>Week of</th><th class="c">Count</th></tr></thead><tbody>

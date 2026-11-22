@@ -9,6 +9,7 @@ from __future__ import annotations
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Float,
     ForeignKey,
     Index,
@@ -128,6 +129,11 @@ class Opportunity(Base):
     comp_min: Mapped[float | None] = mapped_column(Float, nullable=True)
     comp_max: Mapped[float | None] = mapped_column(Float, nullable=True)
     comp_currency: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Whether the currency was stated (a symbol or a board's currency field), not assumed as USD.
+    # None on rows from before migration 0037: unknown (D-SCORE-28).
+    comp_currency_known: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Whether the pay interval was stated, not assumed as a year (migration 0037, round 4).
+    comp_interval_known: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     comp_interval: Mapped[str | None] = mapped_column(String, nullable=True)
     comp_source: Mapped[str] = mapped_column(String, default="none")
     description_md: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -376,6 +382,19 @@ class Setting(Base):
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSON)
     updated_at: Mapped[str] = mapped_column(String, default=utcnow_iso, onupdate=utcnow_iso)
+
+
+class InstallIdentity(Base):
+    """The install ID (D-INST-1, D-INST-15): one row, read and written only by
+    kestrel.services.install_id. Kept out of `setting` so no settings reader can reach it."""
+
+    __tablename__ = "install_identity"
+    __table_args__ = (CheckConstraint("slot = 1", name="ck_install_identity_one_row"),)
+    slot: Mapped[int] = mapped_column(Integer, primary_key=True)
+    install_id: Mapped[str] = mapped_column(String)
+    created_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    version: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_at: Mapped[str] = mapped_column(String)
 
 
 class SavedView(Base):

@@ -1,21 +1,34 @@
 {
   "manifest_version": 3,
   "name": "Kestrel Capture",
-  "version": "0.1.0",
-  "minimum_chrome_version": "103",
-  "description": "Capture the page you are viewing into your local Kestrel pipeline, and badge known job postings with their score and status. Talks only to your local Kestrel.",
+  "version": "0.8.0",
+  "minimum_chrome_version": "105",
+  "description": "Send the job posting you have open to Kestrel on your own computer. Shows Kestrel's score on job boards. Never applies for you.",
   "permissions": ["activeTab", "scripting", "contextMenus", "storage"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
-  "optional_host_permissions": ["http://*/*"],
   "background": { "service_worker": "background.js" },
-  "action": { "default_title": "Capture this page into Kestrel" },
-  "options_page": "options.html",
+  "action": {
+    "default_title": "Kestrel Capture",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png" }
+  },
+  "icons": {
+    "16": "icons/icon-16.png", "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png", "128": "icons/icon-128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' blob:; style-src 'self'; font-src 'self'"
+  },
+  "options_ui": { "page": "options.html", "open_in_tab": true },
   "content_scripts": [
     {
       "matches": [
         "*://*.greenhouse.io/*", "*://boards.greenhouse.io/*", "*://*.lever.co/*",
         "*://*.ashbyhq.com/*", "*://*.myworkdayjobs.com/*", "*://*.smartrecruiters.com/*",
-        "*://*.indeed.com/*"
+        "*://*.indeed.com/*",
+        "*://*.glassdoor.com/*", "*://*.glassdoor.co.uk/*", "*://*.glassdoor.ca/*",
+        "*://*.glassdoor.com.au/*", "*://*.glassdoor.ie/*", "*://*.glassdoor.co.in/*",
+        "*://*.glassdoor.de/*", "*://*.glassdoor.fr/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"

@@ -5,7 +5,7 @@
 <section class="k-card st-card" id="st-w">
   {{ st.head('What matters most', 'star', sub="How much each part counts toward a role's score. These bars are read only.") }}
   <div class="st-bars">
-    {% for b in bars %}<div class="st-bar" data-testid="st-bar-{{ b.key }}"><span class="st-bl">{{ b.label }}</span><span class="st-trk"><span class="st-fill" style="width: {{ b.pct * 2 }}%"></span></span><span class="st-pct">{{ b.pct }}%</span></div>{% endfor %}
+    {% for b in bars %}<div class="st-bar" data-testid="st-bar-{{ b.key }}"><span class="st-bl">{{ b.label }}</span><span class="st-trk"><span class="st-fill" data-k-style="width: {{ b.pct * 2 }}%"></span></span><span class="st-pct">{{ b.pct }}%</span></div>{% endfor %}
   </div>
   <p class="st-qn">Kestrel also learns from outcomes, like which roles led to interviews, once you have at least 5.</p>
   <div class="st-ft">
@@ -20,8 +20,8 @@
   <p class="st-sub">Based on {{ suggestion.n }} of your ratings, scores would match your calls more closely.</p>
   {% for r in suggestion.rows %}
   <div class="st-cmp"><span class="st-bl">{{ r.label }}</span>
-    <div><div class="st-ln"><span>Now</span><span class="st-trk"><span class="st-fill st-was" style="width: {{ r.now * 2 }}%"></span></span><span class="st-pct">{{ r.now }}%</span></div>
-      <div class="st-ln"><span>Suggested</span><span class="st-trk"><span class="st-fill" style="width: {{ r.new * 2 }}%"></span></span><span class="st-pct">{{ r.new }}%</span></div></div>
+    <div><div class="st-ln"><span>Now</span><span class="st-trk"><span class="st-fill st-was" data-k-style="width: {{ r.now * 2 }}%"></span></span><span class="st-pct">{{ r.now }}%</span></div>
+      <div class="st-ln"><span>Suggested</span><span class="st-trk"><span class="st-fill" data-k-style="width: {{ r.new * 2 }}%"></span></span><span class="st-pct">{{ r.new }}%</span></div></div>
   </div>
   {% endfor %}
   <div class="st-hact">

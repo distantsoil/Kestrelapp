@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from tests.browser import launch_sync
+from tests.browser import default_timeout_ms, launch_sync, wait_for_layout
 from tests.browser_plugin import browser_artifacts  # noqa: F401
 from tests.test_other_service import KEY, MODELS, URL
 from tests.test_settings_browser import _KIDS, _LINES, _overlaps
@@ -36,10 +36,17 @@ def live(monkeypatch):
     monkeypatch.setattr(prov, "verify_key", verify)
     monkeypatch.setattr(prov, "list_models", models)
     migrate.run_migrations()
+    from playwright.sync_api import expect
+
+    # D-TEST-821: expect() waits 5 s by default; the save and the key test answer through the
+    # app's own server, which a loaded machine can take longer than that to answer. The wait
+    # still ends the moment the text appears. Restored after the test (it is process-wide).
+    expect.set_options(timeout=default_timeout_ms())
     with running_server(worker=False) as base, sync_playwright() as p:
         browser = launch_sync(p)
         yield base, browser
         browser.close()
+    expect.set_options(timeout=5_000)
 
 
 def _layout(page, theme, width):
@@ -72,6 +79,7 @@ def test_other_test_save_reload_and_approve(live, theme, width):
         page.goto(base + "/settings#computer")
         page.get_by_test_id("st-mode-online").click()
         expect(page.locator("#st-online")).to_be_visible()
+        wait_for_layout(page)  # D-TEST-821: the mode section is swapped in by htmx
         page.get_by_test_id("st-svc-other").click()
         expect(page.get_by_test_id("st-base-url")).to_be_visible()
         page.get_by_test_id("st-base-url").fill(URL)
@@ -86,6 +94,7 @@ def test_other_test_save_reload_and_approve(live, theme, width):
         expect(page.get_by_test_id("st-base-url")).to_have_value(URL)
         expect(page.get_by_test_id("st-key")).to_have_value("")
         assert not paths.dotenv_path().exists()
+        wait_for_layout(page)  # D-TEST-821: the form was replaced by the answer
         page.get_by_test_id("st-key").fill(KEY)
         page.get_by_test_id("st-key-save").click()
         expect(page.get_by_test_id("st-keyres")).to_contain_text("Service address and key saved")
@@ -98,6 +107,7 @@ def test_other_test_save_reload_and_approve(live, theme, width):
         page.goto(base + "/models")
         page.get_by_test_id("mo-online-manage").click()
         expect(page.get_by_test_id("mo-other-connect")).to_be_visible()
+        wait_for_layout(page)  # D-TEST-821: the drawer body is swapped in by htmx
         expect(page.locator('#mo-online-body input[name="ack"]')).not_to_be_checked()
         page.get_by_test_id("mo-other-approve").click()
         expect(page.get_by_test_id("mo-online-message")).to_contain_text("nothing was saved")

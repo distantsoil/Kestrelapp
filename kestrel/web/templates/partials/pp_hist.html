@@ -5,8 +5,8 @@
   <header class="k-sec-head"><span class="k-badge k-badge--good">{{ i.pi('analytics') }}</span><div class="k-grow"><h3>Your practice so far</h3></div></header>
   {%- if chart or live_mean %}
   <div class="pp-bars" role="img" aria-label="Average score for each practice session, out of 5">
-    {%- for c in chart %}<div class="pp-bar" style="height: {{ (c.mean / 5 * 100)|round(1) }}%"><span>{{ '%.1f'|format(c.mean) }}</span></div>{% endfor %}
-    {%- if live_mean %}<div class="pp-bar is-now" style="height: {{ (live_mean / 5 * 100)|round(1) }}%"><span>{{ '%.1f'|format(live_mean) }}</span></div>{% endif %}
+    {%- for c in chart %}<div class="pp-bar" data-k-style="height: {{ (c.mean / 5 * 100)|round(1) }}%"><span>{{ '%.1f'|format(c.mean) }}</span></div>{% endfor %}
+    {%- if live_mean %}<div class="pp-bar is-now" data-k-style="height: {{ (live_mean / 5 * 100)|round(1) }}%"><span>{{ '%.1f'|format(live_mean) }}</span></div>{% endif %}
   </div>
   <div class="pp-barlbl">{% for c in chart %}<span>{{ c.label }}</span>{% endfor %}{% if live_mean %}<span>Today</span>{% endif %}</div>
   {%- else %}

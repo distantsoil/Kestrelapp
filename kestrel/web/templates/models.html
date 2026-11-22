@@ -25,6 +25,9 @@
   <p class="mo-uses" data-testid="mo-uses"><span class="k-muted">Kestrel uses</span>
     <span class="k-pill {{ 'k-pill--good' if choice == 'local' else ('k-pill--warn' if choice == 'hosted' else 'k-pill--info') }}">{{ ui.icon('laptop' if choice == 'local' else 'cloud') }}{{ choice_label }}</span>
     <a class="k-link" href="/settings#system" data-testid="mo-change-mode">Change in Settings</a></p>
+  {% if reaccept_href %}
+  <div class="mo-banner" role="status" data-testid="mo-paused">{{ ui.icon('cloud') }}<span><b>Online models are paused.</b> The disclosure changed since you accepted it; it now names the balance and model-list checks. Online scoring resumes once you accept it again.</span><a class="k-link" href="{{ reaccept_href }}" data-testid="mo-reaccept">Review and re-accept</a></div>
+  {% endif %}
 
   <div class="k-layout">
     <div class="k-layout__main mo-main">

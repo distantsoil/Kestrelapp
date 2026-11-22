@@ -4,6 +4,7 @@ seeded copy (D-CONFIG-LAYER). Every provider call is mocked with respx."""
 from __future__ import annotations
 
 import os
+import re
 
 import pytest
 import respx
@@ -12,6 +13,7 @@ from httpx import Response
 from kestrel import paths
 from kestrel.config import load_settings
 from kestrel.llm import providers as prov
+from tests.page_source import as_written
 from tests.test_hosted_mode import _db_settings, _fresh_app
 
 _OR = "https://openrouter.ai/api/v1"
@@ -76,7 +78,9 @@ def test_packaged_layer_adds_only_missing_backends_never_tiers_or_fields():
 def test_panel_leads_with_the_connect_form(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     body = _fresh_app().get("/settings/hosted").text
-    assert "Connect a hosted provider" in body
+    # #224: the Connect section is open and titled for a first provider.
+    assert re.search(r'<details id="hosted-connect"[^>]*\bopen\b', body)
+    assert "Connect a provider" in body and "Change provider" not in body
     assert body.index("hosted-connect") < body.index("hosted-assignments")
     for label in ("OpenRouter", "Anthropic (Claude API)", "OpenAI (API)"):
         assert label in body
@@ -93,7 +97,9 @@ def test_ack_box_is_never_pre_ticked(monkeypatch):
         body = client.post(
             "/settings/hosted/connect", data={"provider": "openrouter", "ack": "on"}
         ).text
-    assert "Change hosted provider" in body
+    # #224: with a provider set up, Connect is collapsed as "Change provider".
+    assert "Change provider" in body
+    assert not re.search(r'<details id="hosted-connect"[^>]*\bopen\b', body)
     assert 'name="ack" value="on" checked' not in body
 
 
@@ -168,7 +174,10 @@ def test_connect_picks_models_acknowledges_and_switches(monkeypatch):
             "/settings/hosted/connect",
             data={"provider": "openrouter", "ack": "on", "switch": "on"},
         )
-    assert "Connected to OpenRouter" in r.text and "Hosted models (active)" in r.text
+    assert "Connected to OpenRouter" in r.text
+    # #224: the run switch left this page; the status chip names the run mode instead.
+    chip = r'data-testid="hosted-run-mode">.*?Kestrel runs on online models'
+    assert re.search(chip, r.text, re.S)
     st = _db_settings()
     assert st.llm.hosted_mode.active and st.llm.mode == "hosted"
     assert st.llm.tiers["tier1"].model == "a/cheap"
@@ -319,7 +328,7 @@ def test_settings_connect_shows_the_same_clear_result(monkeypatch):
         r = client.post("/settings/hosted/connect", data={"provider": "openrouter", "ack": "on"})
     assert 'data-testid="hosted-connect-result"' in r.text and 'data-connect-ok="true"' in r.text
     assert "Tier 1 will use a/cheap and Tier 2 will use b/strong." in r.text
-    assert 'class="okbox"' in r.text  # the theme's success style, never a fixed color
+    assert 'class="okbox"' in as_written(r.text)  # the theme's success style, never a fixed color
     with respx.mock(assert_all_called=False) as router:
         _mock_openrouter(router, key_status=401)
         r = client.post("/settings/hosted/connect", data={"provider": "openrouter", "ack": "on"})

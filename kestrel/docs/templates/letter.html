@@ -13,6 +13,7 @@
   header.doc .name { font-size: 16pt; font-weight: 700; }
   header.doc .headline { font-size: 10.5pt; color: #222; margin-top: 1pt; }
   header.doc .contact { font-size: 9.5pt; color: #333; margin-top: 2pt; }
+  header.doc .contact a { color: inherit; text-decoration: none; }
   p { margin: 0 0 10pt; }
   h2 { font-size: 11.5pt; margin: 14pt 0 4pt; }
   ul { margin: 0 0 10pt; padding-left: 16pt; }
@@ -33,6 +34,7 @@
   {%- if header.email %}{% set _ = bits.append(header.email) %}{% endif -%}
   {%- if header.phone %}{% set _ = bits.append(header.phone) %}{% endif -%}
   {%- if header.location %}{% set _ = bits.append(header.location) %}{% endif -%}
+  {%- if header.linkedin %}{% if header.linkedin_href %}{% set _ln %}<a href="{{ header.linkedin_href }}" rel="noopener noreferrer">{{ header.linkedin }}</a>{% endset %}{% set _ = bits.append(_ln) %}{% else %}{% set _ = bits.append(header.linkedin) %}{% endif %}{% endif -%}
   {%- if bits %}<div class="contact">{{ bits | join(" | ") }}</div>{% endif %}
 </header>
 {% endif %}

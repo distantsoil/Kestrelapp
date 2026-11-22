@@ -7,6 +7,7 @@ queue; the Runs page shows a running run and recent scans. Offline: no model, no
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from kestrel.db.models import Quarantine, Run, ScrapeRun, Source, Task
 from kestrel.pipeline import runlog
 from kestrel.web import deps
 from tests import clock_seed
+from tests.page_source import inline_static
 
 
 def _fresh_engine():
@@ -506,6 +508,14 @@ def test_cancel_with_nothing_running_returns_the_idle_button():
 
 
 # ------------------------------------------------------------------------------------ toast
+def _toast_html() -> str:
+    """partials/toast.html with its script and its stylesheet (toast.css, linked from base.html)
+    inlined, as the page reads (D-INST-8)."""
+    html = (Path(paths.web_templates_dir()) / "partials" / "toast.html").read_text("utf-8")
+    css = (Path(paths.web_static_dir()) / "css" / "toast.css").read_text("utf-8")
+    return inline_static(html) + f"<style>{css}</style>"
+
+
 def test_rail_carries_the_scan_finished_signal_and_base_has_one_toast():
     asyncio.run(_seed([
         _src(),
@@ -517,7 +527,7 @@ def test_rail_carries_the_scan_finished_signal_and_base_has_one_toast():
     ]))
     with _client() as c:
         rail = c.get("/status/rail").text
-        page = c.get("/runs").text
+        page = inline_static(c.get("/runs").text)
         status = c.get("/api/status").json()
     assert 'id="scan-signal" hx-swap-oob="true"' in rail
     assert 'data-event="1"' in rail and 'data-new="7"' in rail and 'data-scanning="0"' in rail
@@ -581,7 +591,7 @@ def test_toast_shows_an_event_that_landed_while_still_scanning(tmp_path):
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
-    html = (Path(paths.web_templates_dir()) / "partials" / "toast.html").read_text("utf-8")
+    html = _toast_html()
     script = html.split("<script>")[1].split("</script>")[0]
     js = tmp_path / "toast_harness.js"
     js.write_text(f"const SCRIPT = {json.dumps(script)};\n{_TOAST_HARNESS}", encoding="utf-8")
@@ -593,7 +603,7 @@ def test_toast_shows_an_event_that_landed_while_still_scanning(tmp_path):
 
 
 def test_toast_styles_use_theme_tokens_and_respect_reduced_motion():
-    css = (Path(paths.web_templates_dir()) / "partials" / "toast.html").read_text(encoding="utf-8")
+    css = _toast_html()
     style = css.split("<style>")[1].split("</style>")[0]
     assert "@keyframes scan-glow" in style and "prefers-reduced-motion: reduce" in style
     assert "#D4622A" not in style.upper() and "var(--accent" in style
@@ -755,7 +765,7 @@ def test_scan_toast_clears_itself_and_opens_the_new_postings(tmp_path):
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
-    html = (Path(paths.web_templates_dir()) / "partials" / "toast.html").read_text("utf-8")
+    html = _toast_html()
     script = html.split("<script>")[1].split("</script>")[0]
     js = tmp_path / "toast_sticky.js"
     js.write_text(f"const SCRIPT = {json.dumps(script)};\n{_STICKY_HARNESS}", encoding="utf-8")
@@ -772,7 +782,7 @@ def test_scan_toast_clears_itself_and_opens_the_new_postings(tmp_path):
 
 
 def test_toast_markup_is_a_link_with_a_warning_tone_and_stays_announced():
-    html = (Path(paths.web_templates_dir()) / "partials" / "toast.html").read_text("utf-8")
+    html = _toast_html()
     assert 'role="status" aria-live="polite"' in html and "data-toast-close" in html
     assert '<a data-toast-text data-testid="toast-link"></a>' in html
     assert "'/opportunities?new_today=1'" in html and "main: true" in html and "sticky" not in html
@@ -782,7 +792,9 @@ def test_toast_markup_is_a_link_with_a_warning_tone_and_stays_announced():
             '{ background: var(--warn-bg); color: var(--warn-ink); }')
     assert warn in style
     # Marked seen only when shown, as before.
-    assert html.index("setSeen(ev);\n        var n") > html.index("Marked seen only when shown")
+    # (Whitespace-free: the script moved to a file with its indentation reset, D-INST-8.)
+    seen_at = re.search(r"setSeen\(ev\);\n\s*var n", html).start()
+    assert seen_at > html.index("Marked seen only when shown")
 
 
 # ------------------------------------------------ the loop's notifications (#109, #110, #111)
@@ -959,6 +971,11 @@ def test_a_paused_run_carried_into_the_next_cycle_keeps_its_held_settings(monkey
     stop = asyncio.Event()
     _patch_loop(monkeypatch, stop, scrape_work=True)
     stored = {"tier1": 3}  # what Settings holds now; the person saves 9 during the pause
+    # The app's idle signal is one asyncio.Event for the process; waiting on it here binds it to
+    # this test's event loop, so the test gets its own and later tests keep theirs (D-UI-861).
+    idle = asyncio.Event()
+    idle.set()
+    monkeypatch.setattr(app_mod, "_cycle_idle", idle)
 
     async def _load(s, mode=None):
         return _settings_with(stored["tier1"])
@@ -984,17 +1001,25 @@ def test_a_paused_run_carried_into_the_next_cycle_keeps_its_held_settings(monkey
         if calls["t2"] == 1:
             stats.completed = 1
             app_mod.set_paused(True)  # the tray paused mid-run: the run is carried
+            pause_landed.set()
 
     monkeypatch.setattr(Worker, "drain_tier", _drain_tier)
+    pause_landed = asyncio.Event()
 
     async def resume_later():
-        await asyncio.sleep(0.3)
+        # Resume follows the pause by order, never by a fixed sleep: on a loaded machine the
+        # first cycle reached Tier 2 after a 0.3 s sleep had already "resumed", and then nothing
+        # ever lifted the pause. Wait for the pause, then for its cycle to end (carried).
+        await pause_landed.wait()
+        assert await app_mod.wait_for_idle_cycle(30.0)
         stored["tier1"] = 9  # saved while paused
         app_mod.set_paused(False)
 
     async def go():
         resumer = asyncio.create_task(resume_later())
-        await asyncio.wait_for(app_mod._worker_loop(stop), timeout=20.0)
+        # A hang guard, not a measure of speed: generous enough for a loaded machine (tests
+        # must not depend on machine speed; AGENT-RULES 8a.6, D-WORKER-6 amended, round 4).
+        await asyncio.wait_for(app_mod._worker_loop(stop), timeout=60.0)
         await resumer
 
     app_mod._release_run()

@@ -95,15 +95,18 @@ def _go(page, href: str, name: str) -> dict:
 
 
 def _fresh_sheets(live, path: str) -> list[str]:
-    """The stylesheets a full load of the page puts in its head, in order. (A partial that htmx
-    loads later can bring one of its own into the body; that is the partial's, not the page's.)"""
+    """The stylesheets a full load of the page applies, in order: the head's, then any the page's
+    own content brings (the profile page's phone field), which an in-place change hoists into the
+    head as a page load applies them at the same place (kestrel-ui.js navSheets, D-UI-811)."""
     base, browser = live
     ctx = browser.new_context()
     try:
         p = ctx.new_page()
         p.goto(f"{base}{path}")
-        return p.evaluate("() => Array.from(document.head.querySelectorAll('link[rel=stylesheet]'))"
-                          ".map(l => new URL(l.href).pathname)")
+        return p.evaluate(
+            "() => Array.from(document.querySelectorAll("
+            "'head link[rel=stylesheet], #main main.container link[rel=stylesheet]'))"
+            ".map(l => new URL(l.href).pathname)")
     finally:
         ctx.close()
 
@@ -336,6 +339,36 @@ def test_a_jump_within_the_page_keeps_its_place_in_history(live):
         page.go_back()
         page.wait_for_function("() => location.hash === '' && window.scrollY < 50")
         assert page.evaluate("() => window.__doc") == "first"
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_an_aborted_page_transition_is_not_an_uncaught_rejection(live):
+    """D-UI-872: a cross-document transition the browser aborts rejects its promises; the page
+    catches them. A pageswap event carries three rejecting promises. Each promise counts the
+    catch handlers attached to it, so the test shows that the listener ran (a quiet page alone
+    could mean the report was late) and that nothing reached the page's error handler."""
+    ctx, page, errors = _open(live, "/")
+    try:
+        page.evaluate(
+            """() => {
+              window.__caught = 0;
+              const rejected = () => {
+                const p = Promise.reject(new DOMException(
+                  'Transition was aborted because of invalid state', 'InvalidStateError'));
+                const attach = p.catch.bind(p);
+                p.catch = (handler) => { window.__caught += 1; return attach(handler); };
+                return p;
+              };
+              const e = new Event('pageswap');
+              Object.defineProperty(e, 'viewTransition', { value: {
+                ready: rejected(), finished: rejected(), updateCallbackDone: rejected() } });
+              window.dispatchEvent(e);
+            }"""
+        )
+        assert page.evaluate("window.__caught") == 3, "the pageswap listener did not catch all"
+        page.wait_for_timeout(300)  # a rejection nobody caught is reported on the next turns
         assert not errors, errors
     finally:
         ctx.close()

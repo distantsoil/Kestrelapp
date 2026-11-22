@@ -377,6 +377,21 @@ def _refusal_reasons(criteria: dict, metrics: dict, settings: Settings) -> list[
 _FILE_TRACKS = {"employment": "employment", "consulting": "consulting"}
 
 
+def _write_new_files(items) -> None:
+    """Write each (path, bytes) to a new file ("xb": never over another file). On a failure,
+    remove every file this call wrote, so a failed save leaves nothing behind."""
+    written: list = []
+    try:
+        for target, data in items:
+            with open(target, "xb") as fh:
+                written.append(target)
+                fh.write(data)
+    except OSError:
+        for target in written:
+            target.unlink(missing_ok=True)
+        raise
+
+
 async def _save_model(
     session: AsyncSession,
     *,
@@ -397,14 +412,16 @@ async def _save_model(
     version = utcnow_iso().replace(":", "").replace(".", "")
     model_path = paths.ml_dir() / f"reranker_{file_track}_{version}.pkl"
     feat_path = paths.ml_dir() / f"features_{file_track}_{version}.pkl"
-    with open(model_path, "wb") as fh:
-        pickle.dump(model, fh)
-    with open(feat_path, "wb") as fh:
-        pickle.dump(fitted, fh)
-    # Signed before the row exists (D-SEC-13): the loader refuses any file without this install's
-    # signature, so a file swapped in later, or copied from another install, never unpickles.
-    model_sig = signing.sign_file(model_path)
-    feat_sig = signing.sign_file(feat_path)
+    # Signed before anything is written or the row exists (D-SEC-13): the loader refuses any
+    # file without this install's signature, so a file swapped in later, or copied from another
+    # install, never unpickles. A key that cannot be used stops the save here, before any file
+    # is written, so a failed save leaves no unsigned pickle behind.
+    key = signing.load_or_create_key()
+    model_bytes = pickle.dumps(model)
+    feat_bytes = pickle.dumps(fitted)
+    model_sig = signing.sign_bytes(model_bytes, key)
+    feat_sig = signing.sign_bytes(feat_bytes, key)
+    await asyncio.to_thread(_write_new_files, ((model_path, model_bytes), (feat_path, feat_bytes)))
 
     if promoted:  # only one active reranker per track
         for m in (
@@ -484,24 +501,20 @@ _HONEST_SAMPLE_FLOOR = 5
 
 def _artifact_is_loadable(ml: MlModel) -> bool:
     """Would load_active_reranker accept this row? Read-only and cheap: no unpickling, no writes,
-    no Notification. Mirrors that function's refusal conditions (data folder, sklearn version,
+    no Notification. Mirrors that function's refusal conditions (ml folder, sklearn version,
     signatures) so the /calibrate panel and Settings > Scoring and learning cannot claim a
     reranker is active when loading it would in fact fall back to the LLM."""
-    from pathlib import Path
-
     if ml.sklearn_version != _sklearn_version():
         return False
-    for path, sig in (
-        (ml.artifact_path, ml.artifact_signature),
-        (ml.pca_artifact_path, ml.pca_artifact_signature),
-    ):
-        if not path or not Path(path).exists():
-            return False
-        if paths.confined_file(path, paths.data_dir()) is None:  # outside the data folder
-            return False
-        if signing.read_verified(path, sig) is None:  # unsigned, edited or another install's
-            return False
-    return True
+    # read_verified reads only a regular file inside the ml folder, of bounded size, and only
+    # when its signature is this install's: outside, missing, unsigned and edited all refuse.
+    return all(
+        signing.read_verified(path, sig) is not None
+        for path, sig in (
+            (ml.artifact_path, ml.artifact_signature),
+            (ml.pca_artifact_path, ml.pca_artifact_signature),
+        )
+    )
 
 
 def _rate_text(value: float | None, n: int, min_n: int) -> str:
@@ -786,16 +799,17 @@ async def load_active_reranker(
         return None
     # A restored or edited database can name ANY file on the computer as a model artifact
     # (issue #173): loading a pickle can run arbitrary code, so refuse to load a path outside
-    # Kestrel's own data folder rather than unpickle a foreign file. A normal artifact lives in
-    # paths.ml_dir(), inside the data folder, so same-machine models are unaffected. This is the
-    # second line of defense; restore itself deactivates the reranker and clears its paths.
+    # Kestrel's own ml folder rather than unpickle a foreign file. A normal artifact lives in
+    # paths.ml_dir(), so same-machine models are unaffected. This is the second line of
+    # defense; restore itself deactivates the reranker and clears its paths.
+    folder = paths.ml_folder()
     for stored in (ml.artifact_path, ml.pca_artifact_path):
-        if stored and paths.confined_file(stored, paths.data_dir()) is None:
+        if stored and (folder is None or paths.confined_file(stored, folder) is None):
             log.info("reranker_path_outside_data_folder", track=track)
             await _notify(
                 session,
                 "reranker_refused",
-                f"Reranker for {track} refused: its model file is outside Kestrel's data folder, "
+                f"Reranker for {track} refused: its model file is not in Kestrel's model folder, "
                 "so it was not loaded. Scoring is using the LLM tier until a reranker is "
                 "retrained on this machine.",
                 severity="warning",
@@ -840,8 +854,8 @@ async def load_active_reranker(
         )
         return None
     try:
-        model = pickle.loads(model_bytes)
-        fitted = pickle.loads(fitted_bytes)
+        model = pickle.loads(model_bytes)  # noqa: S301  blob passed an HMAC check just above
+        fitted = pickle.loads(fitted_bytes)  # noqa: S301  blob passed an HMAC check just above
     except (pickle.UnpicklingError, EOFError, AttributeError, ImportError) as exc:
         await _notify(
             session,

@@ -9,6 +9,7 @@ import re
 
 import pytest
 
+from tests.page_source import as_written
 from tests.test_ui_tokens import _tokens, contrast
 
 pytestmark = pytest.mark.usefixtures("_isolate_data_home")
@@ -53,7 +54,7 @@ def test_bell_label_caps_at_nine_plus_and_hides_at_zero(count, label):
 def test_bell_button_names_the_count_and_the_badge_is_hidden_from_readers():
     from tests.test_surfaces import _client
 
-    html = _client().get("/settings").text
+    html = as_written(_client().get("/settings").text)
     tools = html.split('<header class="k-tools"')[1].split("</header>")[0]
     assert 'id="bellcount" class="k-icon__n" aria-hidden="true"' in tools
     # The page script writes "Notifications, N unread" from the header's true count.

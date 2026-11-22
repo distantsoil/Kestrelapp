@@ -159,7 +159,11 @@ def test_a_hang_shows_the_long_wait_line_then_ends_with_a_message(live, path):
         page.clock.run_for(61_000)  # a minute of the page's own time
         assert page.is_visible('[data-testid="import-long"]')
         assert "taking longer" in page.inner_text('[data-testid="import-long"]')
-        assert page.inner_text('[data-testid="import-elapsed"]').strip() in {"61 s", "60 s"}
+        # D-TEST-824: clock.install() leaves the page clock running in real time as well, so a
+        # loaded machine adds seconds ("62 s" was seen). The page has had a fake minute at least:
+        # that lower bound is what the line promises; an upper bound would be a real-time limit.
+        shown = page.inner_text('[data-testid="import-elapsed"]').strip()
+        assert shown.endswith(" s") and int(shown[:-2]) >= 60, shown
         page.wait_for_selector('[data-testid="import-error"]', timeout=15000)  # the client gave up
         assert "too long" in page.inner_text('[data-testid="import-error"]')
         assert page.query_selector('[data-testid="import-working"]') is None
@@ -262,3 +266,34 @@ def _start_online_without_click(page) -> None:
     page.fill("#import-form textarea[name=text]", _TEXT)
     page.click("#import-form button[type=submit]")
     page.wait_for_selector('[data-testid="doc-online-send"]', state="visible")
+
+
+def test_a_chosen_resume_name_is_bold_and_larger_on_profile_documents(live, tmp_path):
+    """Owner, 2026-11-17: the chosen file's name on Profile > Documents shows bold and two
+    points larger (13 px to 15 px); the Choose file button keeps its size and weight."""
+    ctx, page, errors = _page(live, "/documents")
+    try:
+        picker = page.locator("#import-file")
+        style = "e => [getComputedStyle(e).fontWeight, getComputedStyle(e).fontSize]"
+        button = ("e => [getComputedStyle(e, '::file-selector-button').fontWeight,"
+                  " getComputedStyle(e, '::file-selector-button').fontSize]")
+        assert picker.evaluate(style) == ["400", "13px"]
+        before = picker.evaluate(button)
+        resume = tmp_path / "invented-resume.md"
+        resume.write_text("# Pat Example\n\n- Ran an invented depot.\n", encoding="utf-8")
+        picker.set_input_files(str(resume))
+        page.wait_for_function(
+            "() => document.getElementById('import-file').classList.contains('is-chosen')")
+        wait_for_layout(page)
+        weight, size = picker.evaluate(style)
+        assert int(weight) >= 600 and size == "15px"
+        assert picker.evaluate(button) == before
+        shots = os.environ.get("KESTREL_SHOT_DIR")
+        if shots:
+            page.screenshot(path=os.path.join(shots, "documents-resume-chosen-light-1280.png"))
+        picker.set_input_files([])
+        page.wait_for_function(
+            "() => !document.getElementById('import-file').classList.contains('is-chosen')")
+        assert not errors, errors
+    finally:
+        ctx.close()

@@ -139,7 +139,7 @@ def _backup_tree(staging: Path) -> dict[str, Any]:
             continue
         try:
             flat[key] = json.loads(raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, RecursionError):  # never a crash (D-INST-12)
             continue
     from kestrel.services.setting_overrides import nest_overrides
 

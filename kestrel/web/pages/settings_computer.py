@@ -240,7 +240,8 @@ async def free_save(request: Request):
     """Free models only (OpenRouter). On needs the training tick; without it nothing is written
     and the card comes back with the ticks as they were. On with the tick goes through the one
     connect path (the saved key, no new key, run mode untouched) so the tiers really use free
-    models. Off stores off and leaves the picks."""
+    models, and only while online models are in use: it never turns them on (D-PRIV-790). Off
+    stores off and leaves the picks."""
     from kestrel.services.hosted_connect import connect_provider
     from kestrel.web.pages.settings import _active_profile_name
 
@@ -265,13 +266,12 @@ async def free_save(request: Request):
             return await redraw(
                 "Free models may train on what Kestrel sends. Tick the box to allow that, or "
                 "leave this off. Nothing was changed.", False, keep=True)
-        if not settings.llm.hosted_mode.acknowledgement_current:
-            return await redraw(
-                "Approve what is sent to an online model on Models first. Nothing was "
-                "changed.", False, keep=True)
+        # No disclosure is ticked on this form: the picks change only while online models are
+        # already in use, and the consent rows are never written here (D-PRIV-790).
         out = await connect_provider(
-            s, settings, provider="openrouter", api_key="", acknowledged=True, free_only=True,
-            switch=False, profile=_active_profile_name(), allow_training=True)
+            s, settings, provider="openrouter", api_key="", acknowledged=False, free_only=True,
+            switch=False, profile=_active_profile_name(), allow_training=True,
+            standing_consent=True)
     if not out.ok:
         return await redraw(out.message, False, keep=True)
     return await redraw(out.headline, True)

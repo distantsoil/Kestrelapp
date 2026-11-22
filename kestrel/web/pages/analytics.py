@@ -394,10 +394,15 @@ async def export_pdf(request: Request):
     css_dir = Path(paths.web_static_dir()) / "css"
     ctx["css"] = "\n".join(
         (css_dir / name).read_text(encoding="utf-8")
-        for name in ("tokens.css", "components.css", "pages/analytics.css")
+        for name in ("tokens.css", "components.css", "pages/analytics.css", "csp.css")
     )
     ctx["print_mode"] = True
-    html = templates().get_template("analytics_print.html").render(request=request, **ctx)
+    from kestrel.web.csp import print_safe
+
+    # Printed outside the app: its computed widths go back to style attributes (D-SEC-57).
+    html = print_safe(
+        templates().get_template("analytics_print.html").render(request=request, **ctx)
+    )
     try:
         out = await render_pdf(html)
     except Exception as exc:  # no Edge or Playwright on this machine

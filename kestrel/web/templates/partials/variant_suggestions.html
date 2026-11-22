@@ -15,8 +15,7 @@
         {% else %}
           <form hx-post="/documents/slot/{{ slot_id }}/variants"
                 hx-target="#slot-variants-{{ slot_id }}" hx-swap="beforeend"
-                hx-on::after-request="if (event.detail.successful &&
-                  !event.detail.xhr.getResponseHeader('HX-Retarget')) this.closest('li').remove()">
+                data-k-after-request="remove-li-if-ok">
             <input type="hidden" name="text" value="{{ sg.text }}">
             <input type="hidden" name="tags" value="{{ sg.tags | join(',') }}">
             <button class="btn" type="submit">Add</button>

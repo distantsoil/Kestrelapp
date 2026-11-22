@@ -137,8 +137,10 @@ async def test_a_plain_t1_task_never_runs_from_t0_reject(sm):
 
 
 async def test_a_task_that_dies_records_no_override(sm):
-    """Every attempt errors (the model is down) until the task is dead: no override row, the
-    role stays set aside, and nothing says "You asked to score this"."""
+    """Every attempt errors (the model is down) until the task is dead: no override row and
+    nothing says "You asked to score this". The role does not go back to reading as set aside:
+    its scoring died, so it is in Needs another try (D-WORKER-8; it stayed at t0_reject before,
+    which showed a role the person asked to score as rejected)."""
     settings = get_settings()
     oid = await _director(sm)
     async with sm() as s:
@@ -161,7 +163,7 @@ async def test_a_task_that_dies_records_no_override(sm):
     assert task.status == "dead"
     async with sm() as s:
         assert await tier0_override.get(s, oid) is None
-        assert (await s.get(Opportunity, oid)).stage == "t0_reject"
+        assert (await s.get(Opportunity, oid)).stage == "quarantined"
 
 
 async def test_an_existing_ordinary_t1_task_becomes_the_score_anyway(sm):

@@ -113,6 +113,23 @@ hiddenimports += ["python_multipart", "multipart"]
 # static graph may miss on a platform build, so it is named here.
 hiddenimports += ["psutil"]
 
+# macOS notifications post as Kestrel.app through UNUserNotificationCenter (D-NOTIFY-630). The
+# import sits inside a function behind a bundle check, so it is named here rather than left to the
+# static graph. Only the identifier in the bundle's Info.plist is needed (BUNDLE_ID below, already
+# set); local notifications need no entitlement.
+if IS_MACOS:
+    hiddenimports += ["UserNotifications"]
+
+# phonenumbers loads each country's rules with importlib at run time (phonenumbers.data.region_XX),
+# so the static graph misses them and a packaged number would not parse (#207, D-PHONE-1). Its
+# metadata is read by the third-party notices. The geocoder, carrier and timezone data (about 20 MB)
+# are lookups Kestrel never calls, so they are excluded below.
+hiddenimports += collect_submodules("phonenumbers.data")
+datas += copy_metadata("phonenumbers")
+_PHONE_LOOKUP_DATA = [
+    "phonenumbers.geodata", "phonenumbers.carrierdata", "phonenumbers.timezone",
+]
+
 # tiktoken resolves cl100k_base through a namespace-package plugin the static graph misses (F2).
 hiddenimports += ["tiktoken_ext", "tiktoken_ext.openai_public"]
 
@@ -223,7 +240,8 @@ a = Analysis(
     # dependencies (FastMCP's OAuth proxy, huggingface_hub's login, numpy's experimental API) that
     # Kestrel never loads; bundling them printed deprecation warnings on every build (D-PKG-5).
     # tests/test_packaging.py proves the app's import graph never reaches them.
-    excludes=["tkinter", "pytest", "torch", "jax", "authlib", "numpy.array_api"],
+    excludes=["tkinter", "pytest", "torch", "jax", "authlib", "numpy.array_api"]
+    + _PHONE_LOOKUP_DATA,
     noarchive=False,
     # LGPL libraries ship as plain .py files in _internal, not inside the PYZ archive, so a user
     # can replace them with their own build as the LGPL requires (D-LIC-1): pystray (LGPLv3,

@@ -114,11 +114,23 @@ async def _set(session: AsyncSession, key: str, value: Any) -> None:
         row.updated_at = utcnow_iso()
 
 
+# The rows that record the person's online consent: written only from a ticked disclosure form.
+CONSENT_ROWS = (
+    "llm.hosted_mode.enabled", "llm.hosted_mode.acknowledged_at",
+    "llm.hosted_mode.acknowledged_terms",
+)
+
+
 async def connect_provider(
     session: AsyncSession, settings: Settings, *, provider: str, api_key: str,
     acknowledged: bool, free_only: bool, switch: bool, profile: str | None,
-    allow_training: bool = False,
+    allow_training: bool = False, standing_consent: bool = False,
 ) -> ConnectOutcome:
+    """Connect a provider. `acknowledged` is the disclosure box ticked on the form that posted
+    this request; only then are the consent rows (llm.hosted_mode.enabled, acknowledged_at,
+    acknowledged_terms) written. `standing_consent` is a caller with no such form (Free models
+    only): it may only change the picks while online models are already in use, asks the
+    provider nothing otherwise, and never writes a consent row (D-REL-41, D-PRIV-790)."""
     from kestrel.private_logging import private_values, redact
 
     # Protect a pasted replacement key during verification as well as saved credentials.
@@ -126,6 +138,7 @@ async def connect_provider(
         out = await _connect_provider(
             session, settings, provider=provider, api_key=api_key, acknowledged=acknowledged,
             free_only=free_only, switch=switch, profile=profile, allow_training=allow_training,
+            standing_consent=standing_consent,
         )
         if provider == "other":
             out.headline, out.detail = redact(out.headline), redact(out.detail)
@@ -145,6 +158,7 @@ async def _connect_provider(
     switch: bool,
     profile: str | None,
     allow_training: bool = False,
+    standing_consent: bool = False,
 ) -> ConnectOutcome:
     """Run the connect. Commits the session on success; writes nothing on a refusal."""
     from kestrel import setup as setup_mod
@@ -158,7 +172,15 @@ async def _connect_provider(
     label, env = preset["label"], backend.api_key_env
     if not value and not prov.secret_present(env):
         return _refused(provider, "no_key", f"Paste your {label} API key.", label=label)
-    if not acknowledged:
+    if standing_consent:
+        from kestrel.services import setup_state
+
+        # Before any request: with no ticked form, only online already in use may connect.
+        why_not = await setup_state.online_not_in_use_now(session, settings)
+        if why_not is not None:
+            return _refused(provider, "online_not_in_use", f"{why_not} Nothing was changed.",
+                            label=label)
+    elif not acknowledged:
         return _refused(
             provider, "not_acknowledged",
             'Tick "I understand" under the disclosure to connect; nothing was saved.',
@@ -230,6 +252,10 @@ async def _connect_provider(
         return _refused(provider, "rows_refused", f"{saved}{exc}.", label=label)
     if not switch:
         rows.pop("llm.mode")
+    if standing_consent:
+        # Consent is written only by the form that showed the disclosure and had it ticked.
+        for k in CONSENT_ROWS:
+            rows.pop(k, None)
     if backend.provider == "openrouter":
         # The privacy choice follows the model choice: free needs allow; paid goes back to the
         # private default unless the operator set allow on Settings > Hosted themselves.

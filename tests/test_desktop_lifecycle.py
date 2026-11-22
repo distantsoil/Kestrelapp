@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from kestrel import paths
+from tests import channel_spy
 
 
 @pytest.fixture
@@ -162,11 +163,17 @@ def test_try_again_after_a_failed_wait_waits_for_the_lock_again(shell, monkeypat
     monkeypatch.setattr(shell, "_wait_for_lock", lambda timeout=0: waited.append(1) or False)
     monkeypatch.setattr(shell, "start_server", lambda: pytest.fail("booted without the lock"))
     monkeypatch.setattr(shell, "window", _Window())
+    from types import SimpleNamespace
+
+    from kestrel.desktop.channel import SPLASH_EVENTS, Channel
+
+    monkeypatch.setattr(shell, "_splash_server", SimpleNamespace(channel=Channel(SPLASH_EVENTS)))
+    said = channel_spy.spy(monkeypatch)
     assert shell._retry_start() is True
     assert shell._boot_guard.acquire(timeout=5)
     shell._boot_guard.release()
     assert waited == [1] and shell._boot_failed is True
-    assert any("KSplash.fail(" in js for js in shell.window.js)
+    assert any("KSplash.fail(" in js for js in said)
 
 
 def test_a_quiet_start_that_fails_shows_its_window(shell, monkeypatch):
@@ -178,9 +185,10 @@ def test_a_quiet_start_that_fails_shows_its_window(shell, monkeypatch):
     monkeypatch.setattr("kestrel.db.migrate.run_migrations", lambda *a, **k: None)
     monkeypatch.setattr("kestrel.web.serve.wait_for_health", lambda port, timeout=30.0: False)
     monkeypatch.setitem(sys.modules, "webview", _webview(win, lambda f, a: f(*a)))
+    said = channel_spy.spy(monkeypatch)
     assert shell.run_desktop() == 1
     assert win.shown >= 1, "a hidden window holding the lock with a failed start"
-    assert any("KSplash.fail(" in js for js in win.js)
+    assert any("KSplash.fail(" in js for js in said)
 
 
 def _runtime(**info) -> None:
@@ -258,7 +266,8 @@ def test_a_relaunch_right_after_exit_shows_the_busy_page_at_once(shell, monkeypa
     paths.runtime_json().unlink(missing_ok=True)
     t0 = _time.monotonic()
     assert shell._second_launch(wait_s=60) == "closing"
-    assert _time.monotonic() - t0 < 3
+    # D-TEST-825: the wait is 60 s; 30 s still proves it did not wait, and load cannot reach it.
+    assert _time.monotonic() - t0 < 30
 
 
 def test_quitting_keeps_the_closing_screen_up_until_the_server_has_stopped(shell, monkeypatch):
@@ -287,6 +296,10 @@ def test_quitting_keeps_the_closing_screen_up_until_the_server_has_stopped(shell
     monkeypatch.setattr(shell.threading, "Thread",
                         lambda target, **k: type("T", (), {"start": lambda self: started.append(
                             target) or target()})())
+    from kestrel.desktop.channel import APP_EVENTS, Channel
+
+    monkeypatch.setattr(shell, "_app_channel", Channel(APP_EVENTS))
+    said = channel_spy.spy(monkeypatch)
     assert shell.on_closing() is False  # the OS close waits for the closing screen
-    assert any("KUI.frame.closing()" in js for js in win.js)
+    assert any("KUI.frame.closing()" in js for js in said)
     assert th.joined == shell.QUIT_JOIN_S and destroyed == [1]

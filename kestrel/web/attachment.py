@@ -26,3 +26,25 @@ def attachment_disposition(name: str, fallback: str = "download.csv") -> str:
     if ascii_name != clean:
         value += f"; filename*=UTF-8''{quote(clean, safe='')}"
     return value
+
+
+def pdf_download(data: bytes, name: str):
+    """A PDF download built from bytes already read and checked (paths.read_servable), never
+    from a path the response would open again later (D-SEC-55)."""
+    from fastapi.responses import Response
+
+    return Response(data, media_type="application/pdf",
+                    headers={"Content-Disposition": attachment_disposition(name, "document.pdf")})
+
+
+PDF_MISSING = "The PDF file is missing from disk."
+
+
+def pdf_not_served(why: str) -> str:
+    """What a download says when paths.read_servable_why refused the file: missing only when it
+    is missing, otherwise the true reason, so a refused link is never called a missing file."""
+    from kestrel import paths
+
+    if why == paths.LEFT_OUT_MISSING or why not in paths.LEFT_OUT_REASONS:
+        return PDF_MISSING
+    return f"The PDF was not served: {why}."

@@ -6,7 +6,7 @@
    Text-on-ground pairs are held at WCAG AA (4.5:1) in both themes and all four schemes by the
    same test; change a value here only with that test green.
    The scene tokens (--sky-* --m* --tree* --orb --glow --water* ...) feed the scene art in
-   static/js/scenes/ (the locked design mockup (kept privately)/CONTRACT.md). */
+   static/js/scenes/ and, with --il-*, the first-run illustration (js/first-run-art.js) (the locked design mockup (kept privately)/CONTRACT.md). */
 
 /* Manrope (SIL OFL 1.1, fonts/manrope/OFL.txt), the owner's choice (D-UI-127), shipped with the
    app so it renders the same offline on every computer. Variable weight 200 to 800. "block" keeps
@@ -58,6 +58,8 @@
   --bell:#8A5A00;--wc-close:#C42B1C;--wc-close-ink:#FFFFFF;
   --main-bg:linear-gradient(180deg,#E1E8FF 0,#F5F7FC 460px);--side-bg:#FFFFFF;--frame-strip:#FFFFFF;
   --sky-top:#F5F7FC;--sky-bot:#E1E8FF;--m1:#D3DCFB;--m1s:#BCC8F6;--m2:#AFBDF3;--m2s:#93A3EC;--m3:#7F8FE4;--m3s:#6A7BDB;--snow:#FFFFFF;--tree:#4E5CD2;--tree2:#6B79DE;--tree3:#8B97E8;--orb:#F7C873;--glow:#FBE3AE;--mist:#FFFFFF;--bird:#5E6584;--z1:#E8857D;--z2:#EDBF55;--z3:#5DBB8A;
+  /* The first-run illustration (D-UI-249, js/first-run-art.js). */
+  --il-floor:#DDE3FB;--il-wall:#EEF1FD;--il-wall-2:#E5EAFB;--il-wood:#D2A57A;--il-skin:#F1C29B;--il-skin-2:#E2A982;--il-hair:#2B2F4A;--il-pants:#3A4378;--il-shirt:#EFB84A;--il-cuff:#D99A2B;--il-mug:#FFFFFF;--il-coffee:#6B4128;--il-steam:#8590BE;--il-sky:#CFE0FF;--il-pot:#F2F4FA;--il-rug:#C7CFF7;
   --water:#C3CFF8;--water2:#9FB0F0;--lite:#F7C873;--sand:#E6E1F7;--sand2:#CFC6EE;--leaf:#8E9BE6;--aur1:#7FD8C4;--aur2:#B49BF0;
   /* Application status colors, fixed hues (analytics-mockup-locked.html :432-433). */
   --st-offer:#008300;--st-iv:#2a78d6;--st-wait:#eda100;--st-rej:#e34948;--st-ghost:#6250d6;--st-wd:#1baf7a;
@@ -76,6 +78,7 @@
     --scrim:rgba(3,5,12,.5);--scrim-strong:rgba(3,5,12,.6);--wash:rgba(255,255,255,.14);--toast-bg:#4CC98A;--toast-ink:#0D1122;--toast-action:#0D1122;--bell:#E0A100;
     --main-bg:linear-gradient(180deg,#34449E 0,#1E2862 260px,#0C1230 620px,#04060E 100%);--side-bg:linear-gradient(180deg,#141B3E 0,#090D20 50%,#03050C 100%);--frame-strip:#090D20;
     --sky-top:#0E1330;--sky-bot:#2C3A86;--m1:#33408A;--m1s:#2A3576;--m2:#283270;--m2s:#1F285D;--m3:#1C2456;--m3s:#161D48;--snow:#AEB8EE;--tree:#111842;--tree2:#18205A;--tree3:#212B6C;--orb:#F1EBCF;--glow:#8E96D6;--mist:#6D79C8;--bird:#AEB4D6;--z1:#B4524B;--z2:#B88A2E;--z3:#3A9A6A;
+    --il-floor:#222A55;--il-wall:#1A2148;--il-wall-2:#151B3D;--il-wood:#9C7350;--il-skin:#E3B08A;--il-skin-2:#C98F6A;--il-hair:#3E3352;--il-pants:#4A559A;--il-shirt:#D9A441;--il-cuff:#B07E26;--il-mug:#E8EBF8;--il-coffee:#7A4B30;--il-steam:#8E96D6;--il-sky:#2C3A86;--il-pot:#3A4170;--il-rug:#2E3770;
     --water:#25307A;--water2:#1A2360;--lite:#F2D488;--sand:#2E3578;--sand2:#252C66;--leaf:#2A3577;--aur1:#4FC7A9;--aur2:#9C7FE8;
     --st-offer:#008300;--st-iv:#3987e5;--st-wait:#c98500;--st-rej:#e34948;--st-ghost:#9085e9;--st-wd:#199e70;
     color-scheme:dark;
@@ -95,6 +98,7 @@
   --scrim:rgba(3,5,12,.5);--scrim-strong:rgba(3,5,12,.6);--wash:rgba(255,255,255,.14);--toast-bg:#4CC98A;--toast-ink:#0D1122;--toast-action:#0D1122;--bell:#E0A100;
   --main-bg:linear-gradient(180deg,#34449E 0,#1E2862 260px,#0C1230 620px,#04060E 100%);--side-bg:linear-gradient(180deg,#141B3E 0,#090D20 50%,#03050C 100%);--frame-strip:#090D20;
   --sky-top:#0E1330;--sky-bot:#2C3A86;--m1:#33408A;--m1s:#2A3576;--m2:#283270;--m2s:#1F285D;--m3:#1C2456;--m3s:#161D48;--snow:#AEB8EE;--tree:#111842;--tree2:#18205A;--tree3:#212B6C;--orb:#F1EBCF;--glow:#8E96D6;--mist:#6D79C8;--bird:#AEB4D6;--z1:#B4524B;--z2:#B88A2E;--z3:#3A9A6A;
+    --il-floor:#222A55;--il-wall:#1A2148;--il-wall-2:#151B3D;--il-wood:#9C7350;--il-skin:#E3B08A;--il-skin-2:#C98F6A;--il-hair:#3E3352;--il-pants:#4A559A;--il-shirt:#D9A441;--il-cuff:#B07E26;--il-mug:#E8EBF8;--il-coffee:#7A4B30;--il-steam:#8E96D6;--il-sky:#2C3A86;--il-pot:#3A4170;--il-rug:#2E3770;
   --water:#25307A;--water2:#1A2360;--lite:#F2D488;--sand:#2E3578;--sand2:#252C66;--leaf:#2A3577;--aur1:#4FC7A9;--aur2:#9C7FE8;
   --st-offer:#008300;--st-iv:#3987e5;--st-wait:#c98500;--st-rej:#e34948;--st-ghost:#9085e9;--st-wd:#199e70;
   color-scheme:dark;

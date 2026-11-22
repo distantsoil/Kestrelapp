@@ -31,11 +31,15 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 
 from kestrel.analytics.progress import model_label, tier2_label, tier2_pace_seconds
+from kestrel.config import ONLINE_CONSENT_HOW
 from kestrel.date_display import format_display
 from kestrel.db.models import Evaluation, Opportunity, Org, Quarantine
+from kestrel.learning.correction_lines import confirm_corrections
 from kestrel.pipeline._shared import derived_num_ctx
 from kestrel.pipeline.profile import load_profile
+from kestrel.queue import row_retry
 from kestrel.queue.rescore import MAX_ROLES, enqueue_rescore, parse_ids
+from kestrel.services.online_consent import read_approval
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import models_view as mv
 from kestrel.web.auth import refuse_unless_local, release_credit_hold
@@ -85,7 +89,7 @@ async def _hosted_models(settings) -> tuple[str, str | None, list, list, dict, s
     label = next((p["label"] for p in prov.PRESETS.values() if p["backend"] == name), name)
     if not settings.llm.hosted_mode.active:
         return label, name, [], [], {}, (
-            f"{label} models are offered here once Hosted mode is on under Settings > Hosted."
+            f"{label} models are offered here once Hosted mode is on: {ONLINE_CONSENT_HOW}."
         )
     if not (backend.api_key or prov.secret_present(backend.api_key_env)):
         return label, name, [], [], {}, None
@@ -96,7 +100,7 @@ async def _hosted_models(settings) -> tuple[str, str | None, list, list, dict, s
         log.info("rescore_model_list_failed", provider=name, error=str(exc))
         return label, name, [], [], {}, (
             f"The model list from {label} could not be fetched. Check the key and your "
-            "connection under Settings > Hosted."
+            "connection under Settings > This computer."
         )
     raw = [m for m in raw if (m.json_mode or "schema") in _JSON_MODES]
     picker = hm.picker_models(raw)
@@ -254,8 +258,14 @@ async def online_refusal(session, settings, form) -> str | None:
     if pick.startswith(HOSTED_PREFIX):
         if str(form.get("confirmed") or "") != "1":
             return "not_confirmed"
-        if not settings.llm.hosted_mode.active:
+        from kestrel.services.setup_state import ONLINE_OFF, online_send_held
+
+        why_not = online_send_held(settings)
+        if why_not == ONLINE_OFF:
             return "hosted_off"
+        if why_not is not None:
+            # On this computer is chosen: no online model is available to pick (D-PRIV-798).
+            return "bad_model"
         override, _label, why = await _override_for(settings, pick)
         if override is None:
             return "bad_model"
@@ -286,17 +296,6 @@ CORRECTIONS_CHANGED = (
     "Not queued: nothing was sent. Your corrections changed since this dialog opened. Open "
     "Score again to see what would be sent."
 )
-
-
-async def corrections_changed(session, settings, override, ids: list[int], form) -> bool:
-    """True when the send goes online and the correction lines the dialog listed (its posted
-    `corrections_digest`) are not the lines a score of these roles would state now (D-SCORE-3).
-    A send that stays on this computer binds nothing."""
-    from kestrel.learning.correction_lines import dialog_digest
-
-    if not _approval_for_override(settings, override):
-        return False
-    return str(form.get("corrections_digest") or "") != await dialog_digest(session, ids)
 
 
 def estimate_minutes(n: int, pace_s: float | None) -> int | None:
@@ -563,6 +562,19 @@ async def rescore(request: Request):
                       code="no_pick")
     try:
         async with sessionmaker()() as s:
+            # A form naming a failed row for exactly its role is a retry of that row: what runs
+            # is the row's own step, or nothing (D-UI-790). Anything else is an ordinary Score
+            # again, which spends no row's retry.
+            row_id = str(form.get("quarantine_id") or "")
+            row = await s.get(Quarantine, int(row_id)) if row_id.isdigit() else None
+            row_task: str | None = None
+            if row is not None and ids == [row.opportunity_id]:
+                plan = row_retry.plan(row, await s.get(Opportunity, row.opportunity_id))
+                if plan.task is None:
+                    return answer(plan.why or "Not queued.", ok=False)
+                row_task = plan.task
+            else:
+                row = None
             settings = await load_settings_with_db(s)
             override = None
             if pick == "same" or pick.startswith(HOSTED_PREFIX):
@@ -575,16 +587,23 @@ async def rescore(request: Request):
                 override, _label, why = await _override_for(settings, pick)
                 if override is None:
                     return answer(f"Not queued: {why}", ok=False)
-            if (pick == "same" or pick.startswith(HOSTED_PREFIX)) and await corrections_changed(
-                s, settings, override, ids, form
-            ):
-                return answer(CORRECTIONS_CHANGED, ok=False, code="corrections_changed")
+            # An approval rides on the tasks only when something goes online, and then only with
+            # the lines this dialog listed, read again here in the session that queues
+            # (D-PRIV-674).
+            approval = (read_approval(form.get("online_approval"))
+                        if _approval_for_override(settings, override) else None)
+            confirmed = None
+            if approval:
+                confirmed = await confirm_corrections(s, ids, form.get("corrections_digest"))
+                if confirmed is None:
+                    return answer(CORRECTIONS_CHANGED, ok=False, code="corrections_changed")
             result = await enqueue_rescore(
                 s, ids, model_override=override, tier0_anyway=anyway, score_stubs=True,
                 explain=rule_explainer(s, settings),
-                online_approval=form.get("online_approval"),
+                online_approval=approval, corrections=confirmed, task_type=row_task,
             )
-            await _count_retry(s, str(form.get("quarantine_id") or ""), result.queued)
+            if row is not None:
+                await _count_retry(s, str(row.id), result.queued)
             await s.commit()
     except Exception as exc:  # a write path never turns into a 500 (CLAUDE.md)
         log.warning("rescore_failed", error_type=type(exc).__name__, error=str(exc))

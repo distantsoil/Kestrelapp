@@ -1,0 +1,33 @@
+/* Settings > This computer: Ollama's speed settings (issue #181). Theme tokens only. */
+/* The card itself never animates on a swap (nothing redraws that did not change); only the
+   parts that appear do: the message, the confirm, the after-change row, opened details. */
+.oe { min-width: 0; }
+.oe-lead { margin: 0 0 .6rem; }
+.oe-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.oe-row { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; align-items: start; }
+.oe-body { min-width: 0; overflow-wrap: anywhere; }
+.oe-body .st-dsm { display: block; }
+.oe-ic { width: 22px; height: 22px; font-size: 12px; }
+.oe-ic.ok { background: var(--good-bg); color: var(--good-ink); }
+.oe-ic.warn { background: var(--warn-bg); color: var(--warn-ink); }
+.oe-val { margin-left: .3rem; }
+.oe-hidden { margin: 0; }
+.oe-where { margin: .6rem 0; overflow-wrap: anywhere; }
+.oe-msg { margin: 0 0 .6rem; font-weight: 700; animation: oe-in .22s ease-out both; }
+.oe-confirm { border: 1px solid var(--line); border-radius: 8px; padding: .7rem .9rem;
+  background: var(--warm); animation: oe-in .22s ease-out both; overflow-wrap: anywhere; }
+.oe-plan { margin: .4rem 0; padding-left: 1.2rem; }
+.oe-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: .5rem; }
+.oe-actions form { margin: 0; }
+.oe-actions .btn { transition: transform .12s ease, background-color .15s ease; }
+.oe-actions .btn:active { transform: scale(.97); }
+.oe-undo-note { overflow-wrap: anywhere; }
+.oe-after { margin-top: .6rem; animation: oe-in .22s ease-out both; }
+.oe-details { margin-top: .7rem; }
+.oe-details[open] > *:not(summary) { animation: oe-in .2s ease-out both; }
+.oe-cmd { white-space: pre-wrap; overflow-wrap: anywhere; }
+.oe-why { margin: .4rem 0; }
+@keyframes oe-in { from { opacity: 0; transform: translateY(3px); } }
+@media (prefers-reduced-motion: reduce) {
+  .oe, .oe *, .oe *::before, .oe *::after { animation: none !important; transition: none !important; }
+}

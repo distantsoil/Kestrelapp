@@ -27,7 +27,8 @@ SQL = "SQL and forecasting"  # on the strong role (and the second one where a te
 OLDER = "older scoring instructions"
 SCORED_AT = "2026-11-01T09:00:00.000000+00:00"
 _V2 = {"employment": "evaluate/v2", "consulting": "evaluate_consulting/v2"}
-_V3 = {"employment": "evaluate/v3", "consulting": "evaluate_consulting/v3"}
+# The current versions: v4 is the default (owner, D-SCORE-32).
+_NOW = {"employment": "evaluate/v4", "consulting": "evaluate_consulting/v4"}
 
 
 @pytest.fixture
@@ -142,7 +143,7 @@ def test_one_correction_on_role_a_marks_a_and_not_b(ids):
 
 
 def test_adding_a_correction_marks_exactly_the_roles_it_applies_to(ids):
-    _set_versions(_V3)
+    _set_versions(_NOW)
     _add_sql_to_second(ids)
     with _client() as c:
         _assert_all(c, ids, set())
@@ -171,7 +172,7 @@ def test_removing_it_clears_the_mark_when_nothing_else_applies(ids):
 
 
 def test_a_score_from_after_the_correction_is_current_and_an_old_version_is_always_older(ids):
-    _set_versions(_V3)
+    _set_versions(_NOW)
     _correct(ids["strong"], PROCESS)
 
     async def rescored(s):
@@ -187,10 +188,10 @@ def test_a_score_from_after_the_correction_is_current_and_an_old_version_is_alwa
 
 
 def test_score_again_counts_match_the_marks(ids):
-    _set_versions(_V3)
+    _set_versions(_NOW)
     _add_sql_to_second(ids)
     cid = _correct(ids["strong"], SQL)
-    _set_versions(_V3, utcnow_iso())  # rescored after it: none older
+    _set_versions(_NOW, utcnow_iso())  # rescored after it: none older
     with _client() as c:
         _assert_all(c, ids, set())
         r = c.post(f"/profile/corrections/{cid}", data={"operator_state": "part", "note": ""},
@@ -263,7 +264,7 @@ def _given(oid: int, cids: list[int], at: str) -> None:
 def test_an_unrelated_correction_is_not_sent_and_does_not_mark_the_role(ids):
     """A person correction about a requirement only the strong role asks for is never stated
     for the second role, and the second role's score is not older for it (D-SCORE-1)."""
-    _set_versions(_V3)
+    _set_versions(_NOW)
     _correct(ids["strong"], PROCESS, note="I ran the night rota.")
     assert _sent(ids["second"]) == []
     assert any(PROCESS in line for line in _sent(ids["strong"]))
@@ -274,7 +275,7 @@ def test_an_unrelated_correction_is_not_sent_and_does_not_mark_the_role(ids):
 
 
 def test_a_matching_correction_is_sent_and_marks_the_role_and_the_strip_agrees(ids):
-    _set_versions(_V3)
+    _set_versions(_NOW)
     _add_sql_to_second(ids)
     _correct(ids["strong"], SQL)
     assert any(SQL in line for line in _sent(ids["second"]))
@@ -287,7 +288,7 @@ def test_a_matching_correction_is_sent_and_marks_the_role_and_the_strip_agrees(i
 def test_removing_a_correction_the_read_was_given_marks_it_older(ids):
     """Older exactly when the role's block changed: a read scored with a correction stays current
     until that correction is removed, then reads as older, and Undo of the removal clears it."""
-    _set_versions(_V3)
+    _set_versions(_NOW)
     cid = _correct(ids["strong"], PROCESS)
     later = "2999-01-01T00:00:00.000000+00:00"
     _given(ids["strong"], [cid], later)
@@ -314,7 +315,7 @@ def test_a_correction_the_first_score_missed_marks_the_role_until_it_is_rescored
     differently), and its read then lists the requirement, so Score again would send the
     correction: the role reads as older everywhere, strip included, until a read is given it.
     The second role, which does not ask for it, is marked nowhere."""
-    _set_versions(_V3)
+    _set_versions(_NOW)
     cid = _correct(ids["strong"], PROCESS)
     later = "2999-01-01T00:00:00.000000+00:00"
     _given(ids["strong"], [], later)
@@ -358,7 +359,7 @@ def test_score_again_clears_the_mark_on_a_role_whose_latest_read_is_a_deeper_rea
     """The deeper read still speaks for the role (highest tier), but the mark measures what
     Score again would send against the newest read: a Tier 2 Score again given the block clears
     it everywhere, strip included, and a correction after it marks the role again."""
-    _set_versions(_V3)
+    _set_versions(_NOW)
     _deeper_read(ids["strong"])
     _correct(ids["strong"], PROCESS)
     with _client() as c:

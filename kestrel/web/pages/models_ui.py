@@ -221,6 +221,7 @@ async def downloads_ctx(message: str = "", ok: bool = True) -> dict[str, Any]:
             "item": item if item and item["status"] in ("pending", "leased") else None,
             "failed": bool(item and item["status"] in ("dead", "failed")),
             "error": (item or {}).get("error", ""),
+            "code": (item or {}).get("code"),
         })
     missing = [r for r in rows if not r["ready"]]
     total_gb = sum(cat.model_sizes_gb.get(t, 0) for t in state.missing_tags)
@@ -751,8 +752,9 @@ def online_problem(settings: Settings) -> str | None:
     """An online model is only used once the operator accepted the current disclosure (Settings);
     the client refuses a send without it, so Models and Model check say so up front."""
     if not settings.llm.hosted_mode.acknowledgement_current:
-        return ("Online models need your approval first. Tick I understand what gets sent "
-                "on the Models page, then try again.")
+        from kestrel.config import ONLINE_APPROVE_FIRST
+
+        return ONLINE_APPROVE_FIRST
     return None
 
 

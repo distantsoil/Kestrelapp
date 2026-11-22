@@ -196,7 +196,7 @@ fallback, so no role is scored, sketched or storied against a fictional person. 
 | id | int pk | |
 | track | enum | `employment` \| `consulting` |
 | is_active | bool | both may be active |
-| first_name, last_name, email, phone, location | text | `first_name` is required and used to greet the operator; `last_name` may be empty. `full_name` is derived (`first_name last_name`, trimmed) and is what a resume header prints. A migration (0023) splits an existing `full_name` at its first space and keeps the original text (D-UI-117) |
+| first_name, last_name, email, phone, location | text | `first_name` is required and used to greet the operator; `last_name` may be empty. `full_name` is derived (`first_name last_name`, trimmed) and is what a resume header prints. A migration (0023) splits an existing `full_name` at its first space and keeps the original text (D-UI-117); `phone` is the text the person sees, beside `phone_entered`, `phone_e164`, `phone_ext` and `phone_country` in profile.yml (D-PHONE-2) |
 | headline | text | |
 | narrative | text | 300-600 words, first person, track-specific framing |
 | work_auth | text | |
@@ -266,6 +266,7 @@ Tier 0 re-check follow); Dismiss records it so it is never suggested again.
 | remote_type | enum | `remote` \| `hybrid` \| `onsite` \| `unknown` |
 | employment_type | text | |
 | comp_min, comp_max, comp_currency, comp_interval | | employment: annual. consulting: day or hourly rate |
+| comp_currency_known | | true when the posting or board stated the currency; false when USD was assumed; null on rows from before migration 0037 (D-SCORE-28) |
 | comp_source | enum | `structured` \| `parsed` \| `inferred` \| `none` |
 | description_md | text | |
 | description_tokens | int | |
@@ -415,6 +416,7 @@ work with no restart. Only keys declared in the typed settings model are overrid
 | Notification sound | `notify.sound` (default on), `notify.sound_name` (`chime` default, `soft_click`, `bell`), `notify.sound_volume` (0 to 1, clamped), `notify.quiet_hours` (`{enabled, start, end}`, `HH:MM`, default 21:00 to 07:00, off) |
 | Score cutoffs | `thresholds.apply`, `thresholds.consider` |
 | Onboarding | `onboarding.state` (step, visited, skipped, completed) |
+| Install ID | the one row of its own table `install_identity` (`slot` = 1, `install_id`, `created_at`, `version`, `updated_at`; D-INST-1, D-INST-15), read and written only by the install ID module, never a `setting` row: a random UUIDv4 from the OS random source, written once by the first start or the first read that finds none, never derived from the hardware, the person or anything else; shown short as `K-XXXX-XXXX` (the first eight hex digits, uppercased) with the full value under Show details. State, never configuration. It is not `ids.salt` and is never derived from it, and its short form cannot be mistaken for an application's Kestrel ID (`K-XXXXX-XXXXX`, §5.6). It never leaves the computer unless the person copies it (D-INST-2) |
 | Contacts import | `contact_import`, `connection_position`, and `contact.source` = `linkedin_import` (SPEC-MODULES.md §2.3) |
 | Company summary | `org_summary` (SPEC-MODULES.md §2.1) |
 | Near-floor margin | `profile.employment_terms.comp_floor_margin_pct`, `consulting_terms.day_rate_floor_margin_pct` (§4.1) |
@@ -1290,7 +1292,12 @@ Any OpenAI-compatible chat-completions server can be added as `provider: generic
   `acknowledged_terms` (the Tier 1 head, the Tier 2 ceiling and the per-tier "sends" lines as
   accepted). A bare `enabled: true` in YAML without the acknowledgement does nothing, and an
   acknowledgement whose terms differ from the current disclosure is void: hosted sends stop
-  (the client refuses, saying the disclosure changed) until the operator accepts it again. It
+  (the client refuses, saying the disclosure changed) until the operator accepts it again.
+  Choosing On this computer under Settings > This computer stops them too: while online models
+  are not in use (switched off, a stale acknowledgement, or On this computer chosen) nothing is
+  sent to an online model, including work queued and confirmed earlier and retries. One function
+  decides this for every send (`setup_state.online_send_held`); work it holds stays queued and
+  runs when online is in use again, or on this computer once its step is local. It
   exists for machines too weak for local inference and for OpenRouter's free models. Under Hosted mode:
   - The disclosure states exactly what each hosted tier sends: Tier 1 the title, organization,
     location and the first N tokens of the description; Tier 2 the description slice, the org
@@ -1471,7 +1478,29 @@ read from `thresholds` and fixed under D-UI-107.)
 
 Overrides, applied system-side after the model responds:
 
-1. Any hard blocker forces `pass`, with the blocker shown and the model's score preserved.
+1. A model blocker never forces `pass` on its own: only a deterministic check against the
+   operator's own data that upholds it does (D-SCORE-22, D-SCORE-28); the blocker is shown and
+   the model's score preserved. The check, in code, never a model:
+   **comp** (P2C **rate**) is upheld when the employer's stated band, in a currency the posting
+   or board stated (`opportunity.comp_currency_known`) that is USD, annualized (P2C: a day,
+   hour, week or month rate as a day rate), tops out below the floor less the near-floor margin;
+   contradicted when the top reaches the floor; needs confirming when there is no band, one
+   figure only, a job-board estimate, an unstated or non-USD currency, no stated interval (P2C),
+   no floor, or a top within the margin.
+   **location** (P2C **geography**) is upheld when `geo_allows` refuses a posting whose remote
+   type is known and whose place is named (or a remote role sits in a country outside a listed
+   allowlist); contradicted when the role is remote and allowed, or an on-site state or metro
+   matches; needs confirming when the remote type, place or country is unknown, the operator
+   gave no on-site places, did not choose remote (a preference, not a rule), or would relocate.
+   **work_authorization** keeps the explicit-refusal rule: upheld when the posting states no
+   sponsorship (or requires citizenship) and the profile requires sponsorship.
+   Every other kind (other, clearance, licensure, employment type, P2C duration, sector,
+   capacity, conflict, and any future kind) needs confirming: no stored datum checks it.
+   A contradicted or needs-confirming blocker does not force `pass`: the role keeps the threshold
+   verdict and the blocker is shown under Worth checking with the reason. Every blocker is stored
+   as the model gave it plus `check` (`upheld`, `contradicted`, `needs_confirming`) and
+   `check_reason`; `forced_by` names only the upheld ones; a read stored before the check (no
+   `check`) shows as it was scored.
 2. `legitimacy.status == reject` forces `pass`.
 3. `legitimacy.status == suspect` caps the displayed score at 3.5 with a warning banner.
 4. `work_auth_signal == explicit_no_sponsorship` where the profile requires sponsorship adds a
@@ -1657,8 +1686,8 @@ would make the tier 1 model fail a check it has no reason to pass.
 | Tier | Input budget | `max_tokens` | Required `num_ctx` | Ship |
 |---|---|---|---|---|
 | tier1 | 1200 description + 400 profile + 400 instructions | 350 | ~2400 | **4096** |
-| tier2 | 6000 description + 2500 profile + 1500 few-shot + 1100 operator facts + 1000 instructions | 4000 | ~16300 | **16384** |
-| tier3 | 6000 + 2500 + 2000 research + 1100 operator facts + 1000 | 6000 | ~18800 | **20480** |
+| tier2 | 6000 description + 2500 profile and resume digest + 1500 few-shot + 1100 operator facts + 1000 instructions | 4000 | ~16300 | **16384** |
+| tier3 | 6000 + 2500 (profile and resume digest) + 2000 research + 1100 operator facts + 1000 | 6000 | ~18800 | **20480** |
 | docsel | 2000 catalog + 1500 evaluation extract + 500 | 1500 | ~5500 | **8192** |
 | trigger | 1500 filing excerpt + 400 | 600 | ~2500 | **4096** |
 

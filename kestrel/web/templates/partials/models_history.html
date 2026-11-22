@@ -23,7 +23,7 @@
     {% for name, cfg in configured.items() %}<span class="mo-mono">{{ name }}={{ cfg.model }}</span>{% if cfg.backend != 'local' %} <span class="k-pill">{{ cfg.backend }}</span>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</p>
   <p class="k-muted">Hardware profile: {% if hardware %}<b class="mo-mono">{{ hardware.profile }}</b>{% if hardware.chosen_at %}, chosen {{ date_display(hardware.chosen_at, 'raw') }}{% endif %}{% else %}not recorded yet{% endif %}.
     Online service: {% if provider and provider.base_url %}<span class="mo-mono">{{ provider.backend_name }}</span>, key {{ 'saved' if provider.key_present else 'not set' }}{% else %}none configured{% endif %}.
-    Hosted sends are opt-in per opportunity and only happen after you confirm the payload. Manage keys under <a class="k-link" href="/settings#hosted">Settings &gt; Hosted (BYOK)</a>.</p>
+    Hosted sends are opt-in per opportunity and only happen after you confirm the payload. Manage keys under <a class="k-link" href="/settings#hosted">Settings &gt; This computer</a>.</p>
 
   <h4>Comparison by step, model, and prompt version</h4>
   <p class="k-muted">Click a column header to sort. Agreement is exact-verdict agreement with your latest label on the same opportunity; Rated is its denominator. Cost is summed from hosted transmissions; local models show "local".</p>

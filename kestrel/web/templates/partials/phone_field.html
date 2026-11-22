@@ -1,0 +1,30 @@
+{# The phone field and its country selector (#207, D-PHONE-5). Include with: ph_id, ph_value,
+   ph_country, ph_entered, ph_e164, and optionally ph_pin and
+   ph_under (the server's decision, for a re-render). The name attributes are what the Profile and onboarding saves read.
+   phone.js formats on leaving the field and on paste; with no script the save still formats. #}
+{% set ph_region = phone_default_region(ph_country) %}
+<link rel="stylesheet" href="{{ static_url('css/pages/phone.css') }}">
+<div class="ph-field" data-phone-field>
+  <div class="ph-row">
+    <input class="k-input ph-input" id="{{ ph_id }}" type="tel" name="phone" value="{{ ph_value }}"
+           placeholder="555-555-0123" autocomplete="tel" aria-describedby="{{ ph_id }}-note"
+           data-phone-input>
+    <select class="k-input ph-country" name="phone_country" aria-label="Phone number country"
+            data-phone-country>
+      {% for code, label in phone_regions(ph_region) %}
+      <option value="{{ code }}"{% if code == ph_region %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <input type="hidden" name="phone_entered" value="{{ ph_entered }}" data-phone-entered>
+  {# The pinned number (D-PHONE-5): a number saved before E.164 was kept is resolved once, under
+     its own saved home country; an E.164 that is not the number the text reads as is dropped.
+     This is only a hint for the script: the server decides from its own stored record. #}
+  {% set ph_src = ph_pin if ph_pin is defined else phone_pin(ph_value, ph_e164, ph_region) %}
+  {% set ph_under_c = ph_under if ph_under is defined and ph_under else ph_region %}
+  <input type="hidden" name="phone_e164" value="{{ ph_src }}" data-phone-e164>
+  <input type="hidden" value="{{ ph_value if ph_src else '' }}" data-phone-e164-text>
+  <input type="hidden" value="{{ ph_under_c }}" data-phone-shown-under>
+  <p class="ph-note" id="{{ ph_id }}-note" data-phone-note role="status" aria-live="polite"></p>
+</div>
+<script src="{{ static_url('js/phone.js') }}" defer></script>

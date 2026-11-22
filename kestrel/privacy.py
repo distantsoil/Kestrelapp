@@ -5,7 +5,12 @@ role editor's chips). The default list when a role is marked is the label as wri
 with corporate suffixes stripped, and the ALL-CAPS form of each. Nothing else is inferred: no
 lowercase variants, no CamelCase, no domain guessing. An entry matches exactly as typed,
 case-sensitive, on whole-word boundaries (any non-word character, so "@", "." and "/" bound an
-entry like "acme.com"), with any run of whitespace between its words.
+entry like "acme.com"), with any run of whitespace between its words. Matching runs on the text
+a reader sees (`fold`, #210): each character in its NFKC compatibility form, so fullwidth or
+styled letters read as the name, and every character that renders as nothing dropped (each
+Unicode format character, such as a soft hyphen, zero-width space or direction mark, plus the
+variation selectors and the combining grapheme joiner). The text itself is never rewritten:
+only the matched span of the original, invisible characters included, is replaced or coded.
 
 Before an employer's names are substituted, every OTHER employer label in the operator's
 documents (and its suffix-stripped form) is protected: the longest alternative is tried first and
@@ -15,6 +20,16 @@ Two replacements:
 
 * OUTPUTS (rendered documents and previews, list views, the JSON API, MCP): the operator's
   "Show it as" text (`EmployerMap.redact`).
+* ONLINE SENDS and MCP tool output match more widely than outputs do (issue #218, D-PRIV-803),
+  because a code is restored to exactly the text it replaced, so a wide match costs nothing on
+  the way back, while a missed spelling leaves the machine. Text and names are both reduced to
+  an allowlist skeleton (`skeleton`): letters and digits only, case folded, accents removed,
+  everything else dropped, with HTML entities, JSON escapes and URL percent-encoding read as
+  what they stand for (D-PRIV-807). A listed name matches wherever its skeleton occurs between word
+  edges (`_Skeleton.edges`), so "acme labs", "AcmeLabs", "acme_labs", "acme-labs.com" and
+  "**Acme** Labs" are all the name. A name of three or more words is also hidden as its
+  capital initials. A listed name that is an everyday word keeps its exact capitalization.
+
 * ONLINE SENDS: a random code per hidden text (each spelling that occurred), eight uppercase
   letters and digits, fresh for every call (`EmployerMap.codebook()`). A reply is restored by
   replacing that exact code with exactly the text it replaced; a reply that still carries a
@@ -24,12 +39,17 @@ Two replacements:
 
 from __future__ import annotations
 
+import html
 import json
 import re
 import secrets
+import sys
+import unicodedata
+import urllib.parse
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from functools import cache
 from typing import Any
 
 _SUFFIXES = (
@@ -89,8 +109,150 @@ def is_common_word(name: str) -> bool:
     return " ".join(name.split()).casefold() in COMMON_WORDS
 
 
+@cache
+def _dropped() -> frozenset[str]:
+    """Characters that render as nothing: Unicode category Cf (soft hyphen, zero-width space and
+    joiners, direction marks, invisible operators, tags), the variation selectors and the
+    combining grapheme joiner. Read from unicodedata at first use, never listed by hand."""
+    points = [c for c in range(sys.maxunicode + 1) if unicodedata.category(chr(c)) == "Cf"]
+    points += [0x034F, *range(0xFE00, 0xFE10), *range(0xE0100, 0xE01F0)]
+    return frozenset(map(chr, points))
+
+
+def fold(text: str) -> tuple[str, list[int] | None]:
+    """The text a reader sees, for matching (#210): each character in its NFKC compatibility
+    form ("Ａｃｍｅ" reads "Acme") and every character that renders as nothing dropped. Returns
+    (folded, origin) where origin[k] is the index in `text` of folded character k, or
+    (text, None) when folding changes nothing (all ASCII, or already folded)."""
+    if text.isascii():
+        return text, None
+    drop = _dropped()
+    if unicodedata.is_normalized("NFKC", text) and not any(ch in drop for ch in text):
+        return text, None
+    chars: list[str] = []
+    origin: list[int] = []
+    for idx, ch in enumerate(text):
+        if ch in drop:
+            continue
+        for c in ch if ch.isascii() else unicodedata.normalize("NFKC", ch):
+            chars.append(c)
+            origin.append(idx)
+    return "".join(chars), origin
+
+
+# Escapes read as what they stand for (D-PRIV-807): an HTML entity, a JSON escape (text built
+# with json.dumps is sent inside prompts), and URL percent-encoding. Each is one unit of text.
+_ESCAPE_RE = re.compile(
+    r"&(?:#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});"
+    r"|\\u[0-9a-fA-F]{4}|\\[nrtbf]"
+    r"|%[0-7][0-9A-Fa-f]|(?:%[89A-Fa-f][0-9A-Fa-f])+"
+)
+_INITIALS_MIN = 3
+
+
+def _unescape(raw: str) -> str:
+    """What one escape stands for; a space when it stands for nothing readable."""
+    if raw[0] == "&":
+        out = html.unescape(raw)
+        return " " if out == raw else out
+    if raw[0] == "%":
+        return urllib.parse.unquote(raw, errors="replace")
+    if raw[1] == "u":
+        ch = chr(int(raw[2:], 16))
+        return " " if unicodedata.category(ch) == "Cs" else ch
+    return " "  # \n, \r, \t, \b, \f: white space
+
+
+@dataclass
+class _Skeleton:
+    """A text reduced to what a name is made of (D-PRIV-803, an allowlist, D-SEC-20): each
+    letter and digit, case folded, with accents and every other character dropped. `first` and
+    `stop` give, for each skeleton character, the span in the text of the character (or escape)
+    it came from; `starts` and `ends` say whether a name may begin or end there."""
+
+    text: str
+    first: list[int]
+    stop: list[int]
+    starts: list[bool]
+    ends: list[bool]
+    upper: list[bool]
+
+
+def skeleton(text: str) -> _Skeleton:
+    """A word edge is where a letter or digit meets anything else (a space, "_", "-", ".", "@",
+    markup, the end of the text), where a letter meets a digit, or where a lowercase letter is
+    followed by a capital ("AcmeLabs"). A run of two or more capitals also ends before a
+    lowercase letter ("ACMEers")."""
+    drop = _dropped()
+    # The text as units: (what it reads as, start, stop). A plain character is its own unit.
+    units: list[tuple[str, int, int]] = []
+    if "&" in text or "\\" in text or "%" in text:
+        at = 0
+        for m in _ESCAPE_RE.finditer(text):
+            units.extend((text[i], i, i + 1) for i in range(at, m.start()))
+            units.append((_unescape(m.group(0)), m.start(), m.end()))
+            at = m.end()
+        units.extend((text[i], i, i + 1) for i in range(at, len(text)))
+    else:
+        units = [(ch, i, i + 1) for i, ch in enumerate(text)]
+    # The visible letters and digits, each with the unit it came from and how it was written.
+    kept: list[tuple[str, int, str]] = []  # (folded character, unit, "U", "L", "D" or "O")
+    order: list[int] = []  # every visible unit
+    kind_at: dict[int, str] = {}  # its kind, "" for anything that is not a letter or digit
+    for u, (reads, _start, _stop) in enumerate(units):
+        visible = False
+        kind = ""
+        for ch in reads:
+            if ch in drop:
+                continue
+            for c in ch if ch.isascii() else unicodedata.normalize("NFKD", ch):
+                if unicodedata.combining(c):
+                    continue
+                visible = True
+                if c.isalnum():
+                    kind = ("D" if c.isdigit() else "U" if c.isupper() else
+                            "L" if c.islower() else "O")
+                    for f in c.casefold():
+                        if f.isalnum():
+                            kept.append((f, u, kind))
+        if visible:
+            order.append(u)
+            kind_at[u] = kind
+    where = {u: n for n, u in enumerate(order)}
+
+    def neighbor(u: int, step: int) -> str | None:
+        n = where[u] + step
+        return kind_at[order[n]] if 0 <= n < len(order) else None
+
+    def edge(inner: str, outer: str | None, *, before: bool) -> bool:
+        if not outer:  # the end of the text, or anything that is not a letter or digit
+            return True
+        if (inner == "D") != (outer == "D"):
+            return True
+        # "eL" in "AcmeLabs": a capital after a lowercase letter starts a new word.
+        return (outer == "L" and inner == "U") if before else (inner == "L" and outer == "U")
+
+    starts: list[bool] = []
+    ends: list[bool] = []
+    for n, (_f, u, kind) in enumerate(kept):
+        same_before = n > 0 and kept[n - 1][1] == u
+        same_after = n + 1 < len(kept) and kept[n + 1][1] == u
+        starts.append(not same_before and edge(kind, neighbor(u, -1), before=True))
+        ends.append(not same_after and edge(kind, neighbor(u, 1), before=False))
+    return _Skeleton("".join(f for f, _u, _k in kept), [units[u][1] for _f, u, _k in kept],
+                     [units[u][2] for _f, u, _k in kept], starts, ends,
+                     [k == "U" for _f, _u, k in kept])
+
+
+def initials(form: str) -> str:
+    """The capital initials of a name of three or more words ("Acme Rail Works" gives "ARW"),
+    else "". Two-word names are left alone: two letters match too much."""
+    words = [w for w in re.split(r"[^\w]+", form) if w and w[0].isalpha()]
+    return "".join(w[0] for w in words).upper() if len(words) >= _INITIALS_MIN else ""
+
+
 def _rx(form: str) -> str:
-    body = r"\s+".join(re.escape(w) for w in form.split())
+    body = r"\s+".join(re.escape(w) for w in fold(form)[0].split())
     return rf"(?<!\w){body}(?!\w)"
 
 
@@ -128,6 +290,25 @@ class EmployerMap:
                     alts.append((form, None))
         alts.sort(key=lambda a: len(a[0]), reverse=True)
         self._alts = alts
+        # The wide matcher for sends (D-PRIV-803): (skeleton, employer index or None, rule).
+        # Rule "exact": an everyday word matches only as typed. Rule "caps": initials match only
+        # in capitals. A current employer's form wins over an equal protected one.
+        wide: dict[str, tuple[int | None, str, tuple[str, ...]]] = {}
+        for form, i in alts:
+            rule = "exact" if is_common_word(form) else ""
+            for skel, why in ((skeleton(form).text, rule),
+                              (skeleton(initials(form)).text if i is not None else "", "caps")):
+                if not skel:
+                    continue
+                held = wide.get(skel)
+                if held is None or (held[0] is None and i is not None) or (
+                        held[0] == i and held[1] and not why):
+                    wide[skel] = (i, why, (form,))
+                elif held[0] == i and held[1] == why == "exact":
+                    wide[skel] = (i, why, (*held[2], form))  # each listed capitalization
+        self._wide = sorted(wide.items(), key=lambda kv: len(kv[0]), reverse=True)
+        self._wide_rx = (re.compile("(?=(?:" + "|".join(re.escape(k) for k, _v in self._wide)
+                                    + "))") if self.employers and self._wide else None)
         self._pattern = (re.compile("|".join(f"({_rx(f)})" for f, _i in alts))
                          if self.employers and alts else None)
 
@@ -145,11 +326,77 @@ class EmployerMap:
         if not text or self._pattern is None:
             return text
 
-        def repl(m: re.Match) -> str:
-            _form, i = self._alts[m.lastindex - 1]
-            return m.group(0) if i is None else fn(m.group(0), i)
+        folded, origin = fold(text)
+        if origin is None:
 
-        return self._pattern.sub(repl, text)
+            def repl(m: re.Match) -> str:
+                _form, i = self._alts[m.lastindex - 1]
+                return m.group(0) if i is None else fn(m.group(0), i)
+
+            return self._pattern.sub(repl, text)
+        # Matched on what a reader sees; replaced on the original text. Only the matched spans
+        # change (invisible characters inside them included), so a code restores exactly them.
+        out: list[str] = []
+        last = 0
+        for m in self._pattern.finditer(folded):
+            if m.lastindex is None:  # every alternative is a group, so a match always names one
+                continue
+            _form, i = self._alts[m.lastindex - 1]
+            start, end = origin[m.start()], origin[m.end() - 1] + 1
+            if i is None or start < last:
+                continue
+            out.append(text[last:start])
+            out.append(fn(text[start:end], i))
+            last = end
+        out.append(text[last:])
+        return "".join(out)
+
+    def _sub_wide(self, text: str | None, fn) -> str | None:
+        """`_sub` for text that leaves the machine (D-PRIV-803): each span whose skeleton is a
+        listed name's, between word edges, becomes fn(the exact text matched, employer index).
+        A protected label that matches is left as written. The longest name wins at each start."""
+        if not text or self._wide_rx is None:
+            return text
+        sk = skeleton(text)
+        out: list[str] = []
+        last = 0  # in the text
+        resume = 0  # in the skeleton
+        for m in self._wide_rx.finditer(sk.text):
+            k = m.start()
+            if k < resume or not sk.starts[k]:
+                continue
+            for skel, (i, rule, forms) in self._wide:
+                end = k + len(skel) - 1
+                if not sk.text.startswith(skel, k) or not sk.ends[end]:
+                    # A run of capitals may also end before a lowercase letter ("ACMEers").
+                    caps = (len(skel) > 1 and sk.text.startswith(skel, k)
+                            and all(sk.upper[k:end + 1]) and end + 1 < len(sk.text)
+                            and sk.first[end + 1] == sk.stop[end]
+                            and not sk.upper[end + 1] and sk.text[end + 1].isalpha())
+                    if not caps:
+                        continue
+                start, stop = sk.first[k], sk.stop[end]
+                span = text[start:stop]
+                if rule == "exact" and " ".join(fold(span)[0].split()) not in forms:
+                    continue
+                if rule == "caps" and not all(sk.upper[k:end + 1]):
+                    continue
+                resume = end + 1
+                if i is not None:
+                    out.append(text[last:start])
+                    out.append(fn(span, i))
+                    last = stop
+                break
+        out.append(text[last:])
+        return "".join(out)
+
+    def redact_sent(self, text: str | None) -> str | None:
+        """Text handed to another program (an MCP client, usually an online model): the wide
+        match of a send, with the "Show it as" text of an output."""
+        return self._sub_wide(text, lambda _got, i: self.employers[i].shown_as)
+
+    def redact_sent_json(self, value: Any, *, keys: bool = True) -> Any:
+        return walk_strings(value, self.redact_sent, keys=keys)
 
     def redact(self, text: str | None) -> str | None:
         """Outputs: each listed name becomes its employer's "Show it as" text."""
@@ -220,6 +467,11 @@ class CodeBook:
         code = self.by_text.get(text)
         if code is None:
             code = _new_code(set(self.by_text.values()), self._blob)
+            # A code is sent through the matcher again (the guard codes every outgoing message,
+            # D-PRIV-804), so it must never read as a listed name itself: a short alias such as
+            # "IEG" can begin a random code. Draw again until the matcher leaves it alone.
+            while self.emap._sub_wide(code, lambda _got, _i: "") != code:
+                code = _new_code(set(self.by_text.values()), self._blob)
             self.by_text[text] = code
             remember_codes([code])
         return code
@@ -236,7 +488,7 @@ class CodeBook:
         return cls(emap, codes=dict(data["codes"]))
 
     def encode(self, text: str | None) -> str | None:
-        return self.emap._sub(text, lambda got, _i: self._code(got))
+        return self.emap._sub_wide(text, lambda got, _i: self._code(got))
 
     def encode_messages(self, messages: list[dict]) -> list[dict]:
         return [{**m, "content": self.encode(m.get("content") or "") or ""} for m in messages]

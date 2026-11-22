@@ -39,12 +39,16 @@ and drift keep pooling every version (D-SCORE-2): this is a display and offer ru
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Iterable, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
 from typing import Any
 
 import structlog
 from sqlalchemy import and_, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.models import RequirementCorrection
@@ -65,18 +69,80 @@ SAME_WHEN_EMPTY: dict[str, frozenset[str]] = {
 }
 
 
-@lru_cache(maxsize=1)
-def current_versions() -> dict[str, str]:
-    """The packaged Tier 2 prompt version per track. Empty when the prompts cannot be read: a
-    warning is never worth a failed page."""
-    try:
-        from kestrel.pipeline._shared import prompt_spec
-        from kestrel.pipeline.tier2 import _VERSION
+# The versions an async entry point read from the effective settings for this call (D-SCORE-31):
+# the sync rules below read them from here, so one page answers from one read of the settings.
+_PINNED: ContextVar[dict[str, str] | None] = ContextVar("score_age_versions", default=None)
 
-        return {track: prompt_spec(v).version for track, v in _VERSION.items()}
-    except (OSError, KeyError, ValueError, ImportError) as exc:  # a display hint only
+
+def versions_for(settings: Any) -> dict[str, str]:
+    """The Tier 2 prompt version per track these settings choose (D-SCORE-29)."""
+    from kestrel.pipeline.tier2 import evaluate_versions
+
+    return _spec_versions(tuple(sorted(evaluate_versions(settings).items())))
+
+
+def current_versions() -> dict[str, str]:
+    """The Tier 2 prompt version per track the EFFECTIVE settings choose now: the setting-table
+    row Settings > Scoring and learning writes, over env, YAML and the default (D-SCORE-31; the
+    process-wide `get_settings()` never sees that row). Inside an async entry point below, the
+    versions it read for this call; otherwise one synchronous read of the setting rows. Empty when
+    they cannot be read: a warning is never worth a failed page."""
+    pinned = _PINNED.get()
+    if pinned is not None:
+        return pinned
+    try:
+        from kestrel.config import load_settings
+        from kestrel.doctor import _db_overrides_sync
+
+        return versions_for(load_settings(db_overrides=_db_overrides_sync() or {}))
+    except (OSError, KeyError, ValueError, ImportError, SQLAlchemyError) as exc:  # a hint only
         log.warning("score_age_versions_unreadable", error=str(exc))
         return {}
+
+
+async def effective_versions(s: AsyncSession) -> dict[str, str]:
+    """`versions_for` the effective settings, read through the app's own session."""
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    try:
+        return versions_for(await load_settings_with_db(s))
+    except (OSError, KeyError, ValueError, ImportError, SQLAlchemyError) as exc:  # a hint only
+        log.warning("score_age_versions_unreadable", error=str(exc))
+        return {}
+
+
+@contextmanager
+def pinned(versions: dict[str, str]):
+    """Answer every staleness rule inside the block from `versions` (read once per request with
+    `effective_versions`), so a list never reads the settings once per row (round 6)."""
+    token = _PINNED.set(versions)
+    try:
+        yield
+    finally:
+        _PINNED.reset(token)
+
+
+def _pinned(fn):
+    """Run an async entry point with the effective versions pinned for its whole call."""
+
+    @functools.wraps(fn)
+    async def run(s: AsyncSession, *args: Any, **kwargs: Any):
+        if _PINNED.get() is not None:  # an outer entry point already read them
+            return await fn(s, *args, **kwargs)
+        token = _PINNED.set(await effective_versions(s))
+        try:
+            return await fn(s, *args, **kwargs)
+        finally:
+            _PINNED.reset(token)
+
+    return run
+
+
+@lru_cache(maxsize=4)
+def _spec_versions(pairs: tuple[tuple[str, str], ...]) -> dict[str, str]:
+    from kestrel.pipeline._shared import prompt_spec
+
+    return {track: prompt_spec(v).version for track, v in pairs}
 
 
 def _tier(ev: Any) -> int:
@@ -188,6 +254,7 @@ async def newest_reads(s: AsyncSession, pairs: Sequence[tuple[Any, Any]]) -> dic
     return {k: v for k, v in out.items() if v is not None}
 
 
+@_pinned
 async def older_ids(s: AsyncSession, pairs: Sequence[tuple[Any, Any]]) -> set[int]:
     """The ids among (opportunity, latest evaluation) pairs whose score reads as older. One
     query for every role at once (the live `posting` rows and the `person` rows on the tracks
@@ -224,6 +291,7 @@ async def older_ids(s: AsyncSession, pairs: Sequence[tuple[Any, Any]]) -> set[in
     return out
 
 
+@_pinned
 async def older_for(s: AsyncSession, opp: Any, ev: Any) -> bool:
     """`is_older` for one role, reading its corrections only when the answer depends on them."""
     if opp is None:
@@ -234,6 +302,7 @@ async def older_for(s: AsyncSession, opp: Any, ev: Any) -> bool:
     return is_older(opp, ev, await corrections_with_archived(s, opp), newest)
 
 
+@_pinned
 async def changed_for(s: AsyncSession, opp: Any, ev: Any) -> int:
     """`changed_things` for one role. Any versioned read reads the corrections, a version-older
     one included: its count is the lines its block states, so the strip opens whenever the older
@@ -253,6 +322,7 @@ async def corrections_with_archived(s: AsyncSession, opp: Any) -> list[Any]:
     )))).scalars())
 
 
+@_pinned
 async def older_among(s: AsyncSession, opp_ids: Iterable[int]) -> set[int]:
     """`older_ids` for roles by id, each with its latest evaluation (highest tier, then newest)."""
     ids = list(dict.fromkeys(int(i) for i in opp_ids))

@@ -166,6 +166,9 @@ async def test_paylocity_detail_error_skips_only_that_posting():
     respx.get(f"{_DETAILS}/9100002").mock(return_value=Response(200, text=_DETAIL))
     postings = await _fetch()
     assert [p.external_id for p in postings] == ["9100002"]
+    # the skipped role is said, so the run is partial (D-ERR-24 round 8)
+    assert postings.partial_error.startswith("Paylocity did not return the details of 1 of its ")
+    assert [n.kind for n in postings.notices] == ["body_unread"]
 
 
 @respx.mock

@@ -208,3 +208,23 @@ def test_import_with_no_previous_profile_creates_it_without_a_bak():
     assert "profile.yml.bak" not in r.text
     assert target.read_text(encoding="utf-8") == _GOOD_PROFILE
     assert not target.with_name(backup_service.PROFILE_BAK).exists()
+
+
+def test_a_profile_that_is_a_link_or_hard_link_is_never_exported(tmp_path):
+    import os
+
+    from tests.symlink_probe import symlink_or_skip
+
+    outside = tmp_path / "private.yml"
+    outside.write_text("INVENTED OUTSIDE TEXT\n", encoding="utf-8")
+    paths.ensure_dirs()
+    profile = backup_service.profile_path()
+    symlink_or_skip(profile, outside)
+    with _client() as c:
+        linked = c.get("/backup/export-profile")
+    profile.unlink()
+    os.link(outside, profile)
+    with _client() as c:
+        hard = c.get("/backup/export-profile")
+    for r in (linked, hard):
+        assert r.status_code == 404 and "INVENTED OUTSIDE TEXT" not in r.text

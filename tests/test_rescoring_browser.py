@@ -137,7 +137,7 @@ def test_the_role_page_shows_the_wait_then_the_new_score_in_place(role_live):
         ctx.close()
 
 
-SHOTS_FIXD = "/tmp/claude-0/-home-user/b7db7f2a-4231-54ed-b731-e6f6c37a62fa/scratchpad/shots-fixD"
+SHOTS_FIXD = os.environ.get("KESTREL_SHOTS", "")  # screenshots only when a folder is given
 
 
 @pytest.mark.parametrize("theme,width", [("light", 1280), ("dark", 1280), ("light", 1024)])
@@ -170,14 +170,16 @@ def test_a_score_landing_does_not_discard_an_open_correction_and_its_note(
         assert "is-open" in row.get_attribute("class")
         assert row.locator("[data-rl-note]").input_value() == (
             "I never ran carriers, only the depot.")
-        page.screenshot(path=f"{SHOTS_FIXD}/rescore-landed-panel-open-{theme}-{width}.png")
+        if SHOTS_FIXD:
+            page.screenshot(path=f"{SHOTS_FIXD}/rescore-landed-panel-open-{theme}-{width}.png")
         # closing the panel lets the new score in
         row.locator("[data-rl-mcancel]").click()
         page.wait_for_function(
             "document.querySelector('[data-testid=score-holistic]')?.textContent.trim() === '4.9'",
             timeout=9000)
         assert page.get_by_test_id("rescoring").count() == 0
-        page.screenshot(path=f"{SHOTS_FIXD}/rescore-landed-after-close-{theme}-{width}.png")
+        if SHOTS_FIXD:
+            page.screenshot(path=f"{SHOTS_FIXD}/rescore-landed-after-close-{theme}-{width}.png")
         assert not errors, errors
     finally:
         ctx.close()

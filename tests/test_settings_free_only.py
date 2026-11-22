@@ -3,6 +3,8 @@ mocked with respx; nothing reaches the network."""
 
 from __future__ import annotations
 
+import html
+
 import respx
 from httpx import Response
 
@@ -20,10 +22,13 @@ _FREE_MODELS = {"data": [
 
 
 def _acknowledge() -> None:
+    """Online models in use: switched on with the disclosure ticked as it reads now. Free models
+    only changes the picks only then; it never turns online on (D-PRIV-790)."""
     from kestrel.config import HostedMode
     from kestrel.db.models import Setting
 
     async def f(s):
+        s.add(Setting(key="llm.hosted_mode.enabled", value=True))
         s.add(Setting(key="llm.hosted_mode.acknowledged_at", value="2026-10-01T00:00:00+00:00"))
         s.add(Setting(key="llm.hosted_mode.acknowledged_terms",
                       value=HostedMode().disclosure_terms()))
@@ -85,8 +90,12 @@ def test_on_before_what_is_sent_is_approved_changes_nothing(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-ok")
     with _client() as c:
         r = _post(c, free_only="on", allow_training="on")
-        assert "Approve what is sent" in r.text and "Nothing was changed" in r.text
+        assert "Online models are off" in r.text and "Nothing was changed" in r.text
+        from kestrel.config import ONLINE_CONSENT_HOW
+
+        assert ONLINE_CONSENT_HOW in html.unescape(" ".join(r.text.split()))
         assert _row("llm.hosted_mode.free_only") is None
+        assert _row("llm.hosted_mode.enabled") is None
 
 
 def test_off_stores_off_and_keeps_the_picks(monkeypatch):

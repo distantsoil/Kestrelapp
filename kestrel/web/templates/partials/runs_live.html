@@ -11,7 +11,7 @@
   <div class="rn-top">
     {% if state == 'active' %}<span class="k-dot k-dot--live rn-bigdot" aria-hidden="true"></span>{% else %}<span class="k-badge k-badge--muted">{{ glyph('pause') }}</span>{% endif %}
     <div class="k-grow"><h3 data-testid="run-title">{{ 'Stopping' if stopping else 'Running now' if state == 'active' else 'Paused' }}</h3>
-      <div class="rn-step" data-live="step" data-testid="run-step">{% if state == 'active' %}{{ v.step_detail or 'Starting' }}{% elif stopping %}Stopping: finishing {{ stopping }} current {{ 'step' if stopping == 1 else 'steps' }}. Nothing new starts, and nothing is lost.{% else %}{{ v.headline }}. Nothing new starts until you resume.{% endif %}</div></div>
+      <div class="rn-step" data-live="step" data-testid="run-step">{% if state == 'active' %}{% if v.step_main %}<span data-live="step-main">{{ v.step_main }}</span>{% if v.step_clock %}<span data-live="step-clock" data-testid="run-clock"> · {{ v.step_clock }}</span>{% endif %}{% else %}Starting{% endif %}{% elif stopping %}Stopping: finishing {{ stopping }} current {{ 'step' if stopping == 1 else 'steps' }}. Nothing new starts, and nothing is lost.{% else %}{{ v.headline }}. Nothing new starts until you resume.{% endif %}</div></div>
     <div class="rn-acts" data-testid="rn-acts">
       <span class="rn-acts__main"{% if stopping %} hidden{% endif %}>
         {% if state == 'active' %}<button type="button" class="k-btn k-btn--sm" data-testid="run-pause" hx-post="/runs/pause" hx-swap="none">{{ glyph('pause') }}Pause</button>
@@ -28,7 +28,7 @@
     {% for t in tiles %}
     <div class="rn-stg" role="listitem" data-bar="{{ t.key }}" data-live-key="{{ t.key }}" data-state="{{ t.state }}">
       <div class="rn-stg__nm">{{ ui.icon(t.icon, 'k-ic--sm') }}<span>{{ t.label }}</span>{% if t.online %}<span class="rn-cloud" title="Runs on your online model">{{ ui.icon('cloud', 'k-ic--sm') }}Online</span>{% endif %}</div>
-      <div class="rn-bar" role="img" aria-label="{{ t.label }}: {{ t.done }} of {{ t.total }}"><i class="is-ok" data-w="{{ t.good_pct }}" style="width:{{ t.good_pct }}%"></i><i class="is-bad" data-w="{{ t.bad_pct }}" style="width:{{ t.bad_pct }}%"></i></div>
+      <div class="rn-bar" role="img" aria-label="{{ t.label }}: {{ t.done }} of {{ t.total }}"><i class="is-ok" data-w="{{ t.good_pct }}" data-k-style="width:{{ t.good_pct }}%"></i><i class="is-bad" data-w="{{ t.bad_pct }}" data-k-style="width:{{ t.bad_pct }}%"></i></div>
       <div class="rn-stg__ct" data-live="ct-{{ t.key }}">{{ t.caption }}</div>
     </div>
     {% endfor %}
@@ -43,7 +43,7 @@
   <div class="rn-feedrow">
     <div class="rn-feedwrap"><div class="rn-eyebrow">Latest</div>
       <ul class="rn-feed" data-feed data-testid="run-events">
-        {% for e in events[:6] %}<li class="is-{{ e.tone }}" data-k="{{ e.key }}"><span class="rn-feed__at">{{ e.hhmm or '' }}</span><span>{{ e.text }}</span></li>{% else %}<li class="is-idle" data-k="none"><span class="rn-feed__at"></span><span>Nothing has happened yet.</span></li>{% endfor %}
+        {% for e in events[:6] %}<li class="is-{{ e.tone }}" data-k="{{ e.key }}"><span class="rn-feed__at">{{ e.hhmm or '' }}</span><span>{{ e.text }}{% if e.code %} <span class="rn-code" data-testid="rn-event-code">Code {{ e.code }}</span>{% endif %}</span></li>{% else %}<li class="is-idle" data-k="none"><span class="rn-feed__at"></span><span>Nothing has happened yet.</span></li>{% endfor %}
       </ul></div>
     <div class="rn-alive{{ ' is-stale' if v.stalled }}" data-live="alive" data-testid="{{ 'run-stall' if v.stalled else 'run-activity' }}">
       {% if state == 'paused' %}Paused by you

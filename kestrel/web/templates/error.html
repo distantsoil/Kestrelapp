@@ -19,6 +19,7 @@
     </div>
     <div class="sf-body">
       <span>Your roles and settings are safe on this computer. Try again, and if it keeps happening, the details can help you get an answer.</span>
+      <span class="sf-err-code" data-testid="error-code">Code {{ error_code }}</span>
       <div class="sf-err-actions">
         <a class="k-btn k-btn--primary" href="{{ retry_href }}" data-testid="error-retry">Try again</a>
         <button type="button" class="k-btn" id="sf-show-details" aria-expanded="false" aria-controls="sf-details" data-testid="error-details-toggle">Show details</button>

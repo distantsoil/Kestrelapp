@@ -34,9 +34,9 @@ jobs:
     # CI runs only in the public repo; the private copy spends no minutes (D-CI-11).
     if: github.repository == 'distantsoil/Kestrelapp'
     runs-on: ${{ matrix.os }}
-    # A hung test must not burn the 6-hour default (a 0.7.5 run hung for hours). Windows takes
-    # about 40 minutes and Ubuntu about 18 (D-CI-13).
-    timeout-minutes: 60
+    # A hung test must not burn the 6-hour default (a 0.7.5 run hung for hours). Measured
+    # 2026-11-21: Windows about 92 minutes (15,800 tests) and Ubuntu about 49 (D-CI-13).
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 120 || 90 }}
     strategy:
       fail-fast: false
       matrix:
@@ -44,9 +44,9 @@ jobs:
     env:
       KESTREL_HEADLESS: "1"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
 

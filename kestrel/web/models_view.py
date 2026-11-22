@@ -117,6 +117,20 @@ HEALTH_ROWS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
 )
 
 
+def _code_of(*rows: dict[str, Any] | None) -> str:
+    """The CHK code stored with the first warning or failure among `rows`, or "" (#174). It is
+    read back from the saved report, so it goes through `lookup`: an old report with no code, or
+    a value that is not a registered code, shows none."""
+    from kestrel import error_codes
+
+    for row in rows:
+        if row and row.get("status") in ("WARN", "FAIL"):
+            entry = error_codes.lookup(str(row.get("code") or ""))
+            if entry is not None and entry.area == "CHK":  # a health check shows only CHK codes
+                return entry.code
+    return ""
+
+
 def health_rows(report: dict[str, Any] | None) -> list[dict[str, Any]]:
     """The five checks of the preflight in plain words, each pass, fail or not run yet.
     `report` is the persisted doctor report (setup_state.load_report)."""
@@ -137,6 +151,7 @@ def health_rows(report: dict[str, Any] | None) -> list[dict[str, Any]]:
         found.append({
             "key": key, "title": title, "state": state, "detail": detail,
             "tech": "; ".join(f"{r.get('name')}: {r.get('detail', '')}" for r in mine),
+            "code": _code_of(*failed, *warned) if state in ("fail", "warn") else "",
             "fixable": state in ("fail", "warn") and key in ("room", "thinking", "format"),
         })
     return found
@@ -198,6 +213,7 @@ def local_ai_rows(report: dict[str, Any] | None) -> list[dict[str, Any]]:
                 detail = f"{detail} {row['remediation']}".strip()
             detail = (detail[:260] + "…") if len(detail) > 260 else detail
         out.append({"key": key, "title": title, "state": state, "detail": detail,
+                    "code": _code_of(row) if state in ("fail", "warn", "unverified") else "",
                     "tech": f"{name}: {(row or {}).get('detail', '')}" if row else ""})
     return out
 

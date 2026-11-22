@@ -3,7 +3,7 @@
    Styles: static/css/pages/surfaces.css. #}
 {% from "ui/macros.html" import icon %}
 <link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
-<dialog class="sf-dialog" data-testid="whats-new-card" aria-labelledby="whats-new-title">
+<dialog class="sf-dialog" data-testid="whats-new-card" aria-labelledby="whats-new-title" data-k-show-modal data-k-no-cancel>
   <div class="sf-form">
     <div class="sf-head">
       <span class="sf-ic sf-ic--good" aria-hidden="true">{{ icon('check') }}</span>
@@ -15,23 +15,15 @@
         <h4>{{ n.version }} <span class="k-muted">{{ date_display(n.date, fallback=n.date) }}</span></h4>
         {{ n.html }}
       {% else %}
-        <p class="k-muted">The release notes are on the <a class="sf-a" href="{{ download_page }}" target="_blank"
-           rel="noopener noreferrer">download page</a>.</p>
+        <p class="k-muted">The release notes are on the <a class="sf-a" href="{{ release_notes_url }}" target="_blank"
+           rel="noopener noreferrer" data-testid="whats-new-release-page">{{ "GitHub release page" if release_notes_is_release else "full changelog" }}</a>.</p>
       {% endfor %}
       <div class="sf-priv">{{ icon('shield') }}<span><b>Nothing about you was sent to check for updates.</b></span></div>
     </div>
     <div class="sf-foot">
-      <a class="sf-a sf-l" href="{{ download_page }}" target="_blank" rel="noopener noreferrer">See every change</a>
+      <a class="sf-a sf-l" href="{{ changelog_url }}" target="_blank" rel="noopener noreferrer" data-testid="whats-new-every-change">See every change</a>
       <button class="k-btn k-btn--primary" type="button" data-testid="whats-new-dismiss" hx-post="/updates/whats-new/dismiss"
               hx-target="#whats-new-slot" hx-swap="innerHTML">Got it</button>
     </div>
   </div>
 </dialog>
-<script>
-  (function () {
-    var d = document.currentScript.previousElementSibling;
-    if (!d || d.tagName !== 'DIALOG') return;
-    d.addEventListener('cancel', function (e) { e.preventDefault(); });
-    if (typeof d.showModal === 'function') d.showModal(); else d.setAttribute('open', '');
-  })();
-</script>

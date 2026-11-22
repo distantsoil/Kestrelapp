@@ -1,4 +1,4 @@
-{# Settings (D-UI-106, SPEC-INTERFACES 2.6): six sections under two headings. Built on the shared
+{# Settings (D-UI-106, SPEC-INTERFACES 2.6): seven sections under two headings. Built on the shared
    design system: ui/macros.html for the band, help cards and flyouts, tokens for every color.
    Changes save as they are made (static/js/settings.js) and most show a message with Undo.
    Commands and addresses sit behind Show details. #}
@@ -10,6 +10,8 @@
 {% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
 <link rel="stylesheet" href="{{ static_url('css/pages/settings.css') }}">
+<link rel="stylesheet" href="{{ static_url('css/pages/install_id.css') }}">
+<link rel="stylesheet" href="{{ static_url('css/pages/ollama_env.css') }}">
 {% endblock %}
 {# The page lifecycle (D-UI-210): settings.js defines the page "settings"; base.html mounts it. #}
 {% block page_name %}settings{% endblock %}
@@ -36,6 +38,7 @@
       <section class="st-sec" id="st-sec-roles" data-st-sec="roles" hidden data-st-lazy="/settings/section/roles"></section>
       <section class="st-sec" id="st-sec-scoring" data-st-sec="scoring" hidden data-st-lazy="/settings/section/scoring"></section>
       <section class="st-sec" id="st-sec-privacy" data-st-sec="privacy" hidden>{% set pane = 'privacy' %}{% include "partials/st_pane.html" %}</section>
+      <section class="st-sec" id="st-sec-extension" data-st-sec="extension" hidden>{% set pane = 'extension' %}{% include "partials/st_pane.html" %}</section>
       <section class="st-sec" id="st-sec-data" data-st-sec="data" hidden>{% set pane = 'data' %}{% include "partials/st_pane.html" %}</section>
       <section class="st-sec" id="st-sec-preferences" data-st-sec="preferences" hidden>{% set pane = 'preferences' %}{% include "partials/st_pane.html" %}</section>
     </div>
@@ -45,7 +48,7 @@
         {% for title, icon, accent, lines, body in cards %}
         <article class="k-hcard k-hcard--{{ accent }}">
           <div class="k-hcard__head"><span class="k-badge{% if accent == 'warn' %} k-badge--warn{% elif accent == 'good' %} k-badge--good{% elif accent == 'tier' %} k-badge--tier{% endif %}">{{ st.sic(icon) }}</span><h3 title="{{ title }}">{{ title }}</h3></div>
-          <ul class="k-hcard__list">{% for l in lines %}<li>{{ l }}</li>{% endfor %}</ul>
+          {% if lines is string %}<p class="k-hcard__p">{{ lines }}</p>{% else %}<ul class="k-hcard__list">{% for l in lines %}<li>{{ l }}</li>{% endfor %}</ul>{% endif %}
           {{ ui.flyout_trigger('st-fly-' ~ sid ~ '-' ~ loop.index) }}
         </article>
         {% endfor %}

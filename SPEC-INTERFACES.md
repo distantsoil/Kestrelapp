@@ -51,8 +51,9 @@ webview.start()  ◄── BLOCKS FOREVER
 **What the operator sees first (D-UI-89).** The diagram shows the order of dependencies, not the
 order of what is visible. The window is created first, at its final size (§1.7), and shows a
 loading screen while the steps above run behind it: the Windhover mark hovering, one line of
-status, a progress bar. The loading page is a local file shipped in the package, so it needs no
-server. Heavy imports are deferred so the window appears quickly. When setup finishes the screen
+status, a progress bar. The loading page is a file shipped in the package, served by the shell's
+own small server on 127.0.0.1 (a random port and a per-launch path token), so it needs no app
+server and shows the problem card when the app server cannot start. Heavy imports are deferred so the window appears quickly. When setup finishes the screen
 fades into the app. A startup failure appears in the same window (§1.8).
 
 **Five things that will each cost you a day if missed:**
@@ -156,7 +157,9 @@ Multi-hour runs are the normal case, so the window is not the process.
 - Tray tooltip shows live state: `Kestrel — run 7: 412/900, 18/min, ~27m left`.
 - Tray menu: Open, Pause worker, Resume worker, Run scan now, Recent notifications, Open data
   folder, Open logs, Quit. The labels read in plain words ("Run a search now", "Pause searching",
-  "Resume searching"); the set of items is unchanged.
+  "Resume searching"); the set of items is unchanged. Recent notifications opens the window with
+  the notifications panel showing. The "Kestrel is still running" close notice is also kept there
+  as a notification, because the operating-system banner can fail to appear (D-NOTIFY-639).
 - Quit stops the scheduler and the worker, stops in-flight tasks and exits within one to two
   seconds (D-UI-90, which revises D-UI-17). A running model call gets `server.quit_grace_s`
   (5 s default, 0 to 30) before it is cut off; idle work stops at once (D-QUEUE-5). A stopped
@@ -248,33 +251,69 @@ leaves the machine through it (D-UPD-3).
 - `releases` holds the last 10 CHANGELOG sections, newest first. Prerelease versions are never
   written to the feed.
 - A feed whose `schema` is not 1 is ignored quietly: no banner, no error.
+- `downloads.<platform>.file` and `downloads.<platform>.url` name this platform's installer on the
+  GitHub release; the download button below opens that address once it passes the allowlist.
 - `downloads.<platform>.sha256` is published so the operator can check the file they downloaded
-  against it. Kestrel does not download the file, so it does not check it.
+  against it, and the release-notes dialog shows it behind Show details. Kestrel does not download
+  the file, so it does not check it.
 
 **What the operator sees.** A newer version is one that is higher than `kestrel.__version__` by
 semantic version comparison. Then:
 
-- A non-blocking banner on every page that reads "Kestrel 1.5.0 is available. Get it from
-  kestrelapp.co." (the new version number), with "What's new" and "Get the update". The banner
-  and every other surface never say "restart to update" or "install now": Kestrel does not
-  update itself, and wording that implies it does breaks the promise above (D-UI-93).
-- "What's new" opens a dialog with the `releases` sections newer than the running version, newest
-  first.
+- A non-blocking banner on every page that reads "Kestrel 1.5.0 is available. You are on 1.4.0."
+  (the new and the running version numbers), with Show details, Later and the download button
+  described below. The banner and every other surface never say "restart to update" or "install
+  now": Kestrel does not update itself, and wording that implies it does breaks the promise above
+  (D-UI-93).
+- "See what is new" opens a dialog with the `releases` sections newer than the running version,
+  newest first. Release notes render `**text**` as bold after escaping, and nothing else: no
+  links, no other markup, and raw HTML in the notes is always shown as text. The dialog says where
+  the file comes from ("The file comes from GitHub, the Kestrel release page.") and, behind Show
+  details, lists the file name, the release and its SHA-256 so the operator can check the file
+  they downloaded.
+- **Release notes links (D-UPD-11).** "Release notes" (About beside the version, and the
+  what-is-new dialog's fallback when the feed has no notes) opens the running version's GitHub
+  release, `https://github.com/distantsoil/Kestrelapp/releases/tag/v<version>`, built from
+  `kestrel.__version__` only. The version is checked with fullmatch and ASCII digits (`X.Y.Z`,
+  optionally `-prerelease`); a dev or unparseable version falls back to the full CHANGELOG.
+  "See every change" (About, and the what-is-new dialog's footer) always opens the full
+  CHANGELOG. So does any build whose tag is not known to exist: no cached feed yet, or a build
+  ahead of the newest version in it (a prerelease build reports its base version, whose tag exists
+  only once the stable release does). A prerelease version opens its tag only when the feed names
+  that exact version, which it never does, so in practice it opens the CHANGELOG. The what-is-new
+  fallback text names its target: "GitHub release page" or "full changelog". Nothing about the
+  person is in either address.
 - One tray and bell notification per new version. The daily check does not repeat it.
-- "Get the update" opens `download_page` in the default browser. Kestrel opens only an https
-  address on kestrelapp.co and ignores any other value.
+- **The download button (D-UPD-8, D-UPD-9).** On the banner, in the release-notes dialog, in the
+  Settings and About check results and on the bell notification, one button reads "Download
+  Kestrel 1.5.0" and opens this platform's installer file from the GitHub release in the default
+  browser, so the file downloads with no site visit. The browser saves the file and the operator
+  runs it; Kestrel still never downloads, verifies or installs anything itself. Kestrel opens
+  only an https address of exactly the form
+  `https://github.com/distantsoil/Kestrelapp/releases/download/v<version>/<file>`, rebuilt on
+  the machine from validated parts: `<version>` equals the feed's own `version`, `<file>` equals
+  `downloads.<platform>.file` for the running platform (`windows`, `macos` or `linux`), that
+  entry's `url` says exactly that address, and its `sha256` is 64 hex digits. The feed's string
+  is never placed in a link as given. Any other value (plain http, another host or repository, a
+  version that differs from the feed's, a query string, fragment, userinfo or port, a file name
+  with a path in it, a malformed checksum) or a missing entry falls back to `download_page`,
+  validated as before (D-UPD-7), and the button then reads "Get it from kestrelapp.co". The link
+  carries no query string: nothing about the operator is sent.
 - The first launch after the operator has installed a newer version shows a one-time "Kestrel is
   now on version X" dialog: the version they came from, the `releases` sections since then from
   the cached feed, "See every change", "Got it", and the line "Nothing about you was sent to
   check for updates." With no cached notes the dialog is skipped quietly.
 - Settings > This computer > Everyday options has the switch ("Check for updates automatically"),
   the running version with the time of the last check, and a "Check now" button. Behind Show
-  details: "Updates download from kestrelapp.co. Nothing about you is sent." The same switch is
-  the one described under "When it runs".
+  details: "Kestrel checks kestrelapp.co once a day for a newer version. Nothing about you is
+  sent. The installer comes from GitHub, the Kestrel release page: your browser saves the file and
+  you run it. Kestrel itself never downloads or installs anything. You choose if and when to
+  update." The same switch is the one described under "When it runs".
 - **A self-updater is deferred.** Downloading, verifying a signature and installing without the
   operator running the installer is a future, separately planned feature (the private decision log, Deferred)
   that would also need the public promise wording reviewed. Nothing in this section may be read
-  as allowing it.
+  as allowing it. Opening the file's address in the browser is not a self-updater: the browser
+  saves the file, Kestrel reads nothing back, and the operator runs the installer.
 
 **When it fails.** A network error, a non-200 response or malformed JSON is logged with context
 and tried again at the next interval. A failed check never blocks startup, never shows an error to
@@ -282,7 +321,7 @@ the operator, and changes nothing on screen unless a newer version is confirmed.
 on the operator's machine, so an unchanged feed costs a 304.
 
 The release side that publishes the feed is in `docs/RELEASING.md`. The decisions are D-UPD-1 to
-D-UPD-5 in the private decision log.
+D-UPD-10 in the private decision log.
 
 ### 1.6 In-app announcements
 
@@ -327,8 +366,11 @@ controls sit at the top of the left sidebar on every page, above the Kestrel mar
 - **Windows and Linux:** minimize, maximize or restore, and close, drawn by the app, with a red
   hover on close.
 - **Close means close to tray** (§1.3), or a graceful quit when close-to-tray is off or no tray
-  exists. The controls call a small JS API on the window object; the `closing` guard of §1.1 is
-  unchanged.
+  exists. The controls reach the shell over HTTP: `POST /api/window/call/<name>` on the app server
+  (the loading page posts to its own server), and the shell's news for the page (maximized, the
+  closing screen, the update dialog) is a long poll of `/api/window/events`. Never pywebview's
+  `js_api` or `evaluate_js`: both build code from strings in the page, which the policy (§2)
+  refuses. The `closing` guard of §1.1 is unchanged.
 - **Drag and resize.** The top of the sidebar and the top row of the page are the drag region;
   a double click on it toggles maximize. Edge and corner resizing must work on every platform. It
   is not optional, and a build that cannot resize from the edges does not ship. Keyboard window
@@ -399,6 +441,26 @@ Server-rendered Jinja, HTMX for partial updates, Alpine for local state, vendore
 Paper and Indigo (D-UI-53): indigo `#4F5BD5` on white paper, with a dark variant of the same
 palette. Every color comes from the theme tokens in `kestrel.css`, never a hardcoded hex in a
 template. Everything works offline.
+
+**Content-Security-Policy (D-INST-8, D-SEC-56 to D-SEC-61).** Every app response, whatever made
+it (a page, an htmx partial, JSON, a static file, a download, a redirect, a 404, Starlette's own
+500 or TrustedHost 400), carries exactly one policy, the same bytes everywhere:
+`default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:;
+form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'`. No page has an
+exception. So templates carry no inline `<script>` (a JSON data block is not a script), no
+`<style>`, no `style=` attribute, no inline handler, no `hx-on`, no htmx trigger filter and no
+`js:` value: scripts are files under `/static/js` loaded where the inline code was; a static
+style is a `u-*` class (`csp.css`); a value the template computes is a `data-k-style` attribute
+that `k-head.js` applies through the CSSOM, for an allowlisted set of properties and plain values
+only; handlers and htmx extras are `data-k-*` attributes handled in `k-head.js`. htmx runs with
+`allowEval` and `includeIndicatorStyles` off and without `style` in `attributesToSettle`; Alpine is
+its CSP build, with components registered through `Alpine.data`. A print document shown in the
+app (a resume, a letter, a prep pack) has its stylesheets served as `/frame-css/<sha256>.css`,
+since a `srcdoc` frame inherits the page's policy; the PDF path keeps them inline. The desktop
+loading page carries the same policy from the shell's own server (§1.1), and the desktop window
+reaches its pages only over HTTP (§1.7), never through code built from strings. Browser tests
+fail on any policy violation on any page they visit, and the route crawler fails any answer that
+carries markup the policy refuses.
 
 **Global chrome:** a track switcher that persists and scopes every page: when both tracks are in
 use, two tabs (Employment | Consulting, no "Both" view), each with a badge counting what waits
@@ -482,11 +544,21 @@ used anywhere (D-UI-126): a company is shown as a lettered monogram badge.
    appears when no run is working, and each distinct change is announced once.
 
 The balance comes from the provider's key endpoint (OpenRouter `/key`, `limit_remaining_usd`
-through `providers.verify_key`). It is refreshed on a timer and after online work, never on a
-page view, and a failed refresh keeps the last value and says nothing. The status polls
-(`/status/rail`, `/api/status`) never wait for it (#106): a cached reading answers at once, an
-expired one is shown while a background read replaces it, and with none yet the read starts in the
-background and the line appears on a later poll. A slow or failed read is unknown, never $0.
+through `providers.verify_key`). It and the provider's model list are the two reads the
+online-models disclosure names in the text the user ticks ("Online models will periodically check
+the model list and your balance with your provider. Nothing else is sent.", D-REL-41). They run
+only while online is actually in use and that tick is current (`hosted_balance._eligible`,
+`setup_state.online_not_in_use_now`, `hosted_mode.active`); a stale tick holds the reads as it
+holds the sends. Each read goes only to the key's own provider host and carries the key and
+nothing else: no body and no query. The balance is cached for 5 minutes (a failed read for 1
+minute) and the model list for about a day. Within that, a page that shows the credit left or an
+online model picker may start a read when the cache is cold; the routes that may do so are exactly
+those in `tests/_crawl_support.py` (`BALANCE_ROUTES`, `MODEL_LIST_ROUTES`), and any other page view
+that reaches a provider fails the crawl. The status polls (`/status/rail`, `/api/status`) never
+wait for it (#106): a cached reading answers at once, an expired one is shown while a background
+read replaces it, and with none yet the read starts in the background and the line appears on a
+later poll. The ask-first dialogs read it in place so the confirmed line can state the credit left.
+A failed refresh keeps the last value and says nothing; a slow or failed read is unknown, never $0.
 
 **Command palette (D-UI-91).** The search field opens a palette (Ctrl+K on Windows and Linux,
 Cmd+K on macOS; the label in the field follows the operating system). With an empty query it
@@ -615,7 +687,9 @@ step ("Picked up where you left off"). Steps:
 3. **About you**: first name (required, so Kestrel can greet by it), last name, email and city
    (these fill the top of the resume and stay on this computer), and "What are you looking for?":
    Employment, Consulting and contract work, or both (at least one). Headline, phone and
-   LinkedIn link sit behind "Add more details". Choosing one track leaves the other's questions
+   LinkedIn link sit behind "Add more details" (the LinkedIn link is a real field, section 2.1b).
+   The phone field and the Profile About you phone
+   field follow the phone rules in section 2.1a below. Choosing one track leaves the other's questions
    out of step 5 and out of the count. Saved for every track in use.
 4. **Your resume**: the Documents import (read, check what Kestrel read, accept) embedded. Word,
    PDF, plain text or pasted text. A line that does not match the file is flagged; the operator
@@ -645,6 +719,8 @@ how Kestrel should think first", "Connect your key first", "Add a place or turn 
 first"). Every save inside the wizard returns the whole step, so no indicator is ever stale; the
 local model box polls itself while an action runs and reloads the step when it finishes.
 `/setup` redirects to `/onboarding` until onboarding is complete, then to `/settings`.
+
+**First-run notice.** The first time onboarding completes, and only then, Today opens with a short notice before the walkthrough (D-UI-249): "Good time to grab a drink", saying the first search is the biggest job Kestrel does and takes a while, longer on a local model, with the three things it is doing (finding openings, reading and scoring them, a closer look at the strongest). "Got it, show me around" or Esc dismisses it for good and the walkthrough starts. Restarting onboarding never shows it again. When the build will really be queued (Tier 2 runs on this computer), a fourth step, "Drafting interview stories from your best matches", and a second note clause ("and your stories appear in Interview prep when they are ready") show; with Tier 2 online the three-step version shows, because the build would need a confirmed online send and is not queued (D-STORY-700, D-STORY-701). Above the heading sits an illustration (static/js/first-run-art.js, token colors only): a person in an armchair by a window sipping coffee, with a floating status card, in an isometric view with rounded forms. It loops gently and is a still pose under either reduced-motion setting.
 
 **Walkthrough.** After Start searching a spotlight tour runs over the real Today, never over a
 second copy of it (D-UI-116). Six stops and a closing card, each a short title and two sentences,
@@ -797,6 +873,24 @@ posted, "Also posted on" the dedup-group members with source links), **Organizat
 company facts, blank when unknown and never model-guessed, hard rule 7; the company page link),
 **Documents** (count), and **History** (found, quick screen, scored with model and prompt version,
 shortlisted, the operator's rating).
+
+**Posting text formatting (issue #210, D-UI-720 to D-UI-723).** The stored description is
+Markdown converted from the boards' HTML, and it is hostile input. It is parsed by one shared
+renderer (`kestrel/web/posting_format.py`) into Kestrel's own node types and printed by one macro
+(`partials/posting_macros.html`) with autoescaping; no posting text is ever marked safe. The
+allowlist: headings (`#` to `######`, at three sizes), paragraphs and line breaks, `**bold**`,
+`*italic*` and `***both***` (paired, non-empty, not touching a space inside), bullet lists (`*`,
+`-`, `+`, a bullet sign, one indented level) and numbered lists (the posting's own numbers are
+kept as text). A link or image is shown as its words and its address in brackets, as plain text,
+never a link. Known HTML tags a source stored are dropped (line-ending tags become line breaks),
+entities are read once, and nothing else is converted: unpaired or escaped marks, tables, quotes
+and code stay literal. Nothing from the posting reaches an attribute. The work is bounded (every
+pattern has a fixed span, a line over 10,000 characters is plain text, and past 4,000 nodes the
+rest is one plain run), and the stored description is never changed, because scoring reads it.
+The same renderer is used for the Posting tab, the quick round's full text and the calibration
+card's full posting; the quick round excerpt, the calibration excerpt and the Not a fit panel
+excerpt use its plain-text form (words only, no marks). The Tailor view's posting column keeps
+its own line rows, because each row is matched to a requirement, and already removes the marks.
 
 The Evaluation tab never shows less than the side panel does:
 
@@ -1351,6 +1445,23 @@ anyway." The empty state says nothing needs another try. A helper column explain
 and what Try again does. The page is reached from the Today retry note, the sidebar problem line,
 the Runs card and the Pipeline Failed scoring chip; it has no nav entry.
 
+*Roles that failed the same way* (D-UI-550 to D-UI-556, issue 206). When three or more open roles
+in one step, with one model, failed with the same stored kind inside the last day, one banner sits
+above the list: "5 roles failed the same way in Fit score", the cause in plain words, the model,
+and one fix that is a choice. The kind is typed: the schema guard chooses it where it quarantines a
+reply (the answer never fit the schema, a reply cut at its cap, a generation loop) and it is stored
+on the row's own last line, so nothing is grouped by the wording of an error, and a failure with no
+kind, including every row stored before this existed, stays on its own. Grouping never hides a
+role: every role stays in the list, **Show these N** narrows the list to exactly the group's N
+roles (**Show all roles** returns), and N is the number of roles in it. Below three there is no
+banner. The fix is the model menu a row has (this computer first, then online) applied to the whole
+group: unreadable answers offer "Try these with a more careful model", a reply that ran out of room
+"Try these with a model that has more room", a loop "Try these with a different model". An online
+pick shows the same ask-first dialog as one role, with the count and the cost per role, and goes
+through the same approval check; nothing switches a model, raises a limit or goes online by
+itself. **Hide** closes the banner until the group is bigger than when it was hidden, with Undo;
+the roles stay. Today names the same group once, with the same count, until it is hidden.
+
 **`/analytics`** (D-UI-101)
 Is the search working, and where is the leak. One date range for the whole page (30 days, 90
 days, all time) and a Table view that swaps charts for tables (accessibility). Charts are inline
@@ -1438,6 +1549,16 @@ Which model does each step, where it runs, and whether it is working. Layout:
   time, tier-by-tier draining even with a shared model, and setting `OLLAMA_NUM_PARALLEL`
   to at least the largest configured concurrency (including embedding) in Ollama's own
   environment, then restarting Ollama. Show `OLLAMA_KEEP_ALIVE=2h` guidance here too.
+  Settings > This computer also offers to set both for the person (#181, D-SETUP-650 to D-SETUP-656):
+  when `OLLAMA_NUM_PARALLEL` is below that concurrency or `OLLAMA_KEEP_ALIVE` is unset, unreadable
+  or under an hour, a button opens a confirm that names each variable, its value, where it is set
+  (Windows: the user environment variables; macOS: `launchctl setenv`, with a note that it lasts
+  until the Mac restarts; Linux: a drop-in for a user `ollama.service`, else a marked block in
+  `~/.profile`; a system `ollama.service` gets the administrator commands only) and how to undo
+  it. Nothing changes until its Set them button; Undo restores what was there before Kestrel's
+  first change, for each value Kestrel set that is unchanged since. Restart Ollama is a button only where Kestrel can do it safely (a user systemd
+  service, the macOS Ollama app) and never while Kestrel's own work is running. The commands and
+  their sources sit behind Show details.
 - *Online model*: provider keys (OpenRouter, OpenModel, Anthropic, OpenAI, any compatible
   service), key fields sized so provider names never wrap, Test and Save, Get a key, "Stored only
   on this computer. Never in backups." Brand logos are not used until the brand rules are checked;
@@ -1491,13 +1612,23 @@ bench`; the CLI command stays as a debugging entrance to the same code.
 **`/about`**
 Version, data folder and logs folder with Copy and Open, license, an Updates row ("Check for
 updates", "You have the latest version", or a link to kestrelapp.co when one exists; Kestrel
-never installs on its own), release notes, a source link and a support link (GitHub, Ko-fi,
+never installs on its own), release notes for the running version and "See every change" (the
+full CHANGELOG; D-UPD-11), a source link and a support link (GitHub, Ko-fi,
 kestrelapp.co), the five public promises as tiles (Free; You are not the product; Never applies
 for you; Asks before going online; Source is public), "Built with" (the AI models listed in
 `CLAUDE.md`), Built on JobSpy, ideas from career-ops and parametric-resume-builder (linked to
 their repositories, URLs from `REFERENCES.md`), and collapsible component versions with "Copy
 versions for a bug report" and the third-party notices. The long product description is
 not repeated here, and the version shown comes from the single `__version__` source (§1.4).
+**Install ID** (D-INST-1, D-INST-2): on this computer only, the top card shows "Install ID" with
+the short form (`K-XXXX-XXXX`, SPEC.md §4 `setting`), a Copy button that says "Copied" (also to a screen reader)
+with a short pulse that reduced motion turns off, and the full value with its own Copy under Show details. A browser on
+another device sees "Shown on this computer only." The ID is never in a request Kestrel makes
+(update check, model calls local or online, source fetches, SEC EDGAR, alerts), never in a log
+line above debug, a PDF, a generated document, an export other than the backup the person saves
+(part 2 records it there through the importer allowlist), `/api`, MCP or the backup's file name,
+and confidential mode leaves it as it is because it says nothing about the person or the employer
+(D-INST-3). It is not `ids.salt`, which is never shown, copied or reused.
 
 **`/help`** (D-UI-124)
 In-app help, offline. A search field (`/` focuses it) that filters articles live, topic chips
@@ -1509,6 +1640,83 @@ the article in the app, never an external site. Includes a Health check article 
 same checks as Models and a "Why is this greyed out?" article, plus "Replay the walkthrough"
 (§2.1 `/onboarding`). Each page's "How it works" button is that page's help; there are no
 per-page guide strips (D-UI-146).
+
+### 2.1a Phone numbers (D-PHONE-1 to D-PHONE-5)
+
+One shared formatter, `kestrel/phone.py`, reads and formats every phone number the person types
+or pastes: the onboarding About you step, Profile > About you, and the contacts shown on the
+pursuit panel and company page. It uses the `phonenumbers` package (a Python port of Google's
+libphonenumber); the rules ship inside the package, so a number is never sent to a lookup,
+validation or carrier service.
+
+- **Nothing is rejected.** A number the formatter cannot read is kept exactly as typed, saving is
+  never blocked, and a quiet note says so: "Kestrel could not read this as a phone number; it is
+  kept as you typed it." Possible, not "valid": a number with the right shape but an unassigned
+  area code (every 555 number) formats normally. Only digits, separators, a leading `tel:` and
+  one trailing extension are read: text with words or letters (`1-800-FLOWERS`, `call 555 0123`)
+  is kept exactly as typed, never turned into digits or stripped of its words.
+- **Separators only.** Formatting adds, removes and moves spaces, dashes, dots and parentheses.
+  The canonical form (E.164) is the source of truth and is stored beside the text as typed. The
+  digits shown equal the E.164 digits exactly, with one exception that applies only to a number
+  from the person's own country: the country calling code is dropped from the national form
+  (`+1 555 555 0123` shows as `555-555-0123`) and that country's own national trunk prefix is
+  added where its numbering plan has one (UK `020 7946 0000`, Germany `030 123456`; the
+  United States and Canada have none). A number from any other country is never shortened or
+  prefixed: `+44 20 7946 0000` on a United States home stays exactly that. An extension is not
+  part of E.164: it is stored in `phone_ext`, printed ` x42` after the number, and its digits are
+  the digits the person typed, appended after the number's digits.
+- **Display.** The person's home country (the selector) decides. A number whose country calling
+  code equals the home country's shows in that country's national format (the comparison is of
+  calling codes, so a shared numbering plan counts as one country: Canada on a United States
+  home, Guernsey on a United Kingdom home) (United States and
+  Canada `555-555-0123`); any other number shows in international format. An extension is kept
+  and printed `x42`.
+- **The selector.** It is the home country. It sets the default country for a number typed
+  WITHOUT a plus sign and decides the display; it never rewrites a number that has a plus sign,
+  and typing a foreign number never changes it. Changing it reformats the stored number and never
+  re-reads it: the number is pinned as its E.164, and a number saved before E.164 was kept is
+  resolved once, on first display, under the home country it was saved with, then pinned.
+- **The server decides.** A save uses the server's own record and region, never ones the page
+  sent. One rule covers every E.164, stored or hinted: it is used only when the text reads as
+  that number. The region the text is read under is the server's: the selector for new text, the
+  stored home country for the stored text (a number saved before E.164 was kept is resolved once
+  under that stored home, then pinned). A stored E.164 that is not the number its own text reads
+  as (an imported, restored or edited file) is rebuilt from the text, never adopted. A hint never
+  chooses the country the text is read under, and a stale, invalid or mismatched hint is ignored
+  without making the entry unreadable. The extension is always the text's own and is never
+  compared with a hint. `phone_entered` (the spelling before the field was reformatted) is
+  kept only when it is a short spelling of the same number; any other value the page sends is
+  replaced by the text itself, and unchanged text keeps the server's own stored spelling.
+- **When.** The field is formatted when the person leaves it and when they paste into it, by a
+  small server call (`POST /api/phone/format`, which holds no state and calls nothing outside this
+  computer). Never while typing, so the caret never moves. The form also formats on save, so a
+  number that never lost focus is stored the same way. The change fades in over a short
+  transition; the OS reduced-motion setting turns it off.
+- **Contacts** (people found by research, stored in the database) are shown formatted but the
+  stored text is never rewritten.
+
+### 2.1b LinkedIn profile link (D-REL-26, D-PHONE-6, D-PHONE-7)
+
+The person's own LinkedIn profile address is a contact field, stored and shown like their email.
+It sits under Phone in onboarding (Add more details) and in Profile > About you, and it prints in
+the contact line of the resume, capability statement and cover letter.
+
+- **Shape only.** `https://www.linkedin.com/in/<handle>` and `linkedin.com/in/<handle>` (also
+  `http://`, `www.`, a trailing slash, any capitals in the host) are read; the query and fragment
+  (tracking) are dropped and the stored form is `https://www.linkedin.com/in/<handle>`. Anything
+  else is kept exactly as typed, saving is never blocked, and the note reads "Kestrel could not
+  read this as a LinkedIn profile address; it is kept as you typed it." Only the shape is
+  checked: there is no lookup, so a handle that does not exist is not noticed.
+- **Never touched over the network.** Kestrel never fetches, previews, unfurls or validates the
+  address, and never opens it in the background (D-SRC-5 forbids automated LinkedIn access; this
+  is the person's own text, like their email). It opens only when the person clicks it. Links
+  carry `rel="noopener noreferrer"`. Only a normalized address becomes a link; text kept as typed
+  prints as plain text.
+- **Never sent to a model.** The model-facing profile (`load_profile`) leaves out the address and the stored forms of the phone number, so no prompt can name them; the documents read them from the profile editor's own block. If a future send ever
+  includes contact details, its consent dialog must list it first.
+- **Per document.** Documents > Look has "Show my LinkedIn link" (on by default when the field is
+  set); it is saved in the document's look. Off leaves it out of that document's contact line
+  only. A document whose own contact line was typed by hand keeps that line as typed.
 
 ### 2.2 Responsive and PWA
 
@@ -1794,7 +2002,13 @@ below the list becomes a top bar so the help cards stay on the right. Each secti
    so the export is redacted like every other output) and **Forget my ratings**, a confirm that
    lets the operator choose what to forget (their ratings, their own sorting model, suggested
    weight changes), is permanent, needs RESET typed, and never touches roles, scores,
-   applications or documents.
+   applications or documents. The scoring prompt version is not a user setting (owner,
+   D-SCORE-32): Version 4, which also reads lines from the current resume, is the default.
+   `scoring.evaluate_version` stays as an internal, local-only setting for the bench and
+   support; no page or route writes it. Online sends stop while the accepted disclosure differs
+   from what is sent now; the only way to accept it again is the online model's own consent form
+   (Connect with "I understand what gets sent"). There is no re-approve banner or Approve step
+   (owner, D-SCORE-60).
 4. **Privacy and access**. *Confidential mode*: a switch, "Hide <current employer> as <label>"
    (the employer is the one marked "This is my current employer" on Documents, D-PRIV-1; the
    label is the operator's, used consistently), a preview, and what it applies to (resumes, lists,
@@ -1814,14 +2028,16 @@ below the list becomes a top bar so the help cards stay on the right. Each secti
    may change (unless the person ticks the box that also restores the backup's AI and connection
    settings, after the sheet lists their values, D-SEC-11); afterwards "Restored from ...; earlier data saved as ..." with a count of any
    settings kept, files skipped or confirmations removed), and the Included (profile, roles and scores, applications, documents,
-   settings) and Never included (online model keys, logs) lists. *Import past applications*
+   settings) and Never included (online model keys, logs) lists. Beside the backup buttons, on this
+   computer only, *Install ID*: the short form and Copy, the full value under Show details, as on
+   About (D-INST-1). A restore keeps this computer's install ID, never the backup's. *Import past applications*
    (SPEC.md §5.6): choose a CSV, spreadsheet or Markdown file; columns named Company, Role, Date
    and Status match by themselves and others can be matched by hand; a review table with
    untickable rows; Add, then Undo removes just those rows; a sample file; nothing is added until
    the operator presses Add. *Your contacts*: the LinkedIn connections import (below).
    *Diagnostics* (D-UI-114): **Download a diagnostics file** (a zip through the Save dialog) made
-   only when asked, containing the app version, recent logs, settings (with no keys; keys are
-   never in settings) and health check results, and never the profile or resumes, online model
+   only when asked, containing the app version, the install ID (full value, in `summary.json`; D-INST-4), recent
+   logs, settings (with no keys; keys are never in settings) and health check results, and never the profile or resumes, online model
    keys, roles or applications; Kestrel never sends it, and the text says to attach it to a
    message to support if the operator chooses. *Danger zone*: **Restart setup** (walks through
    first-run setup again, keeping the profile, documents and roles: it reopens step 1 of
@@ -1887,6 +2103,104 @@ Review and Done, and works in two phases:
   warm-path finder of `SPEC-MODULES.md` §2.3 is limited to these. Paths through a shared investor
   and through a former employer shared with a decision maker are **deferred** (the private decision log,
   Deferred); the public wording says Kestrel reads only a file the operator downloads.
+
+### 2.7 Error codes
+
+Every error a person can see carries a short, stable code, such as `STA-006`, so a screenshot, a
+log line and a help entry all point at the same thing (D-ERR-1).
+
+- **One registry.** `kestrel/error_codes.py` is the only place a code is defined. Each entry has
+  `code`, `area`, `title` (a short plain name for the table), `meaning` (one plain sentence: what
+  happened), `fix` (one or two plain sentences: what the person can do) and `since` (the version
+  it first appeared in). `get(code)` returns an entry and raises `KeyError` for an unknown code,
+  so a code in use that is not registered fails loudly instead of showing a blank.
+- **Format.** `AREA-NNN`: three upper-case letters, a hyphen, three digits. The areas are fixed:
+
+  | Area | Covers |
+  |---|---|
+  | `STA` | Starting Kestrel |
+  | `DAT` | Your data, backup and restore |
+  | `MDL` | AI models |
+  | `ONL` | Online models and consent |
+  | `SRC` | Job sources and searches |
+  | `RUN` | Runs and scoring |
+  | `IMP` | Importing files |
+  | `DOC` | Documents and PDFs |
+  | `NET` | Other devices and access |
+  | `MCP` | The MCP server |
+  | `UPD` | Updates |
+  | `CHK` | Health checks |
+  | `APP` | Anything else |
+
+- **Codes are permanent.** A code is never renumbered, reused or deleted. A code no longer used
+  moves whole, with the date it was retired, from `_ALL` to `_RETIRED_ALL`
+  (`_retired(_code(...), "YYYY-MM-DD")`), so an old stored row can still show it. Entries are
+  listed one block per area, in the areas' order, and a branch appends only to the blocks of the
+  areas it owns (D-ERR-4). An error that fits none of a branch's areas is listed in its report and
+  coded by the orchestrator after the merge, never taken from another branch's area (D-ERR-8). Two guards hold this:
+  - `tests/test_error_codes.py`, on one branch: the frozen `ISSUED` list (every code ever issued),
+    `FROZEN_TITLES` (a code keeps its title, live or retired), `EVER_RETIRED`, and no code defined
+    twice.
+  - `scripts/error_code_base.py`, run by `scripts/check.py` with the static checks on every tier,
+    across branches: it reads the registry and `ISSUED` at the branch's merge base with main (with
+    `ast`, never by importing them) and fails if a code issued there is gone, has a new title or
+    was un-retired, or if main's `ISSUED` is no longer, area by area, a prefix of the branch's
+    (D-ERR-6). It needs the same base as the other diff guards, never skips, and fails when it
+    cannot read the base commit. The branch's registry is checked by equality (D-ERR-9): with the
+    entries of `_ALL` and `_RETIRED_ALL` emptied and docstrings dropped, the file must match the
+    reviewed form held in the checker (`CANONICAL`, compared as `ast.dump`), and every entry must
+    be a literal `_code(...)` with plain strings. Any other change to the registry's code fails;
+    changing that code means changing `CANONICAL` too, and the checker is a protected path, so
+    that needs a recorded decision (D-ERR-13). `ISSUED`, `FROZEN_TITLES` and `EVER_RETIRED` are
+    each bound exactly once, never reached indirectly, and compared with the base. Both files are
+    read as bytes and must be plain UTF-8 (no other encoding cookie, no BOM); nothing else in
+    `kestrel/` may be named `error_codes` or `error_codes.<ext>`; and every code is ASCII
+    `[A-Z]{3}-[0-9]{3}` with a known area (D-ERR-11). The base is the merge base with the 0.7.7
+    integration branch when that ref exists, else with main (D-ERR-12). The check stops accidents,
+    not deliberate edits that pass review (D-ERR-10).
+- **Looking a code up.** `get(code)` is for a code in use: it returns a live entry and raises
+  `KeyError` for anything else, so an unregistered code in new code fails loudly instead of
+  showing a blank. `lookup(code)` is for a code read back from storage: it returns the live or
+  retired entry, or None. A retired code renders exactly like a live one ("Code STA-003") and links
+  to its row under "Retired codes" in the table, which keeps its title, meaning and retired date.
+  Anything that is not a registered code renders no code line at all.
+- **How a code shows.** Task B and later tasks add it to each surface. Small and plain under the
+  main sentence ("Code STA-006"), and first in Show details. The main sentence stays a plain
+  sentence and never gets shorter or vaguer because a code exists; technical detail stays under
+  Show details (D-UI-130, D-DESK-3, D-SEC-1, D-SEC-7). A code is not a technical name, so it may
+  sit outside Show details. On the startup card the "Code STA-006" line sits above the cause and
+  does not count toward D-DESK-3's three cause lines, which keep their limit.
+- **JSON, logs and diagnostics.** Task F adds a `"code"` field next to `error` or `detail` in
+  JSON replies (the REST API, MCP, the local-only 403 and the LAN 401). Logs carry the code as a
+  structured field, `error_code=`. Task F's diagnostics bundle lists in `summary.json` the codes
+  seen recently, with counts. It reads only structured fields (the `[code]` line of a stored
+  failure and the `error_code` field of a log record) and counts only registered codes; a
+  code-shaped string anywhere in free text (a message, a hash such as SHA-256) is never counted.
+- **Stored failures.** A stored failure keeps the sentence, then an optional code line, then the
+  detail: `sentence`, `\n[code] MDL-003`, `\n[detail] ...`. Task C makes `failure_record` write
+  the code line, and makes sure the sentence it writes never contains a line break, so text inside
+  a sentence (an authored message that quotes a name) can never form a code line. Reading is part
+  of the contract and is in place now: `shown_failure` returns
+  only the sentence, and `shown_code` returns the code only when it sits before `[detail]` and is
+  registered (`lookup`), so a `[code]` line inside an exception's text can never pose as one. A
+  row with no code line shows no code, never a guessed one. Task D gives `UserFacingError` a
+  `code: str | None`, set by each subclass.
+- **Text rules.** Every title, meaning and fix is plain American English with no em dash, and
+  never holds a file path or file name, a key, a web, email or network address (a fix names the
+  page or button to use, never a URL), an organization name, exception text, a Python class name
+  or Markdown and HTML markup (D-SEC-4, D-UI-263, D-UI-268).
+- **Generated tables, never hand-copied.** `scripts/error_codes_table.py` writes
+  `docs/guide/error-codes.md`: one table per area (Code, What happened, What to do) and a
+  "Retired codes" table, with one anchor per code from `anchor(code)`, the code in lower case
+  (`<a id="sta-006"></a>`). A test regenerates it in memory and fails if the committed file
+  differs. Task G adds an "Error codes" article to the in-app Help page, built from the registry
+  with the same `anchor(code)`, and links each shown code to its entry. The help site publishes
+  the same Markdown.
+
+Rollout (0.7.7, #174): task A lands the registry, the guard tests, the table, the reading side of
+stored codes (`shown_failure`, `shown_code`) and this section, seeded with the six startup codes
+(`STA-001` to `STA-006`). Tasks B to G each wire their own surfaces; until a surface is wired it
+shows no code, never a wrong one.
 
 ---
 
@@ -2053,8 +2367,12 @@ exactly what it transmits and to where.
 Multi-hour runs mean the operator is not watching. Notification quality determines whether the
 system is useful or ignored.
 
-**Channels:** Windows toast via `win11toast` (default on), optional `ntfy` topic webhook for
-phone push, optional generic webhook.
+**Channels:** a desktop pop-up (default on): Windows toast via `win11toast`, macOS banner posted
+as Kestrel.app through `UNUserNotificationCenter` in the packaged app (the `osascript` path from
+source, or when the native call fails; D-NOTIFY-630), Linux `notify-send`. Optional `ntfy` topic
+webhook for phone push, optional generic webhook. A Mac banner is local only, silent, and carries
+exactly the title and body of the notification. If the person turns Kestrel's notifications off
+in System Settings, nothing is shown and the osascript path is not used in its place.
 
 **Events, each individually toggleable:**
 

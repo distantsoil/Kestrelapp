@@ -161,14 +161,15 @@ async def handle_t1(
         spec = prompt_spec(_VERSION[opp.track])
         # Hosted mode (SPEC.md 6.4): a metered tier sees a smaller slice, the confidential
         # employer is redacted before the send, and a missing redaction map refuses the send.
-        plan = await plan_hosted_send(session, settings, spec.tier)
+        plan = await plan_hosted_send(session, settings, spec.tier, sender=client)
 
         values = build_tier1_values(
             opp=opp,
             org=org,
             profile=profile,
             source_name=source.name if source else "",
-            n_tokens=jd_budget(settings, spec.tier, _TIER1_HEAD_TOKENS),
+            # The plan counts the client that sends (#218): an online send gets the hosted head.
+            n_tokens=jd_budget(settings, spec.tier, _TIER1_HEAD_TOKENS, external=plan.external),
         )
         trigger_event = bool(opp.trigger_data or opp.event_date)
         posted = bool(opp.description_md)
@@ -210,7 +211,8 @@ async def handle_t1(
         if not result.ok and not result.quarantined:
             # Transport/request error, not a structural failure: let the worker retry the task.
             return HandlerOutcome(
-                "error", 1, error=result.error, out_of_credit=result.out_of_credit
+                "error", 1, error=result.error, out_of_credit=result.out_of_credit,
+                engine_unreachable=result.engine_unreachable,
             )
 
         ev = Evaluation(

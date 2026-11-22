@@ -138,7 +138,8 @@ PR branch runs CI. So CI confirms; it does not discover.
 - **Name what must not change.** Briefs list off-limits areas. Scoring prompts, schemas and prompt
   versions are off-limits unless the task is about scoring.
 - **Tests are public.** Tests and fixtures are exported to the public repo: invented text only, and
-  never a private phrase in any form, including split or encoded.
+  never a private phrase in any form, including split or encoded (`scripts/publicize.py` refuses
+  an export that still holds one).
 - **Every UI brief requires screenshots** (light, dark, narrow) as a deliverable, with paths in
   the report.
 - **Use the owner's machine for heavy testing from the start** of a session when one is available
@@ -161,21 +162,31 @@ PR branch runs CI. So CI confirms; it does not discover.
   security fix needs a second round, redesign as an allowlist instead of patching again.
 - **Never chain a push after a pipe.** Run a gate into a file and push only after
   `grep -q "^<exact line>$"` on that file.
-- **"Done" includes every test that imports a changed module** (grep tests/ for it), and the full
-  non-browser suite runs before a merge.
-- **Never weaken, skip or delete an assertion to get green.** Reproduce the failure and fix its cause.
+- **"Done" includes every test that imports a changed module** (`scripts/stress.py` selects
+  them for `scripts/check.py --stress`), and the full non-browser suite runs before a merge.
+- **Never weaken, skip or delete an assertion to get green.** Reproduce the failure and fix its
+  cause. `scripts/test_floor.py` fails a branch whose tests lose assertions.
 - **Never run process-killing commands in a shared environment; never push an empty commit.**
 - **Before a build: rebase onto the current release head, `ls` the migrations for the next number,
   grep every decision ID the brief uses.** Parallel agents get reserved decision ID ranges.
 - **A benchmark counts only if it could have failed:** report the verdict distribution and a
   noise-floor repeat. Unchanged prompt content renders byte-identical (D-SCORE-6).
-- **Each test sets every precondition it asserts on**; never rely on test order or a shared seed.
-- **Subprocess text output names `encoding="utf-8"`.**
+- **Each test sets every precondition it asserts on**; never rely on test order or a shared seed
+  (`scripts/stress.py` runs the affected tests in a random order).
+- **Subprocess text output names `encoding="utf-8"`** (`tests/test_scripts_utf8.py`).
 - **Model by risk:** Opus for restore, consent, online sends, queue and worker, scoring and learning;
   Sonnet only for scoped UI, copy, adapters and tests with explicit invariants, reviewed before
   merge. Every security fix gets an adversarial re-review aimed at the fix itself.
-- **At most three agents at once in the cloud container**, no `-n` while agents run in parallel,
-  and agents commit after every finished item.
+- **At most three builders open at once, across all sessions**; inside one cloud container at most three agents and no `-n` while they run in
+  parallel; agents commit after every finished item.
+
+---
+
+## Process rules
+
+The rules for running builders, reviews, merges and gates name private tooling and are kept
+privately by the maintainer. A rule is added to this file only with the script or test that
+enforces it.
 
 ---
 
@@ -191,8 +202,8 @@ prompt starts with "Follow docs/handoff/AGENT-RULES.md." and contains every item
 contract is model-neutral, so the same brief works for Claude, Qwen through OMP, or any other agent.
 
 **Mandatory: a reviewer subagent before any gate is declared passed.** Fresh context, given the
-phase's diff and that phase's constraints, asked only *what is wrong with this*. Never asked to
-fix anything; the parent acts on the findings and re-verifies. The author of a change is blind to
+phase's diff and that phase's constraints, asked only *what is wrong with this*.
+Never asked to fix anything; the parent acts on the findings and re-verifies. The author of a change is blind to
 it in ways a fresh reader is not, and this is the single highest-return pattern available here.
 Use the same model class as the parent. A cheap reviewer finds only cheap bugs.
 

@@ -17,7 +17,7 @@
     <div class="st-cs{% if r.done %} is-done{% endif %}" data-step="{{ r.key }}" data-testid="st-step-{{ r.key }}">
       <span class="st-bub">{% if r.done %}{{ st.sic('check', 'k-ic--sm') }}{% else %}{{ loop.index }}{% endif %}</span>
       <div class="st-cs__t"><b>{{ r.title }}</b><span class="st-dsm">{{ r.line }}</span>
-        {% if r.show_progress %}<div class="st-prog" role="progressbar" aria-label="{{ r.title }}"{% if r.pct is not none %} aria-valuenow="{{ r.pct }}"{% endif %}><i style="width: {{ r.pct if r.pct is not none else 8 }}%"></i></div>{% endif %}
+        {% if r.show_progress %}<div class="st-prog" role="progressbar" aria-label="{{ r.title }}"{% if r.pct is not none %} aria-valuenow="{{ r.pct }}"{% endif %}><i data-k-style="width: {{ r.pct if r.pct is not none else 8 }}%"></i></div>{% endif %}
         {% if r.note %}<span class="st-dsm">{{ r.note }}</span>{% endif %}
       </div>
       <span class="k-pill{% if r.chip[1] != 'muted' %} k-pill--{{ r.chip[1] }}{% endif %}">{{ r.chip[0] }}</span>

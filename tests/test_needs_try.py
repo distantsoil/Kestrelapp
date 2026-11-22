@@ -562,17 +562,25 @@ def test_no_route_deletes_a_row(seeded):
 # --------------------------------------------------------------------------------- bulk
 def test_try_all_again_queues_every_row_in_the_filter_and_swaps_only_those(seeded):
     client, ids = seeded
-    r = client.post("/quarantine/bulk", data={"step": "quick"}, headers=HX)
+    r = client.post("/quarantine/bulk", data={"step": "fit"}, headers=HX)
     assert r.status_code == 200
     assert r.text.count('hx-swap-oob="outerHTML:#rt-row-') == 3
-    for role in ("Supply Chain Planner", "Inventory Coordinator", "Data Quality Specialist"):
+    for role in ("Operations Analyst", "Process Improvement Lead", "Operations Manager"):
         assert f'hx-swap-oob="outerHTML:#rt-row-{ids[role]["q"]}"' in r.text
     assert "Trying again" in r.text
     ev = _events(r)
     assert ev["k-toast"]["message"] == (
         "Trying 3 roles again. Scores appear here as they finish.")
     assert ev["rt-refresh"] is True
-    assert len(_tasks()) == 3
+    assert {t for t, _ in _tasks()} == {"t2"} and len(_tasks()) == 3
+
+
+def test_try_all_again_on_quick_sort_queues_nothing_and_spends_no_try(seeded):
+    """A Quick sort failure already kept its role (hard rule 4): a retry runs nothing (D-UI-790)."""
+    client, ids = seeded
+    r = client.post("/quarantine/bulk", data={"step": "quick"}, headers=HX)
+    assert _events(r)["k-toast"]["message"].startswith("Nothing was queued.")
+    assert not _tasks()
 
 
 def test_try_selected_again_queues_only_the_ticked_rows(seeded):
@@ -583,7 +591,8 @@ def test_try_selected_again_queues_only_the_ticked_rows(seeded):
     assert len(_tasks()) == 2
     # Rows already waiting are not queued twice by a second Try all again.
     r = client.post("/quarantine/bulk", data={"step": "all"}, headers=HX)
-    assert len(_tasks()) == 2 + 4  # the other four with a role and a retry; Deep read explains
+    # Of the other five, only the Fit score row runs again: Quick sort and Deep read explain.
+    assert len(_tasks()) == 2 + 1
     assert "Trying" in _events(r)["k-toast"]["message"]
 
 
@@ -799,6 +808,35 @@ def test_a_held_send_shows_as_waiting_for_the_choice_not_as_a_failed_try(seeded)
     assert plain_reason(HOSTED_REFUSAL) == "Waiting for you to choose your current employer"
 
 
+@pytest.mark.parametrize("error,words", [
+    ("hosted send refused: Hosted mode was turned off before sending",
+     "Online sending was turned off before this was sent"),
+    ("hosted send refused: invalid confidential mode",
+     "Kestrel could not read your privacy setting, so nothing was sent"),
+])
+def test_a_refused_send_that_is_not_held_says_not_sent_without_blaming_the_employer(
+        seeded, error, words):
+    client, ids = seeded
+    oid = ids["Operations Analyst"]["opp"]
+
+    async def refused(s):
+        q = Quarantine(opportunity_id=oid, tier=2, model="m", error=error, attempts=0,
+                       created_at=iso(datetime.now(UTC) + timedelta(minutes=1)))
+        s.add(q)
+        await s.flush()
+        return q.id
+
+    new_id = _write(refused)
+    row = _row_html(client.get("/quarantine").text, new_id)
+    assert words in row and "Not sent" in row
+    assert "1 try" not in row and 'data-testid="rt-held"' not in row
+    assert "current employer" not in row
+    r = client.get(f"/quarantine/{new_id}/row")  # the poll names the reason, not another model
+    message = _events(r)["k-toast"]["message"]
+    assert message.startswith("Not sent:") and words in message
+    assert "different model" not in message
+
+
 def test_an_online_pick_is_refused_server_side_when_hosted_mode_is_off(seeded, monkeypatch):
     client, ids = seeded
     _online(monkeypatch, hosted_on=False)
@@ -872,21 +910,20 @@ def test_the_announcement_slot_is_not_on_this_page(seeded):
     assert "refreshed look" not in client.get("/").text.lower()  # removed (D-UI-157)
 
 
-def test_a_tier_1_retry_runs_on_the_full_review_and_a_tier_3_one_says_escalation_is_confirmed(
+def test_a_tier_1_retry_says_the_role_was_kept_and_a_tier_3_one_says_escalation_is_confirmed(
     seeded,
 ):
-    """Restores the two assertions the old page test carried (test_quarantine_resolution)."""
+    """Neither runs anything or spends a try (D-UI-790): Quick sort already kept the role."""
     client, ids = seeded
     q1 = ids["Supply Chain Planner"]["q"]  # failed at Tier 1
     r = client.post(f"/quarantine/{q1}/retry", headers=_hx(q1))
-    assert "retry-queued" in r.text
-    ((typ, payload),) = _tasks()
-    assert typ == "t2" and payload["opportunity_id"] == ids["Supply Chain Planner"]["opp"]
+    assert "already kept this role" in r.text and "retry-queued" not in r.text
+    assert not _tasks()
     menu = client.get(f"/quarantine/{q1}/models").text
-    assert "Full review model" not in menu and "Deep read model" in menu  # Try again IS the review
+    assert "Full review model" not in menu and "Deep read model" in menu
     q3 = ids["Clinical Reporting Analyst"]["q"]  # failed at Tier 3
     r = client.post(f"/quarantine/{q3}/retry", headers=_hx(q3))
-    assert "operator-confirmed" in r.text and len(_tasks()) == 1
+    assert "operator-confirmed" in r.text and not _tasks()
 
 
 def test_online_dialog_mentions_training_only_for_free_models():

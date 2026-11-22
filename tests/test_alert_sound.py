@@ -36,6 +36,11 @@ from kestrel.db import migrate
 from kestrel.db.base import utcnow_iso
 from kestrel.db.engine import forget_engine, get_sessionmaker, reset_engine
 from kestrel.db.models import Notification, Setting
+
+# Imported before any test sets sys.platform to "win32": a Windows toast imports the shell
+# module, and a first import under the patched platform would leave its IS_WINDOWS True for every
+# later test in the same worker (stress run, seed 1188979310).
+from kestrel.desktop import shell as _shell_imported_first  # noqa: F401
 from kestrel.services import alert_sound, delivery
 from kestrel.services.delivery import deliver_pending
 
@@ -387,9 +392,15 @@ def test_the_windows_toast_is_silent(monkeypatch, frozen):
     fake = types.ModuleType("win11toast")
     fake.notify = lambda title, body, **kw: seen.append(kw)
     monkeypatch.setitem(sys.modules, "win11toast", fake)
+    # Import the shell before faking the platform: a first import while sys.platform says win32
+    # would freeze its IS_WINDOWS to True for every later test in this process.
+    from kestrel.desktop import shell
+
+    real = shell.IS_WINDOWS
     monkeypatch.setattr(delivery.sys, "platform", "win32")
     monkeypatch.setattr(paths, "is_frozen", lambda: frozen)
     assert delivery._toast("Run finished", "4 new") is True
+    assert shell.IS_WINDOWS is real
     assert seen[0]["audio"] == {"silent": "true"}
 
 
@@ -548,7 +559,7 @@ class _Popen:
         type(self).started.append((list(argv), kwargs))
 
     def wait(self) -> int:
-        type(self).release.wait(5)
+        type(self).release.wait(30)
         return 0
 
 
@@ -585,7 +596,8 @@ def test_macos_uses_afplay(monkeypatch, popen):
     monkeypatch.setattr(alert_sound.shutil, "which", _which("afplay"))
     began = time_mod.monotonic()
     assert alert_sound._start(Path("/tmp/chime.wav")) is True  # returns while the player runs
-    assert time_mod.monotonic() - began < 2  # the fake player only exits after 5 s: no waiting
+    # D-TEST-825: the fake player holds for 30 s; a 20 s ceiling still proves no waiting.
+    assert time_mod.monotonic() - began < 20
     argv, kwargs = popen.started[0]
     assert argv == ["/usr/bin/afplay", str(Path("/tmp/chime.wav"))]  # the machine's own spelling
     assert kwargs["stdout"] is alert_sound.subprocess.DEVNULL

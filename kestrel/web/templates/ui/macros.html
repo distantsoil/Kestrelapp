@@ -28,6 +28,7 @@
   'bm': '<path d="M6 3h12v18l-6-4-6 4z"/>',
   'check': '<path d="M5 12l5 5 9-10"/>',
   'alert': '<circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/>',
+  'cup': '<path d="M5 8h11v6a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z"/><path d="M16 10h1.5a2.5 2.5 0 0 1 0 5H16M8 2.5v2.5M11 2.5v2.5"/>',
   'clock': '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   'spark': '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6"/>',
   'target': '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
@@ -222,7 +223,7 @@
 
 {# Step strip. steps is a list of labels; current is the 1-based step in progress. #}
 {% macro steps(labels, current=1) -%}
-<ol class="k-steps" style="--k-steps: {{ labels|length }}">
+<ol class="k-steps" data-k-style="--k-steps: {{ labels|length }}">
   {% for l in labels %}{% set n = loop.index %}
   <li class="k-step{% if n < current %} is-done{% elif n == current %} is-now{% endif %}"{% if n == current %} aria-current="step"{% endif %}><span class="k-step__n">{% if n < current %}{{ icon('check', 'k-ic--sm') }}{% else %}{{ n }}{% endif %}</span><span class="k-step__label">{{ l }}</span></li>
   {% endfor %}

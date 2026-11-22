@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.config import Settings
 from kestrel.db.models import Quarantine, Setting
+from kestrel.llm.failure_kind import kind_of, tag
 from kestrel.llm.guard import GuardResult, QuarantineHook, run_prompt
 from kestrel.llm.prompts import PromptSpec, load_prompt
 from kestrel.privacy import EmployerMap
@@ -38,6 +39,9 @@ class HandlerOutcome:
     # The online key is out of credit (D-LLM-8): the worker puts the task back unstarted rather
     # than failing it, and stops leasing for that tier until sends can resume.
     out_of_credit: bool = False
+    # The call could not reach the local engine (typed, llm.engine_cycle): the worker gives the
+    # try back and the wait is written on the task row (D-WORKER-6 amended, round 11).
+    engine_unreachable: bool = False
 
 
 @cache
@@ -72,7 +76,7 @@ def parse_rescore_failure(error: str | None) -> tuple[bool, int | None, str]:
 
 
 def make_quarantine_hook(
-    session: AsyncSession, *, tier: int, opportunity_id: int, error_prefix: str = ""
+    session: AsyncSession, *, tier: int, opportunity_id: int | None, error_prefix: str = ""
 ) -> QuarantineHook:
     """A hook that records the failed call to the SAME session the handler commits, so the
     quarantine row and the stage change are atomic. Signature matches guard.QuarantineHook:
@@ -88,7 +92,9 @@ def make_quarantine_hook(
                 model=model,
                 prompt=prompt_text[:20000],
                 raw_response=(raw_response or "")[:20000],
-                error=(error_prefix + (error or ""))[:4000],
+                # The kind the guard chose with the reason is stored on its own last line, after
+                # the cut, so a long reason never loses it (D-UI-550).
+                error=tag((error_prefix + (error or ""))[:3900], kind_of(error)),
                 attempts=2,
             )
         )
@@ -121,33 +127,117 @@ class HostedPlan:
 
 
 def tier_is_hosted(settings: Settings, tier: str) -> bool:
-    """True when a call on this tier would go to an external backend under Hosted mode."""
+    """True when a call on this tier would go to an external backend now: the tier names one
+    and online models are in use (setup_state.online_send_held, D-PRIV-798)."""
     tcfg = settings.llm.tiers.get(tier)
     backend = settings.llm.backends.get(tcfg.backend) if tcfg else None
-    return bool(backend and backend.external and settings.llm.hosted_mode.active)
+    if not (backend and backend.external):
+        return False
+    from kestrel.services.setup_state import online_send_held
+
+    return online_send_held(settings) is None
+
+
+def _sender_settings(sender: object) -> Settings | None:
+    """The settings the call is actually made with: a client's own, or the settings a client
+    is built from."""
+    if isinstance(sender, Settings):
+        return sender
+    held = getattr(sender, "settings", None)
+    return held if isinstance(held, Settings) else None
+
+
+# Confidential mode could not be read: the stored setting is not a yes or no, or the call has no
+# database session to read it from (D-PRIV-801). One refusal, which the pages already put into
+# plain words ("Kestrel could not read your privacy setting, so nothing was sent").
+UNREADABLE_REFUSAL = "hosted send refused: invalid confidential mode"
+NO_SESSION_REFUSAL = UNREADABLE_REFUSAL
 
 
 async def plan_hosted_send(
-    session: AsyncSession, settings: Settings, tier: str, *, master_id: int | None = None
+    session: AsyncSession | None, settings: Settings | None, tier: str, *, sender: object,
+    master_id: int | None = None, escalation: bool = False,
 ) -> HostedPlan:
-    """Decide redaction or refusal for a tier BEFORE its prompt is rendered. Reads the operator's
-    current confidential-mode setting and employer map from the session: the one document's map
-    when the send is about one document (`master_id`, D-PRIV-1), else the union across documents."""
-    if not tier_is_hosted(settings, tier):
+    """THE one decision for every send that can reach an online model (issue #218, D-PRIV-679,
+    D-PRIV-800): whether it leaves the machine, what hides the current employer, or why it is
+    refused. Every call site that ends in the model client calls this, with the client that makes
+    the call as `sender` (tests/test_confidential_contract.py walks them all). Decided BEFORE the
+    prompt is rendered. Reads the operator's current confidential-mode setting and employer map
+    from the session: the one document's map when the send is about one document (`master_id`,
+    D-PRIV-1), else the union across documents.
+
+    `sender` is the client that actually makes the call (or, for a disclosure shown before a
+    client exists, the very settings object the client is then built from), and it is required.
+    `settings` is whatever else the caller holds for the run (a task's held settings), or None. A
+    task can hold settings that keep the tier local while the live client sends it online, so the
+    send counts as external when EITHER would send the tier to an external backend under Hosted
+    mode (`tier_is_hosted`, the reading the client itself applies: with Hosted mode off it
+    refuses the send, so nothing leaves), and the employer is hidden when either asks for it.
+    Under confidential mode nothing leaves with the current employer unredacted, whatever the mix.
+
+    `escalation` is the confirmed deeper read (Tier 3), which goes to its external backend in
+    either mode: always external, never stopped by Hosted mode being off, and the employer is
+    hidden whenever confidential mode is on (it never depended on redact_confidential).
+
+    With no session there is nothing to read confidential mode or the employer from: a send that
+    would go online is refused (NO_SESSION_REFUSAL), never sent as written (D-PRIV-801)."""
+    both = [s for s in (settings, _sender_settings(sender)) if s is not None]
+    if not escalation and not any(tier_is_hosted(s, tier) for s in both):
         return HostedPlan()
-    hm = settings.llm.hosted_mode
-    # The client was built from settings read earlier (a cycle, or before a public fetch). Hosted
-    # mode turned off since then must stop this send, whatever the client still holds.
-    switched_off = dict((await session.execute(
-        select(Setting.key, Setting.value).where(Setting.key.in_(
-            ("llm.hosted_mode.enabled", "llm.hosted_mode.acknowledged_at")
-        ))
-    )).all())
-    if any(key in switched_off and not switched_off[key]
-           for key in ("llm.hosted_mode.enabled", "llm.hosted_mode.acknowledged_at")):
+    if session is None or not both:
+        return HostedPlan(external=True, refuse=NO_SESSION_REFUSAL)
+    if not escalation and await _hosted_switched_off(session):
         return HostedPlan(
-            external=True, refuse="hosted send refused: Hosted mode was turned off before sending"
+            external=True,
+            refuse="hosted send refused: Hosted mode was turned off before sending",
         )
+    status, mapping = await employer_hiding(session, both[0], master_id=master_id,
+                                            also=both[-1], always=escalation)
+    if status == "invalid":
+        return HostedPlan(external=True, refuse=UNREADABLE_REFUSAL)
+    if status == "no_employer":
+        return HostedPlan(external=True, refuse=HOSTED_REFUSAL)
+    return HostedPlan(external=True, mapping=mapping or EmployerMap())
+
+
+async def _hosted_switched_off(session: AsyncSession) -> bool:
+    """A read, never a write: whether Hosted mode was turned off in the stored settings. The
+    client was built from settings read earlier (a cycle, or before a public fetch); Hosted mode
+    turned off since then must stop the send, whatever the client still holds."""
+    keys = ("llm.hosted_mode.enabled", "llm.hosted_mode.acknowledged_at")
+    rows = (await session.execute(
+        select(Setting.key, Setting.value).where(Setting.key.in_(keys))
+    )).all()
+    return any(not value for _key, value in rows)
+
+
+async def plan_client_send(
+    client: object, tier: str, *, sm: Any = None, master_id: int | None = None,
+) -> HostedPlan:
+    """`plan_hosted_send` for a caller that holds only the client that sends (the model check and
+    `kestrel bench`): the same one decision, with a session opened only when the client would
+    send the tier online. `sm` is the caller's sessionmaker, else the app's own."""
+    plan = await plan_hosted_send(None, None, tier, sender=client, master_id=master_id)
+    if not plan.external:
+        return plan
+    if sm is None:
+        from kestrel.db.engine import get_sessionmaker
+
+        sm = get_sessionmaker()
+    async with sm() as session:
+        return await plan_hosted_send(session, None, tier, sender=client, master_id=master_id)
+
+
+async def employer_hiding(
+    session: AsyncSession, settings: Settings, *, master_id: int | None = None,
+    also: Settings | None = None, always: bool = False,
+) -> tuple[str | None, EmployerMap | None]:
+    """The one rule for hiding the current employer in a send that goes online: (status, map).
+    Confidential mode on (read from the session) and Hosted mode's redact_confidential on, with an
+    employer chosen, gives the map; with none chosen the status is "no_employer" and the send is
+    refused; an unreadable setting is "invalid", refused too. `plan_hosted_send` and
+    the correction lines a consent panel lists (learning.correction_lines) both decide through it,
+    so what a panel shows hidden is what the send hides (D-PRIV-673)."""
     row = (await session.execute(
         select(Setting.value).where(Setting.key == "confidential_mode")
     )).first()
@@ -156,15 +246,20 @@ async def plan_hosted_send(
             TypeAdapter(bool).validate_python(row[0]) if row else settings.confidential_mode
         )
     except ValidationError:
-        return HostedPlan(external=True, refuse="hosted send refused: invalid confidential mode")
-    if not confidential or not hm.redact_confidential:
-        return HostedPlan(external=True)
+        return "invalid", None
+    # Confidential mode alone decides (issue #218, D-PRIV-805). `llm.hosted_mode.
+    # redact_confidential` is no longer read: no page sets it, but a settings file or a restored
+    # backup could turn it off, and every tier but the deeper read then sent the employer by
+    # name with Confidential mode on. `also` and `always` are kept for callers; neither can
+    # switch the hiding off.
+    if not confidential:
+        return None, None
     from kestrel.docs.current_employer import load_employer_map
 
     mapping = await load_employer_map(session, master_id=master_id)
     if not mapping:
-        return HostedPlan(external=True, refuse=HOSTED_REFUSAL)
-    return HostedPlan(external=True, mapping=mapping)
+        return "no_employer", None
+    return None, mapping
 
 
 def encode_send(messages: list[dict], mapping):
@@ -234,7 +329,7 @@ def jd_budget(settings: Settings, tier: str, default: int, *, external: bool | N
 
 
 async def run_prompt_hosted(
-    session: AsyncSession,
+    session: AsyncSession | None,
     client: Any,
     spec: PromptSpec,
     messages: list[dict],
@@ -262,10 +357,14 @@ async def run_prompt_hosted(
         return await run_prompt(
             client, spec, messages, schema=schema, on_quarantine=on_quarantine
         )
-    plan = await plan_hosted_send(session, settings, spec.tier, master_id=master_id)
+    plan = await plan_hosted_send(session, settings, spec.tier, sender=client,
+                                  master_id=master_id)
     if plan.refuse:
-        if reask:  # the original reply stands; nothing was sent and nothing is recorded
-            return GuardResult(ok=False, quarantined=False, error=plan.refuse)
+        if reask or session is None:
+            # A re-ask: the original reply stands; nothing was sent and nothing is recorded. No
+            # session: there is nowhere to record the refusal, and nothing was sent either.
+            return GuardResult(ok=False, quarantined=False, error=plan.refuse,
+                               refused=session is None)
         tcfg = client.settings.llm.tiers.get(spec.tier)
         record_refusal(
             session,
@@ -348,8 +447,9 @@ def derived_num_ctx(tag: str) -> int | None:
 
 def settings_with_override(settings: Settings, tier: str, override: dict | None) -> Settings:
     """`settings` with `tier` pointed at the override's backend and model, as a copy. Returns
-    `settings` itself when there is no override. A hosted override runs only while Hosted mode is
-    on (its disclosure already covers the tier); a local one only on a Kestrel derived model,
+    `settings` itself when there is no override. A hosted override runs only while online models
+    are in use (setup_state.online_send_held: switched on, the disclosure ticked as it reads now,
+    and the run card not on Local); a local one only on a Kestrel derived model,
     which carries its own num_ctx (a raw tag would truncate silently)."""
     if not override:
         return settings
@@ -361,8 +461,17 @@ def settings_with_override(settings: Settings, tier: str, override: dict | None)
     tcfg = settings.llm.tiers.get(tier)
     if backend is None or not model or tcfg is None:
         raise ModelOverrideError(f"no backend {backend_name!r} or tier {tier!r} for {model!r}")
-    if backend.external and not settings.llm.hosted_mode.active:
-        raise ModelOverrideError(f"{model} is a hosted model and Hosted mode is off")
+    if backend.external:
+        from kestrel.services.setup_state import ONLINE_OFF, online_send_held
+
+        why_not = online_send_held(settings)
+        if why_not == ONLINE_OFF:
+            raise ModelOverrideError(f"{model} is a hosted model and Hosted mode is off")
+        if why_not is not None:
+            raise ModelOverrideError(
+                f"{model} is a hosted model and online models are not in use: "
+                "On this computer is chosen"
+            )
     if not backend.external and not model.startswith(LOCAL_DERIVED_PREFIX):
         raise ModelOverrideError(f"{model} is not one of Kestrel's local models")
     if not backend.external:

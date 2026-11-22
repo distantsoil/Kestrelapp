@@ -15,6 +15,7 @@ from kestrel import paths
 from kestrel.config import HostedMode as _HostedMode
 from kestrel.llm import providers as prov
 from kestrel.llm.client import ChatResult
+from tests.page_source import as_written
 from tests.test_documents_editor import GOOD, _app
 
 _TERMS = _HostedMode().disclosure_terms()
@@ -67,7 +68,7 @@ def test_the_assess_button_opens_the_popup_instead_of_running(app):
 
 def test_the_popup_offers_the_current_model_and_the_local_models(app):
     client, master_id = app
-    body = client.get(f"/documents/{master_id}/assess/choose").text
+    body = as_written(client.get(f"/documents/{master_id}/assess/choose").text)
     assert '<dialog id="assess-model" class="assess-model"' in body
     assert 'aria-labelledby="assess-model-title"' in body and "showModal" in body
     assert re.search(r"Assess with the current model \(kestrel-tier2 \(local\)\)", body)
@@ -198,6 +199,7 @@ def test_assess_shows_a_running_state_outside_the_closed_popup_and_the_picker_fi
         master_id=1, doc_word="resume", current_label="deepseek (online)",
         hosted_models=[_M(i) for i in range(12)], hosted_reasons={}, local_models=[],
         hosted_label="OpenRouter", hosted_prefix="")
+    html = as_written(html)
     assert "dataset.testid = 'assess-running'" in html and "assess-elapsed" in html
     assert "Assessing…" in html and 'data-current-label="deepseek (online)"' in html
     assert 'role="combobox"' in html and "model-search" not in html

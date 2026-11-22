@@ -17,10 +17,12 @@ Hard rule 6: every rate is stated with its n and labeled insufficient under five
 
 from __future__ import annotations
 
+import stat
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,16 +48,18 @@ TRACKS: tuple[str, ...] = ("employment", "consulting")
 KINDS: tuple[str, ...] = ("label", "override")
 
 # Hard rule 6: a rate from fewer than five observations is labeled insufficient, never solid.
+log = structlog.get_logger(__name__)
+
 INSUFFICIENT_N = 5
 
 # Accepted calibrations are applied as setting-table rows under this prefix
 # (learning/calibration.accept_calibration); reset removes exactly those rows.
 WEIGHT_PREFIX = "scoring.weights."
 
-# The only files Kestrel writes under paths.ml_dir() (learning/reranker._save_model). Reset removes
-# files matching these patterns plus any artifact an ml_model row points at inside ml_dir, and
-# nothing else: an operator's own file in that folder is never touched.
-ML_FILE_PATTERNS: tuple[str, ...] = ("reranker_*.pkl", "features_*.pkl")
+# The names Kestrel gives its model files (kestrel/paths.py). Reset removes entries directly in
+# the ml folder named like these and nothing else: an operator's own file there is never
+# touched, even when a database row points at it.
+ML_FILE_PATTERNS = paths.ML_FILE_PATTERNS
 
 
 # ============================================================================ data shapes
@@ -498,10 +502,6 @@ async def _weight_override_keys(session: AsyncSession) -> set[str]:
     return {r[0] for r in rows}
 
 
-def _kestrel_wrote(path: Path, recorded: set[str]) -> bool:
-    return str(path) in recorded or any(path.match(p) for p in ML_FILE_PATTERNS)
-
-
 async def _ml_files(session: AsyncSession) -> list[MlFile]:
     models = list((await session.execute(select(MlModel))).scalars())
     by_path: dict[str, MlModel] = {}
@@ -509,23 +509,21 @@ async def _ml_files(session: AsyncSession) -> list[MlFile]:
         for p in (m.artifact_path, m.pca_artifact_path):
             if p:
                 by_path[str(Path(p))] = m
+    # The same entries Reset sees: directly in the ml folder, never through a link (a link is
+    # listed as the link, with its own size), and credited to Kestrel by name only.
     folder = paths.ml_dir()
-    if not folder.is_dir():
-        return []
     out: list[MlFile] = []
-    for path in sorted(p for p in folder.iterdir() if p.is_file()):
-        m = by_path.get(str(path))
-        try:
-            size = path.stat().st_size
-        except OSError:
-            size = 0
+    for name, info in paths.ml_entries():
+        if stat.S_ISDIR(info.st_mode):
+            continue
+        m = by_path.get(str(folder / name))
         out.append(
             MlFile(
-                name=path.name, size=size, track=m.track if m else None,
+                name=name, size=info.st_size, track=m.track if m else None,
                 trained_at=m.trained_at if m else None,
                 sklearn_version=m.sklearn_version if m else None,
                 active=bool(m and m.is_active),
-                kestrel_wrote_it=_kestrel_wrote(path, set(by_path)),
+                kestrel_wrote_it=paths.is_model_file_name(name),
             )
         )
     return out
@@ -590,6 +588,16 @@ class ResetResult:
         )
 
 
+def _remove_model_files() -> list[str]:
+    """Remove the entries directly in the ml folder named as Kestrel names its model files;
+    return the names removed. Each goes as it stands (paths.remove_ml_file): a symlink there goes
+    as a link and never takes the file it points at."""
+    return [
+        name for name, _info in paths.ml_entries()
+        if paths.is_model_file_name(name) and paths.remove_ml_file(name)
+    ]
+
+
 async def reset_learning(
     session: AsyncSession,
     settings: Settings,
@@ -601,9 +609,9 @@ async def reset_learning(
     """Remove what the learning loop has accumulated, by part, and report counts.
 
     labels: every `label` and `verdict_override` row.
-    reranker: every `ml_model` row, and under paths.ml_dir() only the files Kestrel wrote (the
-      reranker and PCA pickles those rows point at, plus any `reranker_*.pkl` / `features_*.pkl`
-      left behind by a deleted row). Any other file in the folder is left alone.
+    reranker: every `ml_model` row, and directly under paths.ml_dir() only the files named as
+      Kestrel names them (`reranker_*.pkl` / `features_*.pkl`, the names every row's artifacts
+      are saved under). Any other file in the folder is left alone, even one a row points at.
     calibrations: accepted and still-proposed calibration rows are marked rejected (the rows stay
       as history) and the `scoring.weights.*` setting rows they wrote are removed, so the shipped
       weights apply on the next cycle.
@@ -629,30 +637,14 @@ async def reset_learning(
 
     if reranker:
         models = list((await session.execute(select(MlModel))).scalars())
-        folder = paths.ml_dir().resolve()
-        recorded: set[Path] = set()
         for m in models:
-            for p in (m.artifact_path, m.pca_artifact_path):
-                if p:
-                    recorded.add(Path(p))
             await session.delete(m)
         result.ml_models_deleted = len(models)
-        candidates: set[Path] = set()
-        for p in recorded:
-            try:
-                if p.resolve().is_relative_to(folder):
-                    candidates.add(p.resolve())
-            except OSError:
-                continue
-        if folder.is_dir():
-            for pattern in ML_FILE_PATTERNS:
-                candidates.update(q.resolve() for q in folder.glob(pattern) if q.is_file())
-        for p in sorted(candidates):
-            try:
-                p.unlink()
-            except FileNotFoundError:
-                continue
-            result.ml_files_removed.append(p.name)
+        # Only entries directly in the ml folder whose names are the ones Kestrel writes: every
+        # artifact a row records was saved under one of those names, so a row naming any other
+        # file removes nothing. An entry is unlinked as it stands, never resolved first, so a
+        # symlink planted there removes the link and never the file it points at.
+        result.ml_files_removed = _remove_model_files()
 
     if calibrations:
         now = utcnow_iso()

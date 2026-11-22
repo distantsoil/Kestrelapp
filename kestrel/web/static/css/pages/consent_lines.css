@@ -1,0 +1,10 @@
+/* The correction lines an ask-first panel lists (partials/correction_lines.html, issue #178).
+   Theme tokens only. A long list scrolls inside the panel; a long line wraps, never clips. Each line is shown
+   exactly as it is sent, starting with its own "- ", so the list draws no marker. */
+.cl-lines { display: grid; gap: .25rem; margin: .5rem 0; min-width: 0; }
+.cl-lines__list {
+  margin: 0; padding: 0; list-style: none; max-height: 14em; overflow-y: auto;
+  overflow-wrap: anywhere; font-size: .9em;
+}
+.cl-lines__list li { margin: .1rem 0; }
+.cl-lines__note { color: var(--muted); font-size: .85em; }

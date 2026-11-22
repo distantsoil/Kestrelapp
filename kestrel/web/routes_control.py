@@ -31,6 +31,7 @@ from kestrel.db.models import (
 )
 from kestrel.llm import credit
 from kestrel.llm.profiles import ollama_needed
+from kestrel.services import online_consent as _oc
 from kestrel.services.online_consent import online_run_refusal
 from kestrel.services.setting_overrides import (
     HOSTED_CHANGED,
@@ -40,7 +41,7 @@ from kestrel.services.setting_overrides import (
     queue_run_mode,
 )
 from kestrel.web.app import current_run_mode, is_paused, set_paused
-from kestrel.web.auth import refuse_unless_local, request_is_local
+from kestrel.web.auth import LOCAL_ONLY, refuse_unless_local, request_is_local
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.queries import live_activity
 from kestrel.web.words import PLAIN
@@ -146,6 +147,16 @@ async def run_now(request: Request, mode: str | None = None):
     return {"queued": True, "mode": chosen}
 
 
+@router.post("/api/tray/closed", dependencies=[LOCAL_ONLY])
+async def tray_closed():
+    """The desktop shell closed the window to the tray: keep the "still running" notice in the
+    notifications list (the OS banner can fail to appear). Fixed text, nothing from the caller;
+    this computer only (LOCAL_ONLY)."""
+    from kestrel.services import tray_notice
+
+    return {"id": await tray_notice.record(sessionmaker())}
+
+
 @router.post("/api/worker/pause")
 async def worker_pause():
     set_paused(True)
@@ -236,10 +247,12 @@ async def scan_state(s: AsyncSession, activity: dict | None = None) -> dict[str,
 
 
 def _scan_button(
-    request: Request, state: dict[str, Any], msg: str | None = None, *, started: bool = False
+    request: Request, state: dict[str, Any], msg: str | None = None, *, started: bool = False,
+    err_code: str | None = None,
 ):
     response = templates().TemplateResponse(
-        request, "partials/scan_button.html", {"scan_state": state, "scan_msg": msg}
+        request, "partials/scan_button.html",
+        {"scan_state": state, "scan_msg": msg, "scan_code": err_code},
     )
     if started:  # the status strip shows the queued scan now, not at its next poll
         response.headers["HX-Trigger"] = "run-refresh"
@@ -247,17 +260,18 @@ def _scan_button(
 
 
 def _refusal_code(problem: str) -> str:
-    """The outcome code for an approval_problem message, so the operator reads the real reason
-    (a changed destination, Hosted mode off, an employer hold), not one catch-all line."""
+    """The outcome for an approval_problem message, so the operator reads the real reason
+    (a changed destination, Hosted mode off, an employer hold), not one catch-all line. Matched
+    by equality with each authored sentence; anything else is "refused", which has general words
+    and no code, never a specific one (#174, D-ERR-515)."""
     from kestrel.services import online_consent as oc
 
-    if problem == oc.HELD:
-        return "held"
-    if "Hosted mode" in problem:
-        return "hosted_off"
-    if problem == oc.CHANGED:
-        return "changed"
-    return "not_confirmed"
+    return {
+        oc.NOT_CONFIRMED: "not_confirmed",
+        oc.CHANGED: "changed",
+        oc.HELD: "held",
+        oc.HOSTED_OFF: "hosted_off",
+    }.get(problem, "refused")
 
 
 @router.get("/scan/button", response_class=HTMLResponse)
@@ -270,22 +284,44 @@ async def scan_button(request: Request):
 
 
 # What a no-script Scan now submit reports back: a code in the URL, fixed copy here (D-UI-72).
-SCAN_OUTCOMES: dict[str, str] = {
-    "no_pick": "Not started: pick a model, or choose My usual models.",
-    "bad_model": "Not started: that model is not available right now. Pick another.",
-    "none": "No searches are on. Turn one on under Sources.",
-    "not_confirmed": "Not started: nothing was sent. Confirm the online send first.",
-    "held": "Not started: nothing was sent. Confidential mode is on and no current employer is "
-            "chosen. Choose it in Settings, then try again.",
-    "hosted_off": "Not started: nothing was sent. Online models need Hosted mode, which is off.",
-    "changed": "Not started: nothing was sent. The online model or service changed since this "
-               "opened. Open it again to see where it goes.",
+# A refused send names the consent sentence it stands for, and its registry code is read from
+# `online_consent.REFUSAL_CODES` for that sentence, so one table holds every refusal's code
+# (#174, D-ERR-515). An outcome that is not a refusal, or a refusal of unknown kind, has no code.
+_SCAN_OUTCOME_ENTRIES: dict[str, tuple[str, str | None]] = {
+    "no_pick": ("Not started: pick a model, or choose My usual models.", None),
+    "bad_model": ("Not started: that model is not available right now. Pick another.", None),
+    "none": ("No searches are on. Turn one on under Sources.", None),
+    "not_confirmed": ("Not started: nothing was sent. Confirm the online send first.",
+                      _oc.NOT_CONFIRMED),
+    "held": ("Not started: nothing was sent. Confidential mode is on and no current employer is "
+             "chosen. Choose it in Settings, then try again.", _oc.HELD),
+    "hosted_off": ("Not started: nothing was sent. Online models need Hosted mode, which is off.",
+                   _oc.HOSTED_OFF),
+    "changed": ("Not started: nothing was sent. The online model or service changed since this "
+                "opened. Open it again to see where it goes.", _oc.CHANGED),
+    "refused": ("Not started: nothing was sent.", None),
 }
+SCAN_OUTCOMES: dict[str, str] = {k: words for k, (words, _why) in _SCAN_OUTCOME_ENTRIES.items()}
+
+
+def _outcome(key: str) -> tuple[str, str | None] | None:
+    """(words, registry code) for an outcome, or None for an unknown one."""
+    entry = _SCAN_OUTCOME_ENTRIES.get(key)
+    if entry is None:
+        return None
+    words, refusal = entry
+    return words, (_oc.REFUSAL_CODES[refusal] if refusal is not None else None)
 
 
 def scan_outcome_text(params) -> str | None:
     """The fixed sentence for `?scan_outcome=`, or None for no or an unknown code."""
     return SCAN_OUTCOMES.get(str(params.get("scan_outcome") or ""))
+
+
+def scan_outcome_code(params) -> str | None:
+    """The registry code for `?scan_outcome=`, from the same entry as its sentence, or None."""
+    entry = _outcome(str(params.get("scan_outcome") or ""))
+    return entry[1] if entry else None
 
 
 @router.get("/scan/choose", response_class=HTMLResponse)
@@ -387,12 +423,12 @@ async def scan_start(request: Request):
                 refused = (_refusal_code(problem), problem)
     if refused is not None:
         code, text = refused
-        text = SCAN_OUTCOMES.get(code, text.replace("Not run:", "Not started:"))
+        words, err_code = _outcome(code) or (text.replace("Not run:", "Not started:"), None)
         if not hx:
             return RedirectResponse(f"/?scan_outcome={code}", status_code=303)
         async with sm() as s:
             state = await scan_state(s)
-        return _scan_button(request, state, text)
+        return _scan_button(request, state, words, err_code=err_code)
     async with sm() as s:
         queued = await enqueue_all_scrapes(
             s, TaskQueue(sm), model_override=override, model_label=label,

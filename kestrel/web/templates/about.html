@@ -4,6 +4,7 @@
    versions and the third-party notices sit behind animated toggles; the diagnostics save lives in
    the Something wrong? flyout (the mockup has no diagnostics block). #}
 {% import "partials/local_only.html" as lo with context %}
+{% import "partials/install_id.html" as iid with context %}
 {% extends "base.html" %}
 {# Imported under `ui`: base.html defines its own one-argument `icon` macro. #}
 {% import "ui/macros.html" as ui %}
@@ -26,6 +27,7 @@
 {% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
 <link rel="stylesheet" href="{{ static_url('css/pages/about.css') }}">
+<link rel="stylesheet" href="{{ static_url('css/pages/install_id.css') }}">
 {% endblock %}
 {# The page lifecycle (D-UI-210): about.js defines the page "about"; base.html mounts it. #}
 {% block page_name %}about{% endblock %}
@@ -43,9 +45,14 @@
           <div class="ab-vline">
             <span class="ab-vtag" id="about-version" data-testid="about-version">Version {{ version }}</span>
             <span class="k-muted">{{ os_label }}</span>
-            <a class="k-link" href="{{ changelog_url }}" target="_blank" rel="noopener" data-testid="release-notes">Release notes</a>
+            <a class="k-link" href="{{ release_notes_url }}" target="_blank" rel="noopener" data-testid="release-notes">Release notes</a>
+            <a class="k-link" href="{{ changelog_url }}" target="_blank" rel="noopener" data-testid="see-every-change">See every change</a>
           </div>
           <div class="ab-copy k-muted">Copyright 2026 M Crowle-Groves · PolyForm Noncommercial License 1.0.0</div>
+          <div class="ab-iid" id="install-id" data-testid="about-iid">
+            <span class="ab-iid__l">Install ID</span>
+            {{ iid.value(install_id, request, 'ab') }}
+          </div>
         </div>
         <div class="ab-upd">
           <button type="button" class="k-btn k-btn--sm" hx-post="/updates/check" hx-vals='{"surface": "about"}' hx-target="#update-result" hx-swap="innerHTML" hx-disabled-elt="this" hx-indicator="#ab-checking" data-testid="check-updates">Check for updates</button>

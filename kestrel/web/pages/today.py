@@ -26,10 +26,11 @@ from kestrel.analytics.today import (
     switched_off_work,
     worth_a_look,
 )
+from kestrel.services import onboarding as ob_svc
 from kestrel.services import setting_overrides
 from kestrel.web import today_view as tv
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.routes_control import scan_outcome_text, scan_state
+from kestrel.web.routes_control import scan_outcome_code, scan_outcome_text, scan_state
 from kestrel.web.routes_quick import offer_context as quick_offer
 from kestrel.web.score_again_ask import ask_context
 
@@ -100,6 +101,10 @@ async def page_context(s, request: Request, track: str, settings) -> dict:
         "greeting": tv.greeting(name),
         "first_run": first_run,
         "tour": _tour_wanted(request),
+        # The one-time "grab a drink" notice after the wizard (D-UI-249).
+        "first_break": await ob_svc.first_run_break_pending(s),
+        # Step 4 of the notice only when the build will really be queued (D-STORY-701).
+        "first_stories": await ob_svc.first_run_stories_expected(s, settings),
         "strip": await strip_context(s, track, settings, panel, first_run=first_run),
         "retry": retry_note(panel, first_run=first_run),
         "quick": await quick_offer(
@@ -113,6 +118,7 @@ async def page_context(s, request: Request, track: str, settings) -> dict:
         "off_tracks": await switched_off_work(s),
         "scan_state": await scan_state(s),
         "scan_msg": scan_outcome_text(request.query_params),
+        "scan_code": scan_outcome_code(request.query_params),
         "confidential": settings.confidential_mode,
         "finish": await tv.finish_setup(s),
         "readiness": readiness,

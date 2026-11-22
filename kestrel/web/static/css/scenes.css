@@ -1,0 +1,3 @@
+/* Empty on purpose. The scene renderer (static/js/scenes/scene-band.js) writes each scene's
+   animation rules into this sheet through the CSSOM, because the Content-Security-Policy refuses
+   the <style> element the scenes used to carry (D-INST-8, D-SEC-57). */

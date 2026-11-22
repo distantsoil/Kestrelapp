@@ -23,6 +23,7 @@
     <div class="k-layout__main">
       <section class="k-card rn-live" id="runs-live" data-testid="latest-run" data-region="live" data-sig="{{ live_sig }}">{% include "partials/runs_live.html" %}</section>
       <section class="k-card rn-hist" id="runs-history" data-region="history" data-sig="{{ hist_sig }}">{% include "partials/runs_history_card.html" %}</section>
+      {% if unscored is defined %}{% include "partials/runs_unscored.html" %}{% endif %}
     </div>
     {% call ui.help_column() %}
       {% include "partials/run_schedule.html" %}

@@ -24,5 +24,5 @@
       <span class="score-again-slot"></span>
     </span>
   {% endif %}
-  {% if scan_msg %}<small class="td-scanmsg" data-scan-msg role="status">{{ scan_msg }}</small>{% endif %}
+  {% if scan_msg %}<small class="td-scanmsg" data-scan-msg role="status">{{ scan_msg }}{% if scan_code %}<span class="td-scancode" data-testid="scan-code">Code {{ scan_code }}</span>{% endif %}</small>{% endif %}
 </span>

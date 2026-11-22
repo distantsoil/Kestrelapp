@@ -2,7 +2,7 @@
    to get it; there is no self-update. Token classes only; the last-checked line swaps out of band. #}
 {% from "ui/macros.html" import icon %}
 {% if outcome == 'available' %}
-<span class="ab-res is-info" role="status" data-testid="update-result">Kestrel {{ version }} is available. <a class="k-link" href="{{ download_page }}" target="_blank" rel="noopener noreferrer">Get it from kestrelapp.co</a></span>
+<span class="ab-res is-info" role="status" data-testid="update-result">Kestrel {{ version }} is available. <a class="k-link" href="{{ download.url }}" target="_blank" rel="noopener noreferrer" data-testid="update-download">{{ download.label }}</a></span>
 {% elif outcome == 'current' %}
 <span class="ab-res is-good" role="status" data-testid="update-result">{{ icon('check', 'k-ic--sm') }}You have the latest version</span>
 {% else %}

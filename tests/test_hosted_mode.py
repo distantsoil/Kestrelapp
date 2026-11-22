@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 import httpx
 import pytest
@@ -212,11 +213,12 @@ async def test_send_plan_rechecks_each_send_even_in_the_same_session(sm, tier):
     await _seed(sm, stage="t1_pass", with_map=True)
     settings = _hosted_settings(tier, confidential=False)
     async with sm() as session:
-        assert not (await _shared.plan_hosted_send(session, settings, tier)).mapping
+        plan = await _shared.plan_hosted_send(session, settings, tier, sender=settings)
+        assert not plan.mapping
         async with sm() as writer:
             writer.add(Setting(key="confidential_mode", value=True))
             await writer.commit()
-        plan = await _shared.plan_hosted_send(session, settings, tier)
+        plan = await _shared.plan_hosted_send(session, settings, tier, sender=settings)
         assert plan.mapping and not plan.refuse
         sent, _ = _shared.encode_send([{"role": "user", "content": _EMPLOYER}], plan.mapping)
         assert _EMPLOYER not in sent[0]["content"]
@@ -224,7 +226,8 @@ async def test_send_plan_rechecks_each_send_even_in_the_same_session(sm, tier):
             row = await writer.get(Setting, "confidential_mode")
             row.value = False
             await writer.commit()
-        assert not (await _shared.plan_hosted_send(session, settings, tier)).mapping
+        plan = await _shared.plan_hosted_send(session, settings, tier, sender=settings)
+        assert not plan.mapping
     assert settings.confidential_mode is False
 
 
@@ -233,7 +236,7 @@ async def test_invalid_confidential_setting_refuses_the_send(sm):
     async with sm() as session:
         session.add(Setting(key="confidential_mode", value="invalid"))
         await session.commit()
-        assert (await _shared.plan_hosted_send(session, settings, "tier2")).refuse
+        assert (await _shared.plan_hosted_send(session, settings, "tier2", sender=settings)).refuse
 
 
 async def test_tier1_redacts_the_employer_before_a_hosted_send(sm, monkeypatch):
@@ -295,7 +298,7 @@ async def test_local_tier_is_never_redacted_or_refused(sm):
     settings = get_settings()
     settings.confidential_mode = True
     async with sm() as s:
-        plan = await _shared.plan_hosted_send(s, settings, "tier1")
+        plan = await _shared.plan_hosted_send(s, settings, "tier1", sender=settings)
     assert plan.external is False and plan.refuse is None and not plan.mapping
 
 
@@ -350,14 +353,17 @@ async def test_docsel_refuses_without_a_redaction_map_and_renders_defaults(sm):
     assert sel.defaults_used is True and "no redaction map" in (sel.error or "")
 
 
-async def test_redact_confidential_off_sends_unredacted_without_refusing(sm):
-    """The operator may deliberately turn redaction off (YAML only); then nothing is refused."""
+async def test_redact_confidential_off_no_longer_sends_unredacted(sm):
+    """Owner, 2026-11-17 (issue #218, D-PRIV-805): the YAML-only redact_confidential setting was
+    a way to send the employer by name with Confidential mode on. It is no longer read: with
+    nothing to hide the name with, the send is refused as with the setting on. (Until then this
+    test asserted the opposite: `refuse is None and not plan.mapping`.)"""
     await _seed(sm, stage="t0_pass", with_map=False)
     settings = _hosted_settings("tier1", confidential=True)
     settings.llm.hosted_mode.redact_confidential = False
     async with sm() as s:
-        plan = await _shared.plan_hosted_send(s, settings, "tier1")
-    assert plan.external is True and plan.refuse is None and not plan.mapping
+        plan = await _shared.plan_hosted_send(s, settings, "tier1", sender=settings)
+    assert plan.external is True and plan.refuse == _shared.HOSTED_REFUSAL and not plan.mapping
 
 
 # ------------------------------------------------------------------------------ 4. JD slice
@@ -423,6 +429,13 @@ def _db_settings():
     return asyncio.run(_go())
 
 
+def _run_mode(html: str) -> str:
+    """The run-mode chip on Settings > Online models (#224): what Kestrel runs on right now."""
+    m = re.search(r'data-testid="hosted-run-mode">(?:<svg.*?</svg>)?([^<]*)<', html, re.S)
+    assert m, "the run-mode chip is missing"
+    return m.group(1).strip()
+
+
 def test_settings_hosted_mode_flow(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("OPENMODEL_API_KEY", raising=False)
@@ -430,7 +443,8 @@ def test_settings_hosted_mode_flow(monkeypatch):
 
     # Local by default, the switch and the disclosure are on the page, every tier row is there.
     body = client.get("/settings/hosted").text
-    assert "Local models (active)" in body and "Status: not acknowledged" in body
+    # #224: the run switch moved to Settings > This computer; a chip names the run mode.
+    assert _run_mode(body) == "Kestrel runs on local models" and "Status: not acknowledged" in body
     assert "Turn on hosted mode" in body and "Not configured yet" in body
     assert "may train on your inputs" in body and "first 1200 tokens" in body
     for tier in ("tier1", "tier2", "docsel", "frontier"):
@@ -467,7 +481,7 @@ def test_settings_hosted_mode_flow(monkeypatch):
     )
     assert r.status_code == 200 and "tier1: frontier/qwen/qwen3-8b:free" in r.text
     assert "cannot be chosen yet" in r.text and "tier2" in r.text
-    assert "assigned, used on a hosted run" in r.text
+    assert "assigned, used on an online run" in r.text
     st = _db_settings()
     assert st.llm.hosted_tiers["tier1"].backend == "frontier"
     assert st.llm.hosted_tiers["tier1"].model == "qwen/qwen3-8b:free"
@@ -498,8 +512,9 @@ def test_settings_hosted_mode_flow(monkeypatch):
         "/settings/hosted/tiers", data={"backend.tier2": "frontier", "model.tier2": "a/strong"}
     )
     r = client.post("/settings/hosted/switch", data={"mode": "hosted"})
-    assert "now runs on hosted models" in r.text and "Hosted models (active)" in r.text
-    assert "hosted, sending" in r.text
+    assert "now runs on hosted models" in r.text
+    assert _run_mode(r.text) == "Kestrel runs on online models"
+    assert "online, sending" in r.text
     st = _db_settings()
     assert st.llm.mode == "hosted"
     assert st.llm.tiers["tier1"].backend == "frontier"
@@ -527,18 +542,36 @@ def test_settings_hosted_mode_flow(monkeypatch):
     # Turn off: enabled clears, the mode is local, the acknowledgement stays as a record, the
     # remaining assignments keep their rows.
     r = client.post("/settings/hosted/mode", data={"action": "off"})
-    assert "Hosted mode is off" in r.text and "Local models (active)" in r.text
+    assert "Hosted mode is off" in r.text and _run_mode(r.text) == "Kestrel runs on local models"
     st = _db_settings()
     assert st.llm.hosted_mode.enabled is False and st.llm.hosted_mode.acknowledged_at
     assert st.llm.mode == "local"
     assert st.llm.hosted_tiers["docsel"].backend == "openmodel"
     assert st.llm.hosted_tiers["tier2"].model == "a/strong"
-    assert "assigned, used on a hosted run" in client.get("/settings/hosted").text
+    assert "assigned, used on an online run" in client.get("/settings/hosted").text
 
 
 def test_settings_test_lists_free_models_with_the_filter(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     client = _fresh_app()
+    # Test sends only while online models are in use (D-PRIV-796): switched on, with the
+    # disclosure ticked as it reads now. Stored as the Settings form stores it.
+    from sqlalchemy import insert
+
+    from kestrel import paths
+    from kestrel.config import HostedMode
+    from kestrel.db.engine import make_sync_engine
+    from kestrel.db.models import Setting
+
+    engine = make_sync_engine(paths.db_path())
+    with engine.begin() as conn:
+        conn.execute(insert(Setting), [
+            {"key": "llm.hosted_mode.enabled", "value": True},
+            {"key": "llm.hosted_mode.acknowledged_at", "value": _ACK},
+            {"key": "llm.hosted_mode.acknowledged_terms",
+             "value": HostedMode().disclosure_terms()},
+        ])
+    engine.dispose()
     with respx.mock:
         respx.get("https://openrouter.ai/api/v1/key").mock(
             return_value=Response(200, json={"data": {"label": "k", "is_free_tier": True}})
@@ -626,7 +659,7 @@ def test_doctor_rows_for_off_on_and_warn(monkeypatch):
     assert "tier2 -> frontier/" in hm.detail
     key = next(c for c in on if c.name == "Hosted key")
     assert key.status == WARN and "no key saved" in key.detail
-    assert key.remediation == "Add your OpenRouter key in Settings > Hosted."
+    assert key.remediation == "Add your OpenRouter key in Settings > This computer."
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     on = rows(_hosted_settings("tier1"))
@@ -804,8 +837,9 @@ def test_switching_to_local_unroutes_a_legacy_external_tier_row(monkeypatch):
     assert st.llm.mode == "local" and st.llm.tiers["tier1"].backend == "frontier"
     assert {r.tier for r in prov.tier_status(st) if r.in_use} == {"tier1", "frontier"}
     body = client.get("/settings/hosted").text
-    assert "frontier/legacy/model" in body
-    assert "hosted backend; switching to Local moves it back" in body
+    # #224: the Local card left with the switch; the warning stays, beside the status chips.
+    legacy = body.split('data-testid="hosted-legacy-row"')[1].split("</p>")[0]
+    assert "frontier/legacy/model" in legacy and "online backend" in legacy
 
     r = client.post("/settings/hosted/switch", data={"mode": "local"})
     assert r.status_code == 200
@@ -815,7 +849,7 @@ def test_switching_to_local_unroutes_a_legacy_external_tier_row(monkeypatch):
     assert st.llm.tiers["tier1"].model == get_settings().llm.tiers["tier1"].model
     assert {r.tier for r in prov.tier_status(st) if r.in_use} == {"frontier"}
     assert st.llm.tiers["frontier"].model == "anthropic/claude-sonnet-4.6"  # never touched
-    assert "hosted backend; switching" not in client.get("/settings/hosted").text
+    assert 'data-testid="hosted-legacy-row"' not in client.get("/settings/hosted").text
     # a second switch has nothing to move and says nothing about it
     r = client.post("/settings/hosted/switch", data={"mode": "local"})
     assert "Also moved back" not in r.text and "now runs on local models" in r.text
@@ -832,5 +866,5 @@ async def test_hosted_mode_turned_off_after_the_client_was_built_refuses_the_sen
     async with sm() as s:
         s.add(Setting(key=key, value=None if key.endswith("_at") else False))
         await s.commit()
-        plan = await _shared.plan_hosted_send(s, settings, "tier1")
+        plan = await _shared.plan_hosted_send(s, settings, "tier1", sender=settings)
     assert plan.refuse and "turned off" in plan.refuse

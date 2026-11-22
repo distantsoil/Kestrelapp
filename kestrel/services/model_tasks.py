@@ -49,7 +49,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting, Task
-from kestrel.errors import shown_failure
+from kestrel.errors import shown_code, shown_failure
 from kestrel.llm import profiles
 
 log = structlog.get_logger()
@@ -400,12 +400,13 @@ def _row_view(t: Task) -> dict[str, Any]:
     prog = _progress.get(t.id)
     view: dict[str, Any] = {
         "id": t.id, "kind": KIND.get(t.type, ""), "target": target, "status": t.status,
-        "percent": None, "step": "", "error": "",
+        "percent": None, "step": "", "error": "", "code": None,
     }
     if t.status == "pending":
         view["step"] = "Waiting" if not t.attempts else "Trying again shortly"
         if t.attempts and t.last_error:
             view["error"] = shown_failure(t.last_error)[:300]
+            view["code"] = shown_code(t.last_error)
     elif t.status == "leased":
         view["step"] = step_text(prog) if prog else "Starting"
         view["percent"] = prog.percent if prog else None
@@ -416,6 +417,7 @@ def _row_view(t: Task) -> dict[str, Any]:
     else:  # dead or failed
         view["step"] = "Failed"
         view["error"] = (shown_failure(t.last_error) or "it stopped before it finished")[:300]
+        view["code"] = shown_code(t.last_error)
     return view
 
 
@@ -584,15 +586,14 @@ async def drain_once(
         log.info("setup_task_stopped", task=task.id, kind=kind, target=target)
         return True
     except (httpx.HTTPError, OllamaApiError, ValueError, OSError) as exc:
-        reason = _reason(exc, base)
+        reason, code = _reason(exc, base)
         prog.error = reason
-        from kestrel.errors import DETAIL_MARK
+        from kestrel.errors import coded_record
 
         status = await queue.fail(
-            task.id, f"{reason}{DETAIL_MARK}{type(exc).__name__}: {exc}",
-            worker_id=WORKER_ID, retry=True)
+            task.id, coded_record(reason, code, exc), worker_id=WORKER_ID, retry=True)
         log.warning("setup_task_failed", task=task.id, kind=kind, target=target,
-                    error=reason, now=status)
+                    error=reason, error_code=code, now=status)
         if status == "pending":
             await asyncio.sleep(RETRY_BACKOFF_S * max(1, task.attempts))
         return True
@@ -614,16 +615,21 @@ async def drain_once(
     return True
 
 
-def _reason(exc: Exception, base: str) -> str:
+def _reason(exc: Exception, base: str) -> tuple[str, str | None]:
+    """(sentence, registry code) for a failed pull or build, chosen together by the exception's
+    type (D-ERR-511): a refused connection is MDL-004, a stalled stream MDL-006, an error Ollama
+    sent back MDL-007; anything else takes the shared task decision and its code, if any."""
     if isinstance(exc, httpx.ConnectError | httpx.ConnectTimeout):
-        return f"Ollama is not answering at {base}. Open Ollama, then press Try again."
+        return f"Ollama is not answering at {base}. Open Ollama, then press Try again.", "MDL-004"
     if isinstance(exc, httpx.TimeoutException):
-        return "The download stalled (no data for ten minutes). Press Try again to continue it."
+        return ("The download stalled (no data for ten minutes). Press Try again to continue "
+                "it.", "MDL-006")
     if isinstance(exc, OllamaApiError):
-        return str(exc)
-    from kestrel.errors import task_failure_text
+        return str(exc), "MDL-007"
+    from kestrel.errors import task_failure
 
-    return task_failure_text(exc)[:500]
+    sentence, code = task_failure(exc)
+    return sentence[:500], code
 
 
 async def run_loop(

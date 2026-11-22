@@ -32,7 +32,15 @@ from typing import Any
 
 import httpx
 
-from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError
+from kestrel.ingest.base import (
+    AdapterError,
+    PostingBatch,
+    RawPosting,
+    ShapeError,
+    SourceConfigError,
+    details_not_read,
+    rate_limited_problem,
+)
 
 _LIST_URL = "https://recruiting.paylocity.com/recruiting/jobs/All"
 _DETAIL_URL = "https://recruiting.paylocity.com/Recruiting/Jobs/Details"
@@ -67,12 +75,16 @@ class PaylocityAdapter:
         max_results = config.get("max_results") or _DEFAULT_MAX_RESULTS
         data = await self._fetch_board(board_id, client)
         rows = [r for r in data["Jobs"] if _is_public_row(r)]
-        postings: list[RawPosting] = []
+        postings = PostingBatch()
+        skipped = 0  # roles whose detail could not be read
         for row in rows[:max_results]:
             detail = await self._fetch_detail(board_id, str(row["JobId"]), client)
             if detail is None:
-                continue  # a single failing DETAIL skips only this posting
+                skipped += 1  # a single failing DETAIL skips only this posting, and is said
+                continue
             postings.append(self._to_posting(row, detail, data, config))
+        if skipped:
+            postings.add(details_not_read("Paylocity", skipped, board_id))
         return postings
 
     async def _fetch_board(self, board_id: str, client: Any) -> dict:
@@ -90,7 +102,7 @@ class PaylocityAdapter:
         except ValueError as exc:
             raise AdapterError(f"Paylocity page data for {board_id} was unreadable") from exc
         if not isinstance(data, dict) or not isinstance(data.get("Jobs"), list):
-            raise AdapterError(f"Paylocity page data for {board_id} had an unexpected shape")
+            raise ShapeError(f"Paylocity page data for {board_id} had an unexpected shape")
         return data
 
     async def _fetch_detail(self, board_id: str, job_id: str, client: Any) -> dict | None:
@@ -144,7 +156,7 @@ def _is_429(exc: httpx.HTTPError) -> bool:
 
 def _failure(part: str, board_id: str, exc: httpx.HTTPError) -> AdapterError:
     if _is_429(exc):
-        return AdapterError(f"Paylocity rate limit reached while reading {part} for {board_id}")
+        return AdapterError(rate_limited_problem("Paylocity", 429, where=board_id))
     return AdapterError(f"Paylocity {part} fetch failed for {board_id}: {exc}")
 
 

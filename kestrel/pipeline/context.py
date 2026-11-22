@@ -12,6 +12,7 @@ never leaks an unresolved brace to the model.
 from __future__ import annotations
 
 import re
+import secrets
 from collections.abc import Iterable
 from statistics import median
 from types import SimpleNamespace
@@ -180,6 +181,163 @@ def profile_full(profile: Any) -> str:
         "\n".join(proof_lines) if proof_lines else "(none provided)",
     ]
     return "\n".join(parts)
+
+
+# ------------------------------------------------------------ PROFILE_FULL_V4 (evaluate/v4)
+# PROMPTS.md `PROFILE_FULL_V4` (issue #208, D-SCORE-24): the floor and the target say what each
+# means, and remote reads first and plainly. PROFILE_COMPACT and PROFILE_FULL above are untouched,
+# so Tier 1, v3 and every other prompt render byte for byte as before.
+def _remote_line(geo: Any) -> str:
+    ok = _get(geo, "remote_ok")
+    if ok is None:
+        return "Remote: not stated."
+    if not ok:
+        return "Remote: no."
+    countries = [str(c) for c in (_get(geo, "remote_country_allowlist") or []) if c]
+    return f"Remote: yes, from anywhere in {', '.join(countries)}." if countries else (
+        "Remote: yes, from anywhere.")
+
+
+def _onsite_line(geo: Any) -> str:
+    states = [str(x) for x in (_get(geo, "onsite_states") or []) if x]
+    metros = [str(_get(m, "name")) for m in (_get(geo, "onsite_metros") or []) if _get(m, "name")]
+    places = []
+    if states:
+        places.append(", ".join(states))
+    if metros:
+        places.append("metros " + ", ".join(metros))
+    if not places:
+        return "Onsite or hybrid: no places listed."
+    return f"Onsite or hybrid: only in {'; '.join(places)}."
+
+
+def _relocation_line(geo: Any) -> str:
+    value = _get(geo, "relocation_acceptable")
+    return "Relocation: not stated." if value is None else (
+        f"Relocation: {'yes' if value else 'no'}.")
+
+
+def profile_full_v4(profile: Any) -> str:
+    """PROFILE_FULL_V4 (PROMPTS.md): the v4 terms and location lines, then narrative and proof
+    points as PROFILE_FULL has them. Proof points and resume lines are the only achievements the
+    model may cite (hard rule 2)."""
+    if profile is None:
+        return "CANDIDATE\n(profile unavailable)"
+    emp = _get(profile, "employment_terms")
+    con = _get(profile, "consulting_terms")
+    geo = _get(profile, "geo_rules")
+    headline = _get(profile, "headline") or "n/a"
+    lines = ["CANDIDATE"]
+    if emp is not None or con is None:
+        terms = emp or SimpleNamespace()
+        lines += [
+            f"Level: {_get(terms, 'seniority_floor') or 'unspecified'} and above. "
+            f"Currently operating at {headline}.",
+            f"Targets: {_joined(_get(terms, 'target_titles'))}",
+            f"Hard no: {_joined(_get(terms, 'anti_titles'))}",
+            f"Pay floor: {_money(_get(terms, 'comp_floor_usd'))} base. The least you would "
+            "accept; a stated band that tops out below it is a dealbreaker.",
+            f"Pay target: {_money(_get(terms, 'comp_target_usd'))}. What you would like; never "
+            "a dealbreaker.",
+        ]
+    else:
+        terms = con
+        lines += [
+            f"Practice: {headline}. Minimum engagement: "
+            f"{_get(con, 'min_engagement_days') or 'unspecified'} days.",
+            f"Service lines: {_joined(_get(con, 'service_lines'))}",
+            f"Target orgs: size {_joined(_get(con, 'target_org_size'))}; "
+            f"sectors {_joined(_get(con, 'target_sectors'))}",
+            f"Excluded sectors: {_joined(_get(con, 'excluded_sectors'))}",
+            f"Day rate floor: {_money(_get(con, 'day_rate_floor'), '/day')}. The least you would "
+            "accept; a stated rate that tops out below it is a dealbreaker.",
+            f"Day rate target: {_money(_get(con, 'day_rate_target'), '/day')}. What you would "
+            "like; never a dealbreaker.",
+        ]
+    lines += _work_modes_line(terms)
+    lines += [
+        _remote_line(geo),
+        _onsite_line(geo),
+        _relocation_line(geo),
+        f"Work authorization: {_get(profile, 'work_auth') or 'unspecified'}",
+        f"Must have: {_joined(_get(profile, 'must_have'), 4)}",
+        f"Must avoid: {_joined(_get(profile, 'must_avoid'), 4)}",
+    ]
+    proofs = _get(profile, "proof_points") or []
+    proof_lines = [
+        f"- {_get(p, 'claim')} | evidence: {_get(p, 'evidence')} "
+        f"| metric: {_get(p, 'metric') or 'n/a'}"
+        for p in proofs
+    ]
+    return "\n".join([
+        *lines,
+        "",
+        "NARRATIVE",
+        (_get(profile, "narrative") or "").strip(),
+        "",
+        "PROOF POINTS (the only achievements you may cite besides the resume lines below; do not "
+        "invent others)",
+        "\n".join(proof_lines) if proof_lines else "(none provided)",
+    ])
+
+
+# --------------------------------------------------------------- RESUME_DIGEST (evaluate/v4)
+# PROMPTS.md `RESUME_DIGEST` (owner's option C, D-REL-27, D-SCORE-25). The profile and the digest
+# share the 2500-token profile allowance in doctor.input_budget (SPEC.md 8.2), so the tier's
+# num_ctx never changes: the digest gets what the profile leaves, at most 900 tokens.
+PROFILE_ALLOWANCE_TOKENS = 2500
+RESUME_DIGEST_MAX_TOKENS = 900
+RESUME_DIGEST_MAX_BULLETS = 20
+RESUME_DIGEST_BULLETS_PER_ROLE = 4
+RESUME_DIGEST_HEADER = (
+    "RESUME LINES (the candidate's own words from their current resume; you may cite them as "
+    "evidence, as you cite proof points)"
+)
+
+
+def digest_budget(profile_block: str) -> int:
+    """The digest's token cap for this profile: what the 2500-token allowance leaves after the
+    profile block, never more than 900 and never below 0."""
+    return max(0, min(RESUME_DIGEST_MAX_TOKENS,
+                      PROFILE_ALLOWANCE_TOKENS - count_tokens(profile_block)))
+
+
+def resume_digest_lines(skills: list[tuple[str, list[str]]],
+                        roles: list[list[str]], budget: int) -> list[str]:
+    """The digest's lines, whole, in order (skills groups, then each role's bullets, at most 4
+    per role and 20 in all), stopping at the first line that would take the block past `budget`
+    tokens. Every bullet is the operator's text byte for byte (hard rule 2)."""
+    skill_lines = [f"- {label}: {', '.join(items)}" for label, items in skills if items]
+    bullets: list[str] = []
+    for role in roles:
+        for text in role[:RESUME_DIGEST_BULLETS_PER_ROLE]:
+            if len(bullets) == RESUME_DIGEST_MAX_BULLETS:
+                break
+            bullets.append(f"- {text}")
+    planned: list[str] = []
+    if skill_lines:
+        planned += ["Skills:", *skill_lines]
+    if bullets:
+        planned += ["Experience:", *bullets]
+    out: list[str] = []
+    for line in planned:
+        if line in ("Skills:", "Experience:"):
+            out.append(line)
+            continue
+        if count_tokens("\n".join([RESUME_DIGEST_HEADER, *out, line])) > budget:
+            break
+        out.append(line)
+    while out and out[-1] in ("Skills:", "Experience:"):
+        out.pop()
+    return out
+
+
+def resume_digest_block(lines: list[str]) -> str:
+    """The RESUME_DIGEST block, or "" when there is nothing to send. A leading blank line: it sits
+    right after the profile block, as OPERATOR_CORRECTIONS does."""
+    if not lines:
+        return ""
+    return "\n\n" + "\n".join([RESUME_DIGEST_HEADER, *lines])
 
 
 # ------------------------------------------------------------------------- few-shot rendering
@@ -465,10 +623,23 @@ def render_user(
     """Render a prompt USER template: conditionals, the for-each-signal line, then flat placeholder
     substitution. `values` keys are the exact text between braces."""
     text = _apply_conditionals(template, trigger_event=trigger_event, posted=posted)
+    # The template's own {RESUME_DIGEST} is reserved first, so a value that happens to contain
+    # that text (a description, a note) is never expanded into the digest, and the digest's own
+    # braces are never read as a placeholder (D-SCORE-25, review).
+    late = {k: values[k] for k in _LATE_KEYS if k in values}
+    mark = secrets.token_hex(16)  # never in any value: no value can name the reserved spot
+    for key in late:
+        text = text.replace("{" + key + "}", f"\x00{mark}{key}\x00")
     text = _FOR_ORG_SIG_RE.sub(lambda _: org_signals, text)
     for key, val in values.items():
-        text = text.replace("{" + key + "}", val)
+        if key not in late:
+            text = text.replace("{" + key + "}", val)
+    for key, val in late.items():
+        text = text.replace(f"\x00{mark}{key}\x00", val)
     return text
+
+
+_LATE_KEYS = ("RESUME_DIGEST",)
 
 
 def _dual(base_key: str, value: str, default: str) -> dict[str, str]:
@@ -535,13 +706,17 @@ def build_tier2_values(
     few_shot: str,
     comp_intel: str | None,
     corrections: Iterable[object] = (),
+    resume_digest: str = "",
 ) -> dict[str, str]:
     """Placeholder map for P2 (employment) and P2C (consulting) USER templates. `corrections` are
     the rows `kestrel.learning.corrections.scoring_corrections` picked for this role; a v2
-    template has no `{OPERATOR_CORRECTIONS}` and ignores them."""
+    template has no `{OPERATOR_CORRECTIONS}` and ignores them. `resume_digest` is the rendered
+    RESUME_DIGEST block (`resume_digest_block`); only a v4 template places it, and it is mapped
+    last so a bullet's own text is never read as a placeholder."""
     desc = truncate_middle(normalize_description(opp.description_md), max_jd_tokens)
     values: dict[str, str] = {
         "PROFILE_FULL": profile_full(profile),
+        "PROFILE_FULL_V4": profile_full_v4(profile),
         "OPERATOR_CORRECTIONS": operator_corrections_block(corrections),
         "FEW_SHOT_EXAMPLES": few_shot,
         "opp.seen_count": str(opp.seen_count),
@@ -587,6 +762,7 @@ def build_tier2_values(
     ):
         values[spelling] = comp_intel if comp_intel else spelling.split(' or "', 1)[1].rstrip('"')
     values["comp_intel_summary"] = comp_intel or "insufficient data (n<5)"
+    values["RESUME_DIGEST"] = resume_digest  # reserved and substituted last by render_user
     return values
 
 

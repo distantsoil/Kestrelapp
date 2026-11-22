@@ -23,7 +23,19 @@
     var done = function () {
       if (!button || !c) return;
       button.textContent = 'Copied';
-      c.after(1400, function () { button.textContent = label; });
+      // The short confirmation (install_id.css); reduced motion turns the animation off.
+      button.classList.remove('is-copied');
+      void button.offsetWidth;
+      button.classList.add('is-copied');
+      // Said to a screen reader too: the button's new text alone is not announced.
+      var box = button.closest('.k-iid');
+      var said = box && box.querySelector('[data-iid-said]');
+      if (said) { said.textContent = ''; said.textContent = 'Copied'; }
+      c.after(1400, function () {
+        button.textContent = label;
+        button.classList.remove('is-copied');
+        if (said) said.textContent = '';  // no stale "Copied" for a screen reader to find later
+      });
     };
     try {
       var p = root.navigator.clipboard.writeText(text);
@@ -63,7 +75,9 @@
     var path = t.closest('[data-copy-target]');
     if (path) {
       var src = doc.getElementById(path.getAttribute('data-copy-target'));
-      if (src) copy(src.textContent.trim(), path, 'Copy');
+      // Each button keeps its own label ("Copy", "Copy full ID") for after the confirmation.
+      if (!path.getAttribute('data-label')) path.setAttribute('data-label', path.textContent);
+      if (src) copy(src.textContent.trim(), path, path.getAttribute('data-label'));
       return;
     }
     var vers = t.closest('[data-copy-versions]');

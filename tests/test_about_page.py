@@ -50,7 +50,7 @@ _BEARER = "Bearer eyJhbGciOiJIUzI1NiJ9.leaked-token-value"
 _POSTING = "Confidential VP of Infrastructure search for a logistics group"
 _EXPECTED_MEMBERS = {
     "README.txt", "summary.json", "doctor.json", "settings.redacted.yml",
-    "logs/kestrel.log", "quarantine.json", "packages.txt", "roles.json",
+    "logs/kestrel.log", "quarantine.json", "packages.txt", "roles.json", "unscored.json",
 }
 
 
@@ -628,7 +628,11 @@ def test_about_links_the_release_notes_beside_the_version():
     with _client() as c:
         body = c.get("/about").text
     line = body.split('id="about-version" ')[1].split("</div>")[0]
-    assert f'href="{GITHUB}/blob/main/CHANGELOG.md"' in line and ">Release notes</a>" in line
+
+    # No feed has been fetched here, so the tag is not known to exist: both open the CHANGELOG
+    # (the tag link is covered in tests/test_release_notes_link.py).
+    assert line.count(f'href="{GITHUB}/blob/main/CHANGELOG.md"') == 2
+    assert ">Release notes</a>" in line and ">See every change</a>" in line
     assert 'class="k-btn' not in line, "a plain text link, not a button"
 
 

@@ -76,6 +76,33 @@ def _seed() -> None:
     asyncio.run(go())
 
 
+def _seed_blocked_body() -> None:
+    """A search whose last run had many new Glassdoor roles with no description (issue 182)."""
+    async def go() -> None:
+        engine = make_async_engine(paths.db_path())
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        now = datetime.now(UTC)
+        async with sm() as s:
+            src = Source(track="employment", kind="jobspy", name="Blocked fixture search",
+                         config={"search_term": "director", "site_name": ["glassdoor", "indeed"]},
+                         origin="custom", enabled=True, cadence_hours=24,
+                         last_run_at=(now - timedelta(hours=1)).isoformat())
+            s.add(src)
+            await s.flush()
+            s.add(ScrapeRun(source_id=src.id, status="ok", error=None, started_at=now.isoformat(),
+                            counts={"fetched": 30, "new": 23,
+                                    "by_site": {"glassdoor": 20, "indeed": 3},
+                                    "bodies": {"glassdoor": {"new": 20, "empty": 14,
+                                                             "state": "jump"},
+                                               "indeed": {"new": 3, "empty": 3,
+                                                          "state": "too_few"}}}))
+            await s.commit()
+        await engine.dispose()
+        forget_engine()
+
+    asyncio.run(go())
+
+
 # One line of text: every client rect of the element's text sits at the same height.
 _LINES = LINES_JS
 
@@ -110,6 +137,8 @@ def live(monkeypatch, request):
         _seed_state_rows()
     if "while_looking_up" in request.node.name:
         _seed_found_boards()  # the rows already say Found on a board, so Add is on offer
+    if "blocked_body" in request.node.name:
+        _seed_blocked_body()
     if "legacy_backlog" in request.node.name:
         from tests.test_sources_lane import _seed as seed_backlog
 
@@ -849,4 +878,32 @@ def test_suggestion_action_layout_while_the_add_is_in_flight(live, theme, width)
     finally:
         for route in release:
             route.abort()
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme,width", [("light", 1280), ("dark", 1280), ("light", 390)])
+def test_blocked_body_share_and_warning_fit_in_the_drawer(live, theme, width, tmp_path):
+    """Issue 182: the per-board share and the plain warning stay inside the drawer, nothing
+    clipped or overlapping, in light, dark and a 390 wide window."""
+    ctx, page, errors = _page(live, theme, width)
+    try:
+        row = page.locator('[data-testid="source-row"]', has_text="Blocked fixture search")
+        row.locator('[data-testid="source-details"]').click()
+        shares = page.get_by_test_id("body-shares")
+        shares.wait_for(state="visible")
+        wait_for_layout(page)
+        assert "Glassdoor 14 of 20 new roles had no description" in shares.inner_text()
+        assert "too few to tell (3 new roles)" in shares.inner_text()
+        warn = page.get_by_test_id("body-warning")
+        assert warn.count() == 1 and "may be blocking automated reads" in warn.inner_text()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        for el in (shares, warn):
+            box = el.bounding_box()
+            assert box["x"] >= 0 and box["x"] + box["width"] <= width + 1
+            assert el.evaluate("e => e.scrollWidth <= e.clientWidth + 1")
+        out = os.environ.get("KESTREL_SHOT_DIR") or str(tmp_path)
+        os.makedirs(out, exist_ok=True)
+        page.screenshot(path=f"{out}/182-drawer-{theme}-{width}.png")
+        assert not errors, errors
+    finally:
         ctx.close()

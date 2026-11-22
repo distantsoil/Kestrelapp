@@ -38,7 +38,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 
 from kestrel.db.models import Setting, Source
-from kestrel.ingest.adapters import get_adapter
+from kestrel.ingest.adapters import careers_page, get_adapter
 from kestrel.ingest.adapters.adzuna import KEY_SIGNUP_URL as ADZUNA_SIGNUP_URL
 from kestrel.ingest.adapters.usajobs import KEY_SIGNUP_URL
 from kestrel.ingest.base import AdapterError, SourceConfigError
@@ -46,6 +46,7 @@ from kestrel.ingest.orgs import normalized_name
 from kestrel.services import pursuit_undo, source_suggestions
 from kestrel.web import source_view as sv
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import authored_error
 from kestrel.web.pages import sources as pg
 
 log = structlog.get_logger()
@@ -487,7 +488,10 @@ async def check_link(request: Request):
                 postings = await adapter.fetch(ref.config, http) if adapter else []
     except AdapterError as exc:
         if page:  # the reader's own sentence says why (robots.txt, not found, blocked)
-            return _msg(request, "bad", str(exc))
+            log.info("source_link_check_failed", kind=ref.kind, error=type(exc).__name__)
+            said = authored_error(exc, careers_page.PAGE_REFUSALS,
+                                  "Nothing found at that link. Check the address and try again.")
+            return _msg(request, "bad", said)
         log.info("source_link_check_failed", kind=ref.kind, error=type(exc).__name__)
         return _msg(request, "bad", "Nothing found at that link. Check the address and try again.")
     except (httpx.HTTPError, SourceConfigError, ValueError, PermissionError,
@@ -580,7 +584,7 @@ async def check_feed(request: Request):
     """Read a feed link once and count its items (the same reader a check uses)."""
     from xml.etree import ElementTree
 
-    from kestrel.ingest.http import UnsafeURLError
+    from kestrel.ingest.http import UNSAFE_REFUSALS, UnsafeURLError
 
     url = _text(await request.form(), "url")
     if not url.lower().startswith(("http://", "https://")):
@@ -590,10 +594,11 @@ async def check_feed(request: Request):
             text = await http.get_text(url, public_only=True)
         if "<!DOCTYPE" in text.upper() or "<!ENTITY" in text.upper():
             raise ValueError("refused")
-        root = ElementTree.fromstring(text)
+        root = ElementTree.fromstring(text)  # noqa: S314  stdlib XML on fetched data; expat caps entity expansion; a hardened parser is under review
     except UnsafeURLError as exc:  # a link into this computer or a private network, or too big
         log.info("source_feed_check_refused", error=type(exc).__name__)
-        return _msg(request, "bad", f"{exc}.")
+        said = authored_error(exc, UNSAFE_REFUSALS, "Kestrel will not read that link")
+        return _msg(request, "bad", f"{said}.")
     except (httpx.HTTPError, ValueError, ElementTree.ParseError, PermissionError,
             RuntimeError) as exc:
         log.info("source_feed_check_failed", error=type(exc).__name__)
@@ -717,7 +722,8 @@ def _filter_words(cfg: dict) -> str:
 def _details(src: Source, view: sv.SourceView) -> str:
     """What Show details prints: the kind, the saved settings and the raw last status."""
     cfg = {k: v for k, v in (src.config or {}).items() if k != sv.REMOVED_KEY}
-    lines = [f"kind: {src.kind}", f"how often: every {src.cadence_hours} hours"]
+    lines = [f"Code {view.code}"] if view.code else []  # first, the same words as the page
+    lines += [f"kind: {src.kind}", f"how often: every {src.cadence_hours} hours"]
     lines += [f"{k}: {json.dumps(v) if not isinstance(v, str) else v}" for k, v in cfg.items()]
     lines.append(f"last status: {view.raw or 'no problem recorded'}")
     return "\n".join(lines)

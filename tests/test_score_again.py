@@ -23,6 +23,7 @@ from kestrel.pipeline.worker import TierStats, Worker
 from kestrel.queue.rescore import enqueue_rescore, parse_ids
 from kestrel.web.pages.rescore import comparison, history_rows, short_model
 from tests import clock_seed
+from tests.page_source import inline_static
 from tests.pipeline_fakes import FakeLLM
 
 _PAD = " " + "Details follow. " * 20  # a real posting body, over the Tier 2 stub floor
@@ -511,7 +512,7 @@ def _client(monkeypatch):
 
 def test_dialog_markup_and_queue(monkeypatch):
     client, ids = _client(monkeypatch)
-    body = client.get(f"/rescore/choose?opp_ids={ids[0]},{ids[1]}").text
+    body = inline_static(client.get(f"/rescore/choose?opp_ids={ids[0]},{ids[1]}").text)
     assert '<dialog class="score-again-dialog sf-dialog"' in body and "showModal" in body
     assert "Score 2 roles again" in body
     # D-UI-152: a friendly model name and where it runs, never the raw kestrel-tier2 tag.

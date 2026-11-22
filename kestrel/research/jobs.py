@@ -16,6 +16,7 @@ from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Opportunity, Org, Quarantine, Task
 from kestrel.ingest.http import HttpClient
 from kestrel.llm.client import LLMClient
+from kestrel.llm.engine_cycle import engine_unreachable
 from kestrel.pipeline._shared import plan_hosted_send
 from kestrel.queue.queue import REASON_STOPPED, TaskQueue
 from kestrel.research.company import research_org
@@ -28,6 +29,12 @@ from kestrel.services.setting_overrides import load_settings_with_db
 log = structlog.get_logger()
 TYPES = ("org_research", "org_contacts")
 LIVE = ("pending", "leased")
+
+# The whole list of enqueue's own refusals. A page shows one of these, picked by
+# kestrel.web.errors.authored_error, or the fallback; never an exception's text.
+NO_COMPANY = "No company is linked to this role yet."
+ENQUEUE_REFUSALS = (NO_COMPANY,)
+ENQUEUE_FALLBACK = "Research could not be queued. Try again in a moment."
 LABELS = {"org_research": "Company research", "org_contacts": "Public contacts"}
 
 
@@ -52,7 +59,7 @@ async def enqueue(
 ) -> bool:
     task_type = TYPES[1] if kind == "contacts" else TYPES[0]
     if opp.org_id is None or await session.get(Org, opp.org_id) is None:
-        raise ValueError("No company is linked to this role yet.")
+        raise ValueError(NO_COMPANY)
     payload = {
         "opportunity_id": opp.id,
         "org_id": opp.org_id,
@@ -166,11 +173,14 @@ async def _approval_error(
     target = destination(settings)
     if payload.get("destination") != target:
         return "Model or service changed. Start again to confirm where this runs."
+    from kestrel.services.setup_state import online_send_held
+
     if target["external"] and (
-        not settings.llm.hosted_mode.active or not payload.get(CONFIRMED_ONLINE_KEY)
+        online_send_held(settings) is not None or not payload.get(CONFIRMED_ONLINE_KEY)
     ):
         return "Online approval is needed. Start again to confirm the send."
-    return (await plan_hosted_send(session, settings, "tier3")).refuse
+    # The job's client is built from these same settings (LLMClient(settings) below).
+    return (await plan_hosted_send(session, settings, "tier3", sender=settings)).refuse
 
 
 async def _run(sm: async_sessionmaker[AsyncSession], task: Task) -> None:
@@ -274,13 +284,31 @@ async def _hold(sm: async_sessionmaker[AsyncSession], task: Task, reason: str) -
         await session.commit()
 
 
-async def drain(sm: async_sessionmaker[AsyncSession], *, stop: asyncio.Event | None = None) -> int:
-    from kestrel.pipeline.worker import _TASK_LEASE_S, _renew_lease
+async def drain(
+    sm: async_sessionmaker[AsyncSession], *, stop: asyncio.Event | None = None,
+    settings: Settings | None = None,
+) -> int:
+    from kestrel.pipeline.worker import (
+        _TASK_LEASE_S,
+        _renew_lease,
+        engine_lost_for,
+        local_engine_ready,
+    )
+    from kestrel.services.setting_overrides import load_settings_with_db
 
+    # Before any lease, so no public page is fetched for a task that would then fail on the
+    # engine (D-WORKER-6 amended, round 4): research and contacts run on Tier 3.
+    if settings is None:  # the worker cycle passes its own; a caller without them reads them
+        async with sm() as session:
+            settings = await load_settings_with_db(session)
+    if not await local_engine_ready(settings, "tier3"):
+        return 0
     queue = TaskQueue(sm)
     worker_id = "pipeline-research"
     done = 0
     while stop is None or not stop.is_set():
+        if engine_lost_for(settings, "tier3"):
+            break  # a call this cycle could not reach Ollama: lease nothing more (round 6)
         task = await queue.lease(worker_id, types=list(TYPES), lease_seconds=_TASK_LEASE_S)
         if task is None:
             break
@@ -329,6 +357,7 @@ async def drain(sm: async_sessionmaker[AsyncSession], *, stop: asyncio.Event | N
                 "keeps failing.",
                 worker_id=worker_id,
                 retry=exc.retryable,
+                engine_wait=exc.engine_unreachable,
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("research_task_failed", task=task.id, error_type=type(exc).__name__)
@@ -336,6 +365,7 @@ async def drain(sm: async_sessionmaker[AsyncSession], *, stop: asyncio.Event | N
                 task.id,
                 "Research could not finish. Start again if it keeps failing.",
                 worker_id=worker_id,
+                engine_wait=engine_unreachable(exc),
             )
         finally:
             if not run.done():

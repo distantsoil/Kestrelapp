@@ -144,7 +144,7 @@ async def test_breezy_page_cap_keeps_the_roles_and_says_how_many_lack_a_body():
     got = await _fetch({"max_results": 2})
     assert pages.call_count == 2 and len(got) == 5  # nothing dropped
     assert sum(p.description_html is None for p in got) == 3
-    assert "5 roles" in got.partial_error and "at most 2" in got.partial_error
+    assert "3 roles" in got.partial_error and "beyond the 2 posting pages" in got.partial_error
     assert "max_results" in got.partial_error and "—" not in got.partial_error
     exact = await _fetch({"max_results": 5})  # at the cap exactly: no partial
     assert exact.partial_error is None
@@ -158,7 +158,8 @@ async def test_breezy_429_on_a_page_stops_reading_pages_and_keeps_every_role():
     got = await _fetch()
     assert pages.call_count == 2  # the 429 ends the page reads
     assert len(got) == 4 and [p.description_html is None for p in got] == [False, True, True, True]
-    assert "rate limiting" in got.partial_error and "3 roles" in got.partial_error
+    assert "rate limiting" in got.partial_error and "3 of its roles" in got.partial_error
+    assert [n.kind for n in got.notices] == ["rate_limited"]
 
 
 @respx.mock
@@ -175,7 +176,12 @@ async def test_breezy_a_failing_page_leaves_only_that_role_without_a_body():
     respx.get(f"{_P}/{_IDS[1]}").mock(return_value=Response(404))
     respx.get(f"{_P}/{_IDS[2]}").mock(return_value=Response(200, text="<html></html>"))
     got = await _fetch()
-    assert len(got) == 3 and got.partial_error is None
+    # the page that failed is said, so Runs and the health check see it (D-ERR-24 round 8);
+    # a page that loaded with no description is not a failure
+    assert len(got) == 3 and got.partial_error is not None
+    assert got.partial_error.startswith(
+        "Breezy HR did not return the details of 1 of its roles at ")
+    assert [n.kind for n in got.notices] == ["body_unread"]
     assert [p.description_html is None for p in got] == [False, True, True]
 
 

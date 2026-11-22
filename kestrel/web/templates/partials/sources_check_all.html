@@ -5,7 +5,7 @@
   {'label': 'Cancel', 'close': True},
   {'label': 'Check all now', 'kind': 'primary', 'close': True, 'attrs': attrs}
 ], static=True) %}
-  <form id="sources-check-form" onsubmit="return false">
+  <form id="sources-check-form" data-k-no-submit>
     <input type="hidden" name="online_approval" value='{{ approval | tojson }}'>
     {% if routes %}
       <p>These models use your own key and credit. What will be sent:</p>

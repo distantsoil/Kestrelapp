@@ -212,7 +212,7 @@ html::-webkit-scrollbar-track { background: transparent; }
   .side .track-switch a::before { content: attr(data-initial); font-size: 12px; font-weight: 700; }
   .side .track-switch a .n { display: none; }
 }
-/* The status readout (D-UI-91): two lines, never wrapping. */
+/* The status readout (D-UI-91): two lines; a long line wraps rather than clipping. */
 .k-sstat {
   border-top: 1px solid var(--line); padding: 10px 8px 0; margin-top: 6px;
   font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 6px;
@@ -220,8 +220,7 @@ html::-webkit-scrollbar-track { background: transparent; }
 }
 .k-sstat__l { display: flex; gap: 8px; align-items: center; min-width: 0; color: var(--muted);
   text-decoration: none; }
-.k-sstat__l > span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  min-width: 0; }
+.k-sstat__l > span:last-child { white-space: normal; overflow-wrap: break-word; min-width: 0; }
 .k-sstat b { color: var(--ink); }
 .k-sstat .k-sstat__bad { color: var(--bad-ink); }
 .k-sstat .k-sstat__warn { color: var(--warn-ink); }
@@ -1245,3 +1244,20 @@ html[data-reduce-motion="1"] .k-consent__hint.is-on { animation: none; opacity: 
 .k-localonly { border: 0; margin: 0; padding: 0; min-inline-size: 0; }
 .k-localonly :is(button, input, select, textarea, a.k-btn, a.btn) { cursor: not-allowed; }
 .k-localonly__note { margin: var(--sp-2) 0 0; color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; }
+
+/* Posting text (issue #210, D-UI-720): the nodes partials/posting_macros.html prints on the
+   Posting tab, the quick round's full text and the calibration flyout. Theme tokens only. */
+.kp-text { white-space: normal; overflow-wrap: anywhere; }
+.kp-text .kp-p { margin: 0 0 .75em; }
+.kp-text .kp-rest { white-space: pre-line; }
+.kp-text .kp-h { margin: 1.1em 0 .4em; font-weight: 700; line-height: 1.3; color: var(--ink); }
+.kp-text .kp-h:first-child { margin-top: 0; }
+.kp-text .kp-h--1 { font-size: 1.15em; }
+.kp-text .kp-h--2 { font-size: 1.06em; }
+.kp-text .kp-h--3 { font-size: 1em; }
+.kp-text .kp-list { margin: 0 0 .75em; padding-left: 1.4em; }
+.kp-text .kp-li { margin: .2em 0; }
+.kp-text .kp-li--sub { margin-left: 1.3em; list-style-type: circle; }
+.kp-text .kp-li--num { list-style: none; }
+.kp-text .kp-num { font-variant-numeric: tabular-nums; margin-left: -1.1em; }
+.kp-text strong { font-weight: 700; }

@@ -694,7 +694,12 @@
     // The launch entrance (locked mockup): the page staggers in once. The class only gates the CSS
     // delays, so a panel refreshed later by htmx never replays it.
     if (!reduced()) { host.classList.add('td-launch'); cx.after(2200, function () { host.classList.remove('td-launch'); }); }
-    if (host.getAttribute('data-tour') === '1') later(function () { startTour(0); }, 600);
+    if (host.getAttribute('data-tour') === '1') {
+      // The first-run notice (D-UI-249) comes first; the tour starts once it closes.
+      var brk = $('#td-break');
+      if (brk && brk.open) cx.on(brk, 'close', function () { later(function () { startTour(0); }, 250); });
+      else later(function () { startTour(0); }, 600);
+    }
   }
 
   root.KUI.page.define('today', {

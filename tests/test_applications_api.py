@@ -27,6 +27,7 @@ from kestrel.db.models import (
     StatusEvent,
 )
 from kestrel.web import auth
+from tests import clock_seed
 
 _EMPLOYER = "Northwind Freight"
 _PLACEHOLDER = "[Confidential]"
@@ -38,15 +39,17 @@ def _reset_key():
     auth.reset_cache()
 
 
-async def _seed(*, confidential: bool = False, old_days: int = 40) -> dict[str, int]:
+async def _seed(*, confidential: bool = False, old_days: int = 40,
+                now: datetime | None = None) -> dict[str, int]:
     await reset_engine()
     for suffix in ("", "-wal", "-shm"):
         paths.db_path().with_name(paths.db_path().name + suffix).unlink(missing_ok=True)
     migrate.run_migrations()
     engine = make_async_engine(paths.db_path())
     sm = async_sessionmaker(engine, expire_on_commit=False)
-    now = datetime.now(UTC)
-    old = (now - timedelta(days=old_days)).isoformat(timespec="microseconds")
+    now = now or datetime.now(UTC)
+    # D-TEST-825: a calendar day, not now minus 24-hour chunks, so DST/midnight cannot shift it.
+    old = clock_seed.local_days_ago(old_days, now).isoformat(timespec="microseconds")
     new = now.isoformat(timespec="microseconds")
     async with sm() as s:
         src = Source(track="employment", kind="import", name="Applied history import (employment)",
@@ -111,7 +114,8 @@ def _client(host: str = "127.0.0.1") -> TestClient:
 
 
 def test_the_list_has_each_application_with_the_fields_a_script_needs():
-    asyncio.run(_seed())
+    now = datetime.now(UTC)
+    asyncio.run(_seed(now=now))
     with _client() as c:
         body = c.get("/api/pursuits").json()
     rows = {r["role"]: r for r in body["rows"]}
@@ -122,7 +126,8 @@ def test_the_list_has_each_application_with_the_fields_a_script_needs():
     assert one["company"] == "Acme Corp" and one["status"] == "applied"
     assert one["source"] == "Board"  # the board the import recorded, not our import source
     assert rows["Buyer"]["source"] == "Applied history import (employment)"
-    assert one["applied_at"] == (datetime.now(UTC) - timedelta(days=40)).date().isoformat()
+    # D-TEST-825: the same captured instant as the seed; a midnight crossing cannot differ.
+    assert one["applied_at"] == clock_seed.local_days_ago(40, now).date().isoformat()
     assert body["next_cursor"] is None
 
 

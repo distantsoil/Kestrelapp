@@ -1,0 +1,25 @@
+cask "kestrel" do
+  version "@VERSION@"
+  sha256 "@SHA256@"
+
+  url "@URL@"
+  name "Kestrel"
+  desc "Local-first job search app that runs AI models on your own machine"
+  homepage "https://kestrelapp.co"
+
+  livecheck do
+    url :url
+  end
+
+  depends_on arch: :arm64
+  depends_on macos: :ventura
+
+  app "Kestrel.app"
+
+  # Caches only. Kestrel's data folder (~/Library/Application Support/Kestrel, which also holds
+  # its logs) is never listed: `brew uninstall --zap` would delete the user's search history.
+  zap trash: [
+    "~/Library/Caches/com.kestrel.desktop",
+    "~/Library/HTTPStorages/com.kestrel.desktop",
+  ]
+end

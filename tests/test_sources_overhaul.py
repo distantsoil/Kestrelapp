@@ -20,6 +20,7 @@ from kestrel import paths
 from kestrel.db import migrate
 from kestrel.db.engine import forget_engine, get_sessionmaker, reset_engine
 from kestrel.db.models import Opportunity, Org, Pursuit, ScrapeRun, Source, Task
+from kestrel.ingest.base import AdapterError
 from kestrel.services import tracks
 from kestrel.web import source_view as sv
 from tests import clock_seed
@@ -445,7 +446,8 @@ def test_check_all_queues_every_enabled_source_once():
         assert "Nothing to check" in json.loads(again.headers["HX-Trigger"])["k-toast"]["message"]
         page = c.get("/sources").text
     assert 'data-testid="checking-note"' in page and "Checking 1 source" in page
-    assert 'hx-trigger="every 6s [srcPollOk()]"' in page  # the rows refresh while it runs
+    # The rows refresh while it runs, while srcPollOk() allows (no htmx filter, D-INST-8).
+    assert 'hx-trigger="every 6s" data-k-when="poll=sources-poll-ok"' in page
 
     async def _tasks():
         async with get_sessionmaker()() as s:
@@ -591,6 +593,31 @@ def test_a_page_with_no_job_data_is_said_plainly_and_points_at_paste_by_hand(_pu
     assert "One posting" in r.text
     assert 'name="pick"' not in r.text
     assert "Nothing found at that link" in junk.text
+
+
+def test_a_careers_page_failure_shows_only_kestrels_own_sentence(_public_dns, monkeypatch):
+    """The reader's failure text is shown only when it is one of its own sentences: anything
+    else, such as a library's message, is replaced by the plain fallback."""
+    from kestrel.ingest.adapters import careers_page
+
+    said = {"text": "connection refused by 10.20.30.40:8443 (invented library detail)"}
+
+    async def _fails(self, html, config, client):
+        raise AdapterError(said["text"])
+
+    monkeypatch.setattr(careers_page.CareersPageAdapter, "read_html", _fails)
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get("https://example.com/careers").mock(
+            return_value=httpx.Response(200, text="<html>Join us</html>"))
+        mock.get("https://example.com/robots.txt").mock(return_value=httpx.Response(404))
+        with _client() as c:
+            foreign = c.post("/sources/check/link", data={"url": "https://example.com/careers"})
+            said["text"] = careers_page.PAGE_ANSWERED.replace("{line}", "503")
+            own = c.post("/sources/check/link", data={"url": "https://example.com/careers"})
+    assert 'data-testid="check-bad"' in foreign.text
+    assert "10.20.30.40" not in foreign.text and "invented library detail" not in foreign.text
+    assert "Nothing found at that link" in foreign.text
+    assert "The careers page answered 503." in own.text
 
 
 CAREERS = FIXTURES / "careers"
@@ -1047,7 +1074,7 @@ def test_the_sparkline_has_no_invented_heights_and_the_drawer_counts_checks():
         html = c.get("/sources").text
         drawer = c.get(f"/sources/{sid}/drawer").text
     assert 'data-testid="hist-n">3 of 10 recorded' in drawer
-    assert len(set(re.findall(r'<i class="" style="height:(\d+)px"', html))) == 1
+    assert len(set(re.findall(r'<i class="" data-k-style="height:(\d+)px"', html))) == 1
 
 
 def test_scoring_everything_on_an_online_model_names_it_and_is_checked_on_the_server(monkeypatch):
@@ -1091,3 +1118,62 @@ def test_source_add_undo_keeps_later_cadence_edit():
         c.post(f"/sources/{sid}/cadence", data={"cadence_hours": "168"})
         assert "This can no longer be undone." in c.post(events["k-toast"]["undoUrl"]).text
     assert rows()["Analyst"].enabled
+
+
+def test_a_feed_link_refusal_shows_only_kestrels_own_sentence(monkeypatch):
+    from kestrel.ingest import http as ingest_http
+
+    async def _refuses(self, url, **kw):
+        raise ingest_http.UnsafeURLError("refused at 10.11.12.13 (invented library detail)")
+
+    monkeypatch.setattr(ingest_http.HttpClient, "get_text", _refuses)
+    with _client() as c:
+        r = c.post("/sources/check/feed", data={"url": "https://news.example/rss"})
+    assert 'data-testid="check-bad"' in r.text
+    assert "10.11.12.13" not in r.text and "invented library detail" not in r.text
+    assert "Kestrel will not read that link." in r.text
+
+
+def test_a_link_into_a_private_network_says_kestrels_own_sentence(monkeypatch):
+    """The reader's own refusal reaches the person whole, on the link check and the feed check."""
+    from kestrel.ingest import http as ingest_http
+    from kestrel.ingest.adapters import careers_page
+
+    async def _private(host, port):
+        return ["10.0.0.5"]
+
+    monkeypatch.setattr(ingest_http, "_resolve", _private)
+    with respx.mock(assert_all_called=False) as mock:
+        route = mock.route().mock(return_value=httpx.Response(200, text="<rss/>"))
+        with _client() as c:
+            link = c.post("/sources/check/link", data={"url": "https://intranet.example/careers"})
+            feed = c.post("/sources/check/feed", data={"url": "https://intranet.example/rss"})
+        assert not route.called
+    assert 'data-testid="check-bad"' in link.text
+    assert careers_page.LINK_REFUSED + ingest_http.UNSAFE_MSG in unescape(link.text)
+    assert f"{ingest_http.UNSAFE_MSG}." in unescape(feed.text)
+
+
+# ---------------------------------------------------------------------------- issue 182
+def test_a_board_that_jumped_shows_its_share_with_sample_size_and_a_plain_warning():
+    counts = {"fetched": 30, "new": 23, "by_site": {"glassdoor": 20, "indeed": 3},
+              "bodies": {"glassdoor": {"new": 20, "empty": 14, "state": "jump"},
+                         "indeed": {"new": 3, "empty": 3, "state": "too_few"}}}
+    sid = _add(kind="jobspy", name="Director search", config={"search_term": "director"},
+               runs=[("ok", None, counts)])
+    with _client() as c:
+        html = c.get(f"/sources/{sid}/drawer").text
+    assert 'data-testid="body-shares"' in html
+    text = _text(html)
+    assert "Glassdoor 14 of 20 new roles had no description" in text
+    assert "Indeed too few to tell (3 new roles)" in text
+    assert "Glassdoor: 14 of 20 new roles had no description in this run. The site may be " \
+           "blocking automated reads." in text
+    assert html.count('data-testid="body-warning"') == 1  # Indeed's three roles do not warn
+
+
+def test_a_source_with_no_recorded_shares_shows_nothing_new():
+    sid = _add(kind="greenhouse", runs=[("ok", None, {"fetched": 14, "new": 1})])
+    with _client() as c:
+        html = c.get(f"/sources/{sid}/drawer").text
+    assert "body-shares" not in html and "body-warning" not in html

@@ -356,7 +356,7 @@ async def old_scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
         reasons = await failure_reasons(session, [r.opp.id for r in failed])
         for r in failed:
             r.scoring = "failed"
-            r.failed_reason = reasons.get(r.opp.id) or failure_words(None)
+            r.failed_reason = reasons.get(r.opp.id) or failure_sentence(None)
     todo = [r for r in rows if r.fit and r.fit.word == "new" and r.fit.group != GROUP_FAILED]
     if not todo:
         return
@@ -421,6 +421,11 @@ async def old_scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
             r.scoring = "stuck"
         else:
             r.scoring = "not_queued"
+    # The same final step as queries.scoring_states (not a task-by-role lookup this oracle
+    # compares): waiting roles nothing will score say why.
+    from kestrel.web.unscored import apply_holds
+
+    await apply_holds(session, todo)
 
 
 # The four task-by-role statements as they read before 0030 (payload JSON, no index).

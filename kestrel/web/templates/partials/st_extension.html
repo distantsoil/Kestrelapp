@@ -1,0 +1,43 @@
+{# Browser extension (issue #186): what it does in three steps, whether it has called Kestrel,
+   where to get it, the connection key, and the three switches it shares with its own options
+   page. The band is the scene-band layout with no scene art: the three steps are drawn here with
+   theme tokens (settings.css). #}
+{% import "partials/st_macros.html" as st with context %}
+{%- set pf = ui_prefs() %}
+<div class="k-scene st-xband" data-scene="none" data-touch="" data-animate="{{ '1' if pf.animate else '0' }}" data-testid="xt-band">
+  <div class="k-scene__stack st-xband__t">
+    <h2>Browser extension</h2>
+    <p class="k-scene__sub">Bring the posting you are looking at into Kestrel, in one click.</p>
+  </div>
+  <ol class="st-xsteps" aria-label="How it works">
+    <li class="st-xstep"><svg class="st-xart" viewBox="0 0 96 68" aria-hidden="true" focusable="false"><rect class="st-xa-win" x="2" y="2" width="92" height="64" rx="8"/><circle class="st-xa-dot" cx="12" cy="11" r="2.5"/><circle class="st-xa-dot" cx="20" cy="11" r="2.5"/><rect class="st-xa-brand" x="12" y="24" width="56" height="6" rx="3"/><rect class="st-xa-line" x="12" y="36" width="70" height="4" rx="2"/><rect class="st-xa-line" x="12" y="45" width="62" height="4" rx="2"/><rect class="st-xa-line" x="12" y="54" width="44" height="4" rx="2"/></svg><span>A posting you have open</span></li>
+    <li class="st-xarrow" aria-hidden="true"><svg viewBox="0 0 40 68" focusable="false"><path d="M4 34h28m-7-7l7 7-7 7"/></svg></li>
+    <li class="st-xstep"><svg class="st-xart" viewBox="0 0 68 68" aria-hidden="true" focusable="false"><image href="{{ static_url('icon.svg') }}" x="10" y="10" width="48" height="48"/><circle class="st-xa-brand st-xa-ring" cx="54" cy="14" r="9"/><path class="st-xa-tick" d="M50 14l3 3 5-6"/></svg><span>You click Capture or Read</span></li>
+    <li class="st-xarrow" aria-hidden="true"><svg viewBox="0 0 40 68" focusable="false"><path d="M4 34h28m-7-7l7 7-7 7"/></svg></li>
+    <li class="st-xstep"><svg class="st-xart" viewBox="0 0 96 68" aria-hidden="true" focusable="false"><rect class="st-xa-win" x="14" y="6" width="68" height="44" rx="5"/><rect class="st-xa-line" x="4" y="52" width="88" height="8" rx="4"/><image href="{{ static_url('icon.svg') }}" x="36" y="12" width="24" height="24"/><rect class="st-xa-good" x="30" y="40" width="36" height="4" rx="2"/></svg><span>Kestrel scores it, on this computer</span></li>
+  </ol>
+</div>
+
+{% if xt_connected %}<span class="k-pill k-pill--good st-xstat" role="status" data-testid="xt-status"><i class="st-xdot" aria-hidden="true"></i>Connected{% if xt_seen %} · {{ xt_seen }}{% endif %}</span>
+{% else %}<span class="k-pill st-xstat" role="status" data-testid="xt-status"><i class="st-xdot" aria-hidden="true"></i>Not connected yet</span>{% endif %}
+
+<section class="k-card st-card" id="st-xt-add" data-testid="xt-add">
+  <header class="k-sec-head st-head"><span class="st-xnum" aria-hidden="true">1</span><div class="k-grow"><h3>Add it to your browser</h3></div></header>
+  <div class="st-btns st-xbtns">
+    <a class="k-btn k-btn--primary" href="{{ xt_store.chrome }}"{% if xt_store_live.chrome %} target="_blank" rel="noopener noreferrer"{% endif %} data-testid="xt-get-chrome">Get it for Chrome</a>
+    <a class="k-btn" href="{{ xt_store.firefox }}"{% if xt_store_live.firefox %} target="_blank" rel="noopener noreferrer"{% endif %} data-testid="xt-get-firefox">Get it for Firefox</a>
+  </div>
+  <p class="st-dsm st-xline">Edge, Brave and Arc use the Chrome version. Safari's comes with Kestrel for Mac.</p>
+</section>
+
+{% include "partials/st_xt_key.html" %}
+
+<section class="k-card st-card" id="st-xt-does" data-testid="xt-does">
+  <header class="k-sec-head st-head"><div class="k-grow"><h3>What it does</h3></div></header>
+  {% for name, label, on in xt_features %}
+  <div class="st-row{% if loop.first %} st-row--first{% endif %}">
+    <div class="st-row__t"><span>{{ label }}</span></div>
+    {{ st.sw(name, label, on, {'data-st-url': '/settings/extension/features', 'data-testid': 'xt-sw-' ~ name}) }}
+  </div>
+  {% endfor %}
+</section>

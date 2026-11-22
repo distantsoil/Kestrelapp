@@ -63,6 +63,8 @@ class CorrectionError(ValueError):
 # The one CorrectionError message a person can act on from the Profile page; it is shown as
 # written, every other one shows a fixed fallback (kestrel.web.errors.authored_error, D-SEC-41).
 NOTE_NEEDED = "They mean something else needs a note"
+# The role page also shows this one as written (web/pages/role_corrections.py).
+REQUIREMENT_EMPTY = "the requirement is empty"
 
 
 @dataclass(frozen=True)
@@ -371,7 +373,7 @@ async def save_correction(
         raise CorrectionError(NOTE_NEEDED)
     text = " ".join((requirement_text or "").split())
     if not text or not requirement_norm(text):  # nothing a hash could tell apart (D-LEARN-11)
-        raise CorrectionError("the requirement is empty")
+        raise CorrectionError(REQUIREMENT_EMPTY)
     opp = await s.get(Opportunity, opportunity_id)
     if opp is None:
         raise CorrectionError(f"no role {opportunity_id}")

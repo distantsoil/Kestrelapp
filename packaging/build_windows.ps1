@@ -6,6 +6,8 @@
 .DESCRIPTION
     packaging\build_windows.ps1                # full build
     packaging\build_windows.ps1 -SkipBuild     # dist\Kestrel already exists
+    packaging\build_windows.ps1 -BuildOnly     # stop after the one-folder build (the release job
+                                               # signs the executables, then runs -SkipBuild)
     packaging\build_windows.ps1 -CleanData     # then wipe %LOCALAPPDATA%\Kestrel (backup first)
     packaging\build_windows.ps1 -CleanData -KeepKeys   # same, but keep .env (API keys)
 
@@ -18,6 +20,9 @@
       WINDOWS_CERT_PFX_BASE64    base64 of the code-signing .pfx; absent = unsigned build
       WINDOWS_CERT_PASSWORD      the .pfx password
       WINDOWS_CERT_TIMESTAMP_URL RFC 3161 timestamp server (default: DigiCert)
+      KESTREL_INNO_SIGNTOOL      a complete sign command for Inno Setup (ends with $f); when set,
+                                 Inno signs the installer and the uninstaller with it. Set by the
+                                 release job after the executables are signed; never holds a secret.
 
     Unsigned is the default and is a working build: SmartScreen shows "Windows protected your PC"
     on the first run of the installer, and the operator clicks More info, then Run anyway. Signing
@@ -27,6 +32,7 @@
 [CmdletBinding()]
 param(
     [switch]$SkipBuild,
+    [switch]$BuildOnly,
     [switch]$CleanData,
     [switch]$KeepKeys
 )
@@ -68,6 +74,11 @@ foreach ($exe in @("Kestrel.exe", "kestrel-cli.exe")) {
     if (-not (Test-Path (Join-Path $Dist $exe))) {
         throw "missing $Dist\$exe; run PyInstaller first (or drop -SkipBuild)"
     }
+}
+
+if ($BuildOnly) {
+    Write-Host "done: $Dist (build only; run again with -SkipBuild to pack the installer)"
+    return
 }
 
 # ------------------------------------------------------------------ 1b. clean data (optional)
@@ -132,7 +143,13 @@ if (-not $Iscc) { throw "ISCC.exe not found: install Inno Setup 6 (winget instal
 
 Write-Host "==> Inno Setup -> $Setup"
 if (Test-Path $Setup) { Remove-Item $Setup -Force }
-& $Iscc (Join-Path $Root "packaging\kestrel.iss")
+$isccArgs = @()
+if ($env:KESTREL_INNO_SIGNTOOL) {
+    # Inno signs Setup and the uninstaller itself (SignTool directive); see kestrel.iss.
+    $isccArgs += "/DKestrelSignTool=1"
+    $isccArgs += "/Skestrelsign=$($env:KESTREL_INNO_SIGNTOOL)"
+}
+& $Iscc @isccArgs (Join-Path $Root "packaging\kestrel.iss")
 if ($LASTEXITCODE -ne 0) { throw "iscc failed" }
 if (-not (Test-Path $Setup)) { throw "iscc did not produce $Setup (OutputBaseFilename mismatch?)" }
 

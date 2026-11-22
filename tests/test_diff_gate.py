@@ -247,3 +247,64 @@ def test_diff_base_reports_missing_origin_and_the_date(monkeypatch):
     base, note = gate.diff_base()
     assert base == "m" * 40
     assert "origin/main is missing" in note and "main (mmmmmmmmmm" in note and "2026-11-02" in note
+
+
+# ---- KESTREL_DIFF_BASE: a nearer base for the stress tier run alone (D-PROC-15) ------------------
+
+def _fake_git(table):
+    def fake(*args):
+        code, out = table.get(args, (1, ""))
+        return type("P", (), {"returncode": code, "stdout": out + "\n"})()
+    return fake
+
+
+def _override_table(sha="b" * 40, *, ancestor=0):
+    return {
+        ("rev-parse", "HEAD"): (0, "h" * 40),
+        ("rev-parse", "--verify", "--quiet", "cut^{commit}"): (0, sha),
+        ("merge-base", "--is-ancestor", sha, "HEAD"): (ancestor, ""),
+        ("rev-list", "--count", f"{sha}..HEAD"): (0, "7"),
+        ("show", "-s", "--format=%cs", sha): (0, "2026-11-16"),
+        ("merge-base", "HEAD", "origin/main"): (0, "m" * 40),
+        ("rev-list", "--count", "origin/main..main"): (0, "0"),
+        ("show", "-s", "--format=%cs", "origin/main"): (0, "2026-11-12"),
+    }
+
+
+def test_an_override_base_is_used_and_said_loudly(monkeypatch):
+    monkeypatch.setattr(gate, "_git", _fake_git(_override_table()))
+    base, note = gate.diff_base("cut")
+    assert base == "b" * 40
+    assert "OVERRIDDEN by KESTREL_DIFF_BASE=cut" in note
+    assert "7 commit(s) ahead" in note and "2026-11-16" in note
+
+
+def test_without_an_override_the_base_is_still_main(monkeypatch):
+    monkeypatch.setattr(gate, "_git", _fake_git(_override_table()))
+    for override in (None, ""):
+        base, note = gate.diff_base(override)
+        assert base == "m" * 40
+        assert "OVERRIDDEN" not in note and "origin/main" in note
+
+
+def test_an_override_that_is_not_an_ancestor_of_head_is_refused(monkeypatch):
+    monkeypatch.setattr(gate, "_git", _fake_git(_override_table(ancestor=1)))
+    base, note = gate.diff_base("cut")
+    assert base is None
+    assert "is not an ancestor of HEAD" in note
+
+
+def test_an_override_that_is_head_itself_is_refused(monkeypatch):
+    monkeypatch.setattr(gate, "_git", _fake_git(_override_table(sha="h" * 40)))
+    base, note = gate.diff_base("cut")
+    assert base is None
+    assert "is HEAD itself" in note
+
+
+def test_an_override_that_names_no_commit_is_refused(monkeypatch):
+    table = _override_table()
+    del table[("rev-parse", "--verify", "--quiet", "cut^{commit}")]
+    monkeypatch.setattr(gate, "_git", _fake_git(table))
+    base, note = gate.diff_base("cut")
+    assert base is None
+    assert "does not name a commit" in note

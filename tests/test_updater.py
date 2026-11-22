@@ -435,3 +435,233 @@ async def test_failed_notify_leaves_notified_version_and_retries(sm, monkeypatch
     async with sm() as s:
         assert (await updater.load_state(s)).notified_version == "0.4.0"
     assert len([n for n in await _notifications(sm) if n.kind == "update"]) == 1
+
+
+# --- the release file allowlist (D-UPD-8, D-UPD-9) -------------------------------------------
+
+RELEASE = "https://github.com/distantsoil/Kestrelapp/releases/download"
+FILES = {"windows": "Kestrel-Setup-9.9.9.exe", "macos": "Kestrel-9.9.9.dmg",
+         "linux": "Kestrel-9.9.9-x86_64.AppImage"}
+SHA = "ab" * 32
+
+
+def _direct_feed(version: str = "9.9.9", **tamper) -> dict:
+    """A feed whose downloads all point at the real release; `tamper` edits one platform entry."""
+    downloads = {
+        p: {"file": f, "url": f"{RELEASE}/v{version}/{f}", "sha256": SHA, "signed": False}
+        for p, f in FILES.items()
+    }
+    for key, value in tamper.items():
+        downloads["macos"][key] = value
+    return {"schema": 1, "version": version, "published_at": "2026-03-01T12:00:00Z",
+            "download_page": "https://kestrelapp.co/download", "downloads": downloads,
+            "releases": []}
+
+
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [("win32", "windows"), ("darwin", "macos"), ("linux", "linux"), ("linux2", "linux"),
+     ("cygwin", None), ("freebsd14", None), ("", None)],
+)
+def test_feed_platform(platform, expected):
+    assert updater.feed_platform(platform) == expected
+
+
+def test_feed_platform_defaults_to_this_machine():
+    assert updater.feed_platform() == updater.feed_platform(__import__("sys").platform)
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+def test_release_download_accepts_the_real_release_and_rebuilds_the_url(platform):
+    found = updater.release_download(_direct_feed(), platform=platform)
+    key = updater.feed_platform(platform)
+    assert found is not None and found.platform == key
+    assert found.file == FILES[key] and found.version == "9.9.9" and found.sha256 == SHA
+    assert found.url == f"{RELEASE}/v9.9.9/{FILES[key]}"
+    assert "?" not in found.url and "#" not in found.url
+
+
+def test_release_download_rebuilds_rather_than_passing_the_feed_string_through():
+    # The feed's url must equal the rebuilt address byte for byte (D-UPD-9, round 2): a host in
+    # capitals is refused, not normalized. An uppercase checksum is accepted and shown in
+    # lowercase, and the returned url is the rebuilt constant form.
+    assert updater.release_download(_direct_feed(
+        url=f"https://GitHub.COM/distantsoil/Kestrelapp/releases/download/v9.9.9/"
+            f"{FILES['macos']}"), platform="darwin") is None
+    found = updater.release_download(_direct_feed(sha256=SHA.upper()), platform="darwin")
+    assert found is not None
+    assert found.url == f"{RELEASE}/v9.9.9/{FILES['macos']}" and found.sha256 == SHA
+    assert found.url == updater.urlunsplit(("https", updater.RELEASE_HOST,
+                                            f"{updater.RELEASE_PATH}v9.9.9/{found.file}", "", ""))
+
+
+@pytest.mark.parametrize(
+    ("reason", "tamper"),
+    [
+        ("http", {"url": f"http://github.com/distantsoil/Kestrelapp/releases/download/v9.9.9/"
+                         f"{FILES['macos']}"}),
+        ("other host", {"url": f"https://example.com/distantsoil/Kestrelapp/releases/download/"
+                               f"v9.9.9/{FILES['macos']}"}),
+        ("lookalike host", {"url": f"https://github.com.evil.example/distantsoil/Kestrelapp/"
+                                   f"releases/download/v9.9.9/{FILES['macos']}"}),
+        ("other repo", {"url": f"https://github.com/distantsoil/kestrel/releases/download/"
+                               f"v9.9.9/{FILES['macos']}"}),
+        ("other owner", {"url": f"https://github.com/someone/Kestrelapp/releases/download/"
+                                f"v9.9.9/{FILES['macos']}"}),
+        ("not an asset", {"url": "https://github.com/distantsoil/Kestrelapp/releases/tag/v9.9.9"}),
+        ("version mismatch", {"url": f"{RELEASE}/v9.9.8/{FILES['macos']}"}),
+        ("file mismatch", {"url": f"{RELEASE}/v9.9.9/Kestrel-9.9.8.dmg"}),
+        ("query", {"url": f"{RELEASE}/v9.9.9/{FILES['macos']}?from=kestrel"}),
+        ("fragment", {"url": f"{RELEASE}/v9.9.9/{FILES['macos']}#x"}),
+        ("userinfo", {"url": f"https://github.com@evil.example/distantsoil/Kestrelapp/releases/"
+                             f"download/v9.9.9/{FILES['macos']}"}),
+        ("port", {"url": f"https://github.com:8443/distantsoil/Kestrelapp/releases/download/"
+                         f"v9.9.9/{FILES['macos']}"}),
+        ("javascript", {"url": "javascript:alert(1)"}),
+        ("empty url", {"url": ""}),
+        ("file with a path", {"file": "../Kestrel-9.9.9.dmg",
+                              "url": f"{RELEASE}/v9.9.9/../Kestrel-9.9.9.dmg"}),
+        ("file with a slash", {"file": "x/Kestrel-9.9.9.dmg",
+                               "url": f"{RELEASE}/v9.9.9/x/Kestrel-9.9.9.dmg"}),
+        ("hidden file", {"file": ".dmg", "url": f"{RELEASE}/v9.9.9/.dmg"}),
+        ("file with a space", {"file": "Kestrel 9.9.9.dmg",
+                               "url": f"{RELEASE}/v9.9.9/Kestrel 9.9.9.dmg"}),
+        ("encoded file", {"file": "Kestrel%2F9.dmg", "url": f"{RELEASE}/v9.9.9/Kestrel%2F9.dmg"}),
+        ("short sha", {"sha256": "ab" * 31}),
+        ("non-hex sha", {"sha256": "zz" * 32}),
+    ],
+)
+def test_release_download_rejects(reason, tamper):
+    assert updater.release_download(_direct_feed(**tamper), platform="darwin") is None, reason
+    # The other platforms' entries are untouched and still accepted: the check is per entry.
+    assert updater.release_download(_direct_feed(**tamper), platform="win32") is not None
+
+
+@pytest.mark.parametrize("version", ["v9.9.9", "9.9", "9.9.9/x", " 9.9.9", "9.9.9-rc.1/../"])
+def test_release_download_rejects_a_feed_version_that_is_not_plain(version):
+    feed = _direct_feed()
+    feed["version"] = version
+    assert updater.release_download(feed, platform="darwin") is None
+
+
+def test_release_download_missing_entry_or_feed_is_none():
+    feed = _direct_feed()
+    del feed["downloads"]["macos"]
+    assert updater.release_download(feed, platform="darwin") is None
+    assert updater.release_download(_direct_feed(), platform="freebsd14") is None
+    assert updater.release_download({"schema": 1, "version": "9.9.9"}, platform="darwin") is None
+    assert updater.release_download(None, platform="darwin") is None
+    # The shipped fixture points its one entry at kestrelapp.co, not the release: no direct link.
+    assert updater.release_download(_feed(), platform="win32") is None
+
+
+def test_release_download_never_fetches(monkeypatch):
+    # Choosing the link is a pure read of the cached feed: no client is built, nothing awaits.
+    def boom(*_a, **_k):
+        raise AssertionError("release_download opened an HTTP client")
+
+    monkeypatch.setattr(updater.httpx, "AsyncClient", boom)
+    assert not inspect.iscoroutinefunction(updater.release_download)
+    assert updater.release_download(_direct_feed(), platform="darwin") is not None
+
+
+# --- bold in release notes (D-UPD-10) ---------------------------------------------------------
+
+
+def test_render_notes_bold_pairs_only():
+    out = updater.render_notes_html("- **The role page** shows more\n\n**All** of **this** is bold")
+    assert "<li><strong>The role page</strong> shows more</li>" in out
+    assert "<p><strong>All</strong> of <strong>this</strong> is bold</p>" in out
+    assert "**" not in out
+
+
+def test_render_notes_bold_is_applied_after_escaping():
+    out = updater.render_notes_html("**<script>alert(1)</script>** and **<b>x</b>**")
+    assert "<script>" not in out and "<b>" not in out
+    assert "<strong>&lt;script&gt;alert(1)&lt;/script&gt;</strong>" in out
+    assert "<strong>&lt;b&gt;x&lt;/b&gt;</strong>" in out
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["a lone ** marker", "**unpaired at the start", "unpaired at the end**", "** spaced **",
+     "**", "****", "* single * stars *", "a**b", "**\n**"],
+)
+def test_render_notes_stray_and_unpaired_asterisks_stay_literal(text):
+    out = updater.render_notes_html(text)
+    assert "<strong>" not in out
+    assert out.count("*") == text.count("*")
+
+
+def test_render_notes_renders_nothing_but_bold_headings_and_bullets():
+    out = updater.render_notes_html("[a link](https://evil.example) `code` *em* _u_ **b**")
+    assert "<a" not in out and "<code>" not in out and "<em>" not in out
+    assert "[a link](https://evil.example)" in out and "<strong>b</strong>" in out
+
+
+async def test_update_notice_body_does_not_send_people_to_the_site_for_the_file(sm):
+    # D-UPD-9: the bell action carries the link; the notice body no longer names kestrelapp.co.
+    async with sm() as s:
+        await updater.check_now(s, current="0.3.0", transport=_ok())
+    rows = [n for n in await _notifications(sm) if n.kind == "update"]
+    assert len(rows) == 1
+    assert "kestrelapp.co" not in rows[0].body
+    assert "download it when you're ready" in rows[0].body
+
+
+# --- round 2: ASCII digits, whole-string matches, byte-for-byte URL ---------------------------
+
+
+@pytest.mark.parametrize("text", ["١.8.0", "1.٨.0", "1.8.٠", "v١.0.0"])
+def test_parse_version_rejects_non_ascii_digits(text):
+    assert updater.parse_version(text) is None
+    assert updater.is_newer(text, "0.1.0") is False
+
+
+def test_release_download_rejects_a_non_ascii_version_digit():
+    feed = _direct_feed(version="١.8.0")
+    assert updater.release_download(feed, platform="darwin") is None
+
+
+@pytest.mark.parametrize(
+    ("reason", "tamper"),
+    [
+        ("sha with a trailing newline", {"sha256": SHA + "\n"}),
+        ("sha with a trailing space", {"sha256": SHA + " "}),
+        ("file with a trailing newline", {"file": FILES["macos"] + "\n",
+                                          "url": f"{RELEASE}/v9.9.9/{FILES['macos']}\n"}),
+        ("file with a trailing newline, clean url", {"file": FILES["macos"] + "\n"}),
+    ],
+)
+def test_release_download_matches_whole_strings(reason, tamper):
+    assert updater.release_download(_direct_feed(**tamper), platform="darwin") is None, reason
+
+
+@pytest.mark.parametrize(
+    ("reason", "given"),
+    [
+        ("leading space", f" {RELEASE}/v9.9.9/{FILES['macos']}"),
+        ("trailing space", f"{RELEASE}/v9.9.9/{FILES['macos']} "),
+        ("leading tab", f"\t{RELEASE}/v9.9.9/{FILES['macos']}"),
+        ("embedded newline", f"https://github.com/\ndistantsoil/Kestrelapp/releases/download/"
+                             f"v9.9.9/{FILES['macos']}"),
+        ("leading control character", f"\x01{RELEASE}/v9.9.9/{FILES['macos']}"),
+        ("uppercase scheme", f"HTTPS://github.com/distantsoil/Kestrelapp/releases/download/"
+                             f"v9.9.9/{FILES['macos']}"),
+        ("uppercase host", f"https://GitHub.com/distantsoil/Kestrelapp/releases/download/"
+                           f"v9.9.9/{FILES['macos']}"),
+    ],
+)
+def test_release_download_requires_the_url_byte_for_byte(reason, given):
+    assert updater.release_download(_direct_feed(url=given), platform="darwin") is None, reason
+    assert updater.release_download(_direct_feed(), platform="darwin") is not None
+
+
+def test_a_version_string_longer_than_any_tag_is_not_read():
+    """CodeQL py/polynomial-redos: the version pattern only ever sees a short string."""
+    from kestrel.services.updater import _VERSION_MAX_LEN, parse_version
+
+    assert parse_version("v1.2.3") == (1, 2, 3, (1,))
+    assert parse_version("1.2.3-" + "a" * (_VERSION_MAX_LEN - 6)) is not None
+    assert parse_version("1.2.3-" + "a" * _VERSION_MAX_LEN) is None
+    assert parse_version("1." * 5000) is None

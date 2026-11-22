@@ -19,7 +19,7 @@
       </div>
     </div>
     <div class="cal-seg" data-testid="cal-tune-strip">
-      <div class="cal-ring" style="--p: {{ pct_tune }}" role="img" aria-label="{{ [strips.n, strips.tune_at]|min }} of {{ strips.tune_at }} ratings"><div>{{ [strips.n, strips.tune_at]|min }}/{{ strips.tune_at }}</div></div>
+      <div class="cal-ring" data-k-style="--p: {{ pct_tune }}" role="img" aria-label="{{ [strips.n, strips.tune_at]|min }} of {{ strips.tune_at }} ratings"><div>{{ [strips.n, strips.tune_at]|min }}/{{ strips.tune_at }}</div></div>
       <div>
         <div class="cal-k">Scoring tune-up</div>
         <div class="cal-strong">{% if strips.tune_state == 'more' %}{{ strips.tune_left }} more {{ 'rating' if strips.tune_left == 1 else 'ratings' }}{% elif strips.tune_state == 'review' %}Ready to review{% elif strips.tune_state == 'done' %}Done. Checks again every {{ strips.tune_at }}{% else %}Checking your ratings{% endif %}</div>
@@ -30,7 +30,7 @@
       {% if strips.taste_state == 'learning' %}
       <div class="cal-grow">
         <div class="cal-row"><span class="cal-k">Learns your taste</span><span class="cal-sm"><b>{{ strips.n }}</b> of {{ strips.rank_at }}</span></div>
-        <div class="cal-track" role="img" aria-label="{{ strips.n }} of {{ strips.rank_at }} ratings"><u style="width: {{ pct_taste }}%"></u></div>
+        <div class="cal-track" role="img" aria-label="{{ strips.n }} of {{ strips.rank_at }} ratings"><u data-k-style="width: {{ pct_taste }}%"></u></div>
         <div class="cal-sm cal-dsm cal-hide-narrow">Kestrel learns to sort new roles your way.</div>
       </div>
       {% else %}
@@ -66,7 +66,7 @@
         <div class="cal-leg"><span><i></i>Now</span><span><i class="is-new"></i>Proposed</span></div>
         {% for r in tune.rows %}
         <div class="cal-wrow"><span>{{ r.name }}</span>
-          <div class="cal-bars"><i style="width: {{ [r.now * 2.4, 100]|min }}%" title="Now {{ r.now }}%"></i><i class="is-new" style="width: {{ [r.new * 2.4, 100]|min }}%" title="Proposed {{ r.new }}%"></i></div>
+          <div class="cal-bars"><i data-k-style="width: {{ [r.now * 2.4, 100]|min }}%" title="Now {{ r.now }}%"></i><i class="is-new" data-k-style="width: {{ [r.new * 2.4, 100]|min }}%" title="Proposed {{ r.new }}%"></i></div>
           <b>{{ r.now }} to {{ r.new }}%</b></div>
         {% endfor %}
       </div>

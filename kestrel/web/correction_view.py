@@ -27,7 +27,9 @@ LABELS = {
     "agree": "It's a fair gap",
 }
 STORY_REASONS = ("all", "some")
-NOTE_NEEDED = "What do they mean? (needed)"
+# The note box's placeholder (role.js sets the same words); not the refusal that a missing note
+# raises, which is learning.corrections.NOTE_NEEDED.
+NOTE_NEEDED_PLACEHOLDER = "What do they mean? (needed)"
 NOTE_OPTIONAL = "Anything to add? (optional)"
 STORY_PROMPT = (
     "Kestrel can only credit what you've written down. Pick the story that shows it, or write a "

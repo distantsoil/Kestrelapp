@@ -334,7 +334,7 @@ def _render_tier1(track: str, description: str = JD_900_WORDS) -> Rendered:
 
 def _render_tier2(
     track: str, *, tier: str = "tier2", k: int = FEW_SHOT_K, description: str = JD_900_WORDS,
-    corrections: tuple = (), version: str | None = None,
+    corrections: tuple = (), version: str | None = None, resume_digest: str = "",
 ) -> Rendered:
     from kestrel.pipeline.tier2 import _VERSION
 
@@ -344,6 +344,7 @@ def _render_tier2(
     values = build_tier2_values(
         opp=opp, org=org, profile=load_profile(track), source_name="greenhouse",
         max_jd_tokens=MAX_JD_TOKENS, few_shot=few, corrections=corrections,
+        resume_digest=resume_digest,
         comp_intel="median $232,000 (n=7, TX; range $205,000-$255,000), from the operator's own "
                    "observed corpus",
     )

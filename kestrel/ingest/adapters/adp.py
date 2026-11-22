@@ -30,7 +30,15 @@ from typing import Any
 
 import httpx
 
-from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError
+from kestrel.ingest.base import (
+    AdapterError,
+    PostingBatch,
+    RawPosting,
+    ShapeError,
+    SourceConfigError,
+    details_not_read,
+    rate_limited_problem,
+)
 
 _BASE = (
     "https://workforcenow.adp.com/mascsr/default/careercenter/public/events/staffing/v1/"
@@ -79,12 +87,16 @@ class AdpAdapter:
         ident = f"cid={cid}&ccId={cc_id}&lang={lang}&locale={lang}"
 
         items = await self._fetch_list(ident, cid, max_results, client)
-        postings: list[RawPosting] = []
+        postings = PostingBatch()
+        skipped = 0  # roles whose detail could not be read
         for item in items:
             detail = await self._fetch_detail(ident, cid, str(item["itemID"]), client)
             if detail is None:
-                continue  # a single failing DETAIL skips only this posting
+                skipped += 1  # a single failing DETAIL skips only this posting, and is said
+                continue
             postings.append(self._to_posting(item, detail, config, cc_id, lang))
+        if skipped:
+            postings.add(details_not_read("ADP", skipped, cid))
         return postings
 
     async def _fetch_list(self, ident: str, cid: str, max_results: int, client: Any) -> list[dict]:
@@ -102,7 +114,7 @@ class AdpAdapter:
                 raise AdapterError(f"ADP list for {cid} was not valid JSON") from exc
             rows = data.get("jobRequisitions") if isinstance(data, dict) else None
             if not isinstance(rows, list):
-                raise AdapterError(f"ADP list for {cid} had an unexpected shape")
+                raise ShapeError(f"ADP list for {cid} had an unexpected shape")
             page = [r for r in rows if isinstance(r, dict) and r.get("itemID")]
             if not rows:
                 break
@@ -155,7 +167,7 @@ def _is_429(exc: httpx.HTTPError) -> bool:
 
 def _failure(part: str, cid: str, exc: httpx.HTTPError) -> AdapterError:
     if _is_429(exc):
-        return AdapterError(f"ADP rate limit reached while reading {part} for {cid}")
+        return AdapterError(rate_limited_problem("ADP", 429, where=cid))
     return AdapterError(f"ADP {part} fetch failed for {cid}: {exc}")
 
 

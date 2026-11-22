@@ -1,11 +1,11 @@
-"""What the quick round shows (issue 171, D-UI-272): the card, the done screen and the Today
-strip's words. Read-only; every write is in routes_quick.py. Nothing here calls a model, and
-Kestrel's score is never read: a card carries only what the posting says."""
+"""What the quick round shows (issue 171, D-UI-272, amended by D-UI-331): the card, the done
+screen and the Today strip's words. Read-only; every write is in routes_quick.py. Nothing here
+calls a model, and Kestrel's score is never read: a card carries only what the posting says."""
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +14,9 @@ from kestrel.learning import quick
 from kestrel.learning.active import UncertainItem
 from kestrel.privacy import EmployerMap
 from kestrel.web import calibrate_view as cv
+from kestrel.web import posting_format
 from kestrel.web.pipeline_view import posted_words
+from kestrel.web.quick_text import FULL_CHARS, posting_text
 from kestrel.web.redact import confidential_once, redact_name, redact_text
 
 _STYLE = {"remote": "Remote", "hybrid": "Hybrid", "onsite": "On-site"}
@@ -33,6 +35,13 @@ class QuickCard:
     pay_listed: bool
     posted: str
     url: str  # an http(s) link or "" (Open posting is then left out)
+    excerpt: str = ""  # the employer's own first sentences ("" when there is no description)
+    paragraphs: list[str] = field(default_factory=list)  # the whole posting text, plain
+    has_more: bool = False  # the whole text says more than the excerpt (D-UI-331)
+    # The whole text as posting_format nodes, shown formatted under More (issue #210).
+    posting: list = field(default_factory=list)
+    posting_cut: bool = False  # more text than FULL_CHARS; the card ends with an ellipsis
+    blocked_note: str | None = None  # a search board sent no text: may have been blocked (182)
 
 
 def initials(name: str, fallback: str = "?") -> str:
@@ -62,6 +71,22 @@ async def build_card(
     where = opp.location_raw or ", ".join(p for p in (opp.city, opp.state) if p)
     where = redact_text(where, mapping, enabled=enabled) or ""
     pay = cv.pay_line(opp)
+    # The employer's own description, redacted like the org, title and place, and nothing else:
+    # no model text and no score (D-UI-331).
+    def redact(t: str) -> str:
+        return redact_text(t, mapping, enabled=enabled) or ""
+
+    text = posting_text(opp.description_md, redact)
+    posting, cut = posting_format.limit_blocks(
+        posting_format.parse(opp.description_md, redact), FULL_CHARS)
+    note = None
+    if not text.excerpt and opp.source_id is not None:
+        from sqlalchemy import select
+
+        from kestrel.db.models import Source
+        from kestrel.web.pipeline_view import blocked_note
+
+        note = blocked_note(await s.scalar(select(Source.kind).where(Source.id == opp.source_id)))
     return QuickCard(
         opp_id=opp.id,
         org=org,
@@ -74,6 +99,12 @@ async def build_card(
         pay_listed=pay != "Pay not listed",
         posted=posted_words(opp.date_posted or opp.first_seen_at),
         url=safe_url(opp.url),
+        excerpt=text.excerpt,
+        paragraphs=text.paragraphs,
+        has_more=text.has_more,
+        posting=posting,
+        posting_cut=cut,
+        blocked_note=note,
     )
 
 

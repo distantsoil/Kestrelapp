@@ -40,6 +40,7 @@ PROTECTED_PATHS = (
     "scripts/diff_gate.py",
     "scripts/test_floor.py",
     "scripts/static_checks.py",
+    "scripts/error_code_base.py",  # error codes stay permanent (D-ERR-9)
     "scripts/pyright_baseline.json",
     "tests/conftest.py",
     "tests/browser_plugin.py",
@@ -86,6 +87,28 @@ def justified_paths(messages: str, paths: list[str]) -> set[str]:
     """The paths from `paths` named, with a decision ID, on one line of the commit messages."""
     lines = [ln for ln in messages.splitlines() if DECISION_ID.search(ln)]
     return {p for p in paths if any(_norm(p) in ln.replace("\\", "/") for ln in lines)}
+
+
+# Paths whose justification must name a decision that really exists (D-ERR-13),
+# in the private decision log: the error code check guards its own reviewed form,
+# so a made-up ID cannot excuse an edit to it.
+REAL_DECISION_PATHS = ("scripts/error_code_base.py",)
+
+
+def recorded_ids(decisions: str) -> set[str]:
+    """Decision IDs that open an entry ("D-X-1 (", "D-X-1 ·", "### D-X-1 ") in
+    the private decision log."""
+    found = re.findall(r"^(?:### )?(D-[A-Z]+-[0-9]+)\b", decisions, flags=re.MULTILINE)
+    return set(found)
+
+
+def really_justified(messages: str, path: str, decisions: str) -> bool:
+    """A line names `path` and a recorded decision ID (in the private decision log)."""
+    known = recorded_ids(decisions)
+    return any(
+        _norm(path) in ln.replace("\\", "/") and set(DECISION_ID.findall(ln)) & known
+        for ln in messages.splitlines()
+    )
 
 
 def read_removals(text: str) -> dict[str, str]:
@@ -213,6 +236,7 @@ def protected_problems(
     base_text: dict[str, str | None],
     new_text: dict[str, str | None],
     messages: str,
+    decisions: str | None = None,
 ) -> list[str]:
     """`changed` is the branch's changed paths. base_text/new_text hold the sources of
     pyproject.toml and tests/test_contracts.py, which are protected only in part."""
@@ -234,6 +258,11 @@ def protected_problems(
     ) != allowlist_dump(new_text.get(contracts)):
         touched.append(contracts)
     okay = justified_paths(messages, touched)
+    okay = {
+        p
+        for p in okay
+        if p not in REAL_DECISION_PATHS or really_justified(messages, p, decisions or "")
+    }
     bad = sorted(set(touched) - okay)
     return [
         f"RULE protected path: {p} defines or weakens a gate and changed without a decision ID. "
@@ -282,6 +311,69 @@ def _has_getsource(node: ast.AST, tainted: set[str]) -> bool:
     return False
 
 
+# ---- real-time limits (D-PROC-22) ---------------------------------------------------------------
+# An assert that real elapsed time stayed under a small constant fails on a loaded machine: the
+# stress run uses four workers and a 10x clock, and a database write there has taken 1.4 s.
+REALTIME_LIMIT_S = 5.0
+_CLOCKS = {"monotonic", "perf_counter", "monotonic_ns", "perf_counter_ns"}
+
+
+def _is_clock_call(node: ast.AST) -> bool:
+    """time.monotonic(), time.perf_counter(), time.time() or the bare imported names."""
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        if func.attr in _CLOCKS:
+            return True
+        return func.attr == "time" and isinstance(func.value, ast.Name) and func.value.id == "time"
+    return isinstance(func, ast.Name) and func.id in _CLOCKS
+
+
+def _is_elapsed(node: ast.AST, elapsed_names: set[str]) -> bool:
+    """`<clock call> - something`, or a name that was assigned one."""
+    if isinstance(node, ast.Name):
+        return node.id in elapsed_names
+    return (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Sub)
+            and _is_clock_call(node.left))
+
+
+def _small_number(node: ast.AST) -> float | None:
+    if (isinstance(node, ast.Constant) and isinstance(node.value, int | float)
+            and not isinstance(node.value, bool) and 0 < node.value < REALTIME_LIMIT_S):
+        return float(node.value)
+    return None
+
+
+def elapsed_names(func: ast.AST) -> set[str]:
+    """Names in one test function assigned from `<clock call> - something`."""
+    names: set[str] = set()
+    for sub in ast.walk(func):
+        if isinstance(sub, ast.Assign) and _is_elapsed(sub.value, set()):
+            names.update(t.id for t in sub.targets if isinstance(t, ast.Name))
+    return names
+
+
+def realtime_limit(test: ast.AST, names: set[str]) -> float | None:
+    """The constant, when `test` holds `elapsed < constant` (or `constant > elapsed`) with a
+    constant under REALTIME_LIMIT_S; None otherwise. A bound built from the code's own setting
+    (`took < grace + CANCEL_WAIT_S + 1.0`) is not a bare constant and is not matched."""
+    for sub in ast.walk(test):
+        if not isinstance(sub, ast.Compare):
+            continue
+        sides = [sub.left, *sub.comparators]
+        for op, left, right in zip(sub.ops, sides, sides[1:], strict=False):
+            if isinstance(op, ast.Lt | ast.LtE) and _is_elapsed(left, names):
+                limit = _small_number(right)
+            elif isinstance(op, ast.Gt | ast.GtE) and _is_elapsed(right, names):
+                limit = _small_number(left)
+            else:
+                continue
+            if limit is not None:
+                return limit
+    return None
+
+
 def _asserts_with_parents(func: ast.AST):
     """Yield (assert node, whether it sits inside an `if`) for one test function."""
 
@@ -326,7 +418,25 @@ def quality_findings(path: str, source: str, changed: set[int] | None) -> list[F
                 proves = True
             elif isinstance(sub, ast.Call) and _ASSERTING_CALL.search(_call_name(sub)):
                 proves = True
+        timed = elapsed_names(func)
         for node, in_if in _asserts_with_parents(func):
+            limit = realtime_limit(node.test, timed)
+            if limit is not None:
+                # Unlike the other rules this one is reported on every line of the file: a
+                # warning where the line is old, a failure where the branch changed it.
+                out.append(
+                    Finding(
+                        path,
+                        node.lineno,
+                        "real-time limit",
+                        f"this asserts that real elapsed time stayed under {limit:g} s, which "
+                        "fails on a loaded machine (the stress run has four workers and a 10x "
+                        "clock). Fix: bound it relative to the code's own setting (for example "
+                        "`took < grace + CANCEL_WAIT_S + 1.0`), or drive a fake clock and assert "
+                        f"on that; a plain ceiling needs at least {REALTIME_LIMIT_S:g} s",
+                        warning=not hit(node.lineno, node.end_lineno or node.lineno),
+                    )
+                )
             if not hit(node.lineno, node.end_lineno or node.lineno):
                 continue
             if in_if:
@@ -752,6 +862,7 @@ def run_static(
         {t: _show(base, t) for t in texts},
         {t: _read(t) for t in texts},
         messages,
+        _read("the private decision log") or "",
     )
 
     problems += changelog_problems(base)

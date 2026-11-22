@@ -1,0 +1,42 @@
+{# Roles that failed the same way (D-UI-550 to D-UI-556): one banner per group that reached the
+   threshold, with the one fix for its cause. Every role stays in the list below; Show these narrows
+   it to exactly the group, and the same button then reads Show all roles. The fix is a choice: it
+   opens the same model menu a role has, and an online model asks first, with the same dialog.
+   Nothing here runs by itself. A group that was picked but whose banner is hidden gets a plain bar
+   so the way back to every role is always there. #}
+{% from "ui/macros.html" import icon %}
+{% set picked_key = group_picked.key if group_picked else '' %}
+{% for g in groups %}
+{% set k = g.key | urlencode %}
+{% set is_picked = g.key == picked_key %}
+<section class="rt-group{% if is_picked %} is-picked{% endif %}" data-testid="rt-group" data-group="{{ g.key }}" aria-labelledby="rt-g-{{ loop.index }}">
+  <div class="rt-g-text">
+    <b id="rt-g-{{ loop.index }}" data-testid="rt-group-title">{{ g.count }} roles failed the same way in {{ g.step_label }}</b>
+    <span data-testid="rt-group-why">{{ g.cause[:1] | upper }}{{ g.cause[1:] }}. All {{ g.count }} used {{ g.model_words }}.{% if is_picked %} Showing only these roles.{% endif %}</span>
+  </div>
+  <div class="rt-g-acts">
+    <span class="rt-menu-wrap">
+      <button type="button" class="k-btn k-btn--primary k-btn--sm" data-testid="rt-group-model" aria-haspopup="menu" aria-expanded="false"
+              hx-get="/quarantine/group/{{ k }}/models" hx-vals='{"group_ids": "{{ g.ids }}"}' hx-target="next .rt-menu-slot" hx-swap="innerHTML">{{ g.fix }}{{ icon('chev', 'k-ic--sm rt-down') }}</button>
+      <span class="rt-menu-slot"></span>
+    </span>
+    {% if is_picked %}
+    <button type="button" class="k-btn k-btn--sm" data-testid="rt-group-all"
+            hx-get="/quarantine" hx-target="#rt-card" hx-swap="outerHTML" hx-push-url="false">Show all roles</button>
+    {% else %}
+    <button type="button" class="k-btn k-btn--sm" data-testid="rt-group-show"
+            hx-get="/quarantine?group={{ k }}" hx-target="#rt-card" hx-swap="outerHTML" hx-push-url="false">Show these {{ g.count }}</button>
+    {% endif %}
+    <button type="button" class="k-btn k-btn--quiet k-btn--sm" data-testid="rt-group-hide" aria-label="Hide this notice until more roles fail this way"
+            hx-post="/quarantine/group/{{ k }}/dismiss" hx-target="#rt-card" hx-swap="outerHTML">{{ icon('x', 'k-ic--sm') }}Hide</button>
+  </div>
+</section>
+{% endfor %}
+{% if group_picked and not (groups | selectattr('key', 'equalto', picked_key) | list) %}
+<div class="rt-group rt-group--picked" data-testid="rt-group-picked">
+  <div class="rt-g-text"><b>Showing the {{ group_picked.count }} roles that failed the same way</b>
+    <span>{{ group_picked.cause[:1] | upper }}{{ group_picked.cause[1:] }}, in {{ group_picked.step_label }}.</span></div>
+  <div class="rt-g-acts"><button type="button" class="k-btn k-btn--sm" data-testid="rt-group-all"
+      hx-get="/quarantine" hx-target="#rt-card" hx-swap="outerHTML" hx-push-url="false">Show all roles</button></div>
+</div>
+{% endif %}

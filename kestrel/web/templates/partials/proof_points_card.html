@@ -1,0 +1,21 @@
+{# Profile > Documents: what scoring reads besides the resume (issue #208 item 6, D-SCORE-26/27).
+   Context: pp_track, pp_count, pp_narrative, pp_warnings, and optionally pp_note or pp_problem.
+   The Refresh button only opens a reviewed diff; nothing changes until Apply. Theme tokens only. #}
+<section class="k-card pf-pp" id="pf-pp" data-testid="pf-proof-points">
+  <header class="k-sec-head"><div class="k-grow"><h3>Proof points and narrative</h3>
+    <p class="k-muted">Scoring credits you only for what your proof points, your narrative and your current resume show. You have {{ pp_count }} proof point{{ '' if pp_count == 1 else 's' }}.</p></div></header>
+  {% for w in pp_warnings %}<p class="pf-note pf-note--warn pf-pp__warn" data-testid="pf-pp-warning">{{ w }}</p>{% endfor %}
+  {% if pp_note %}<p class="pf-note pf-pp__note" role="status" data-testid="pf-pp-note">{{ pp_note }}</p>{% endif %}
+  {% if pp_problem %}<p class="pf-note pf-note--bad" role="alert" data-testid="pf-pp-problem">{{ pp_problem }}</p>{% endif %}
+  <form class="pf-pp__narr" hx-post="/proof-points/narrative" hx-target="#pf-pp" hx-swap="outerHTML" data-testid="pf-pp-narrative-form">
+    <input type="hidden" name="track" value="{{ pp_track }}">
+    <label class="pf-pp__lbl" for="pf-pp-narrative">Narrative</label>
+    <textarea id="pf-pp-narrative" name="narrative" rows="3" maxlength="2000" placeholder="A few sentences on what you do and what you want next." data-testid="pf-pp-narrative">{{ pp_narrative }}</textarea>
+    <button type="submit" class="k-btn k-btn--sm" data-testid="pf-pp-narrative-save">Save narrative</button>
+  </form>
+  <div class="pf-pp__tools">
+    <button type="button" class="k-btn k-btn--sm k-btn--primary" hx-get="/proof-points/refresh?track={{ pp_track }}" hx-target="#pf-pp-diff" hx-swap="innerHTML" data-testid="pf-pp-refresh">Refresh proof points from my resume</button>
+    <span class="k-muted pf-pp__sub">Shows what would change first. Nothing changes until you apply it.</span>
+  </div>
+  <div id="pf-pp-diff" class="pf-pp__diff" aria-live="polite"></div>
+</section>

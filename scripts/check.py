@@ -27,6 +27,7 @@ before anything is pushed.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import re
@@ -34,11 +35,14 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import diff_gate  # noqa: E402  (sits beside this script; the path is added just above)
+import error_code_base  # noqa: E402  (same folder)
 import static_checks  # noqa: E402  (same folder)
+import stress  # noqa: E402  (same folder)
 import test_floor  # noqa: E402  (same folder)
 
 QUICK_TESTS = ["tests/test_packaging.py", "tests/test_notices.py"]
@@ -62,6 +66,10 @@ def _run(label: str, cmd: list[str]) -> bool:
 
 
 SKIP_LINE = re.compile(r"^SKIPPED \[(\d+)\] (.+?): (.*)$")
+PASSED_COUNT = re.compile(r"\b(\d+) passed\b")
+# How many tests the last _run_pytest saw pass (None: its summary line named none), so a run that
+# executed nothing, or only skipped, is never counted as a pass (D-CI-39).
+LAST_RUN = {"passed": None}
 BROWSER_WORDS = ("browser", "playwright", "edge", "chromium")
 
 
@@ -77,6 +85,104 @@ def worker_count(value: str) -> int:
     return count
 
 
+BROWSER_WORKER_CAP = 4
+
+
+CGROUP_ROOT = Path("/sys/fs/cgroup")
+PROC_CGROUP = Path("/proc/self/cgroup")
+
+
+def _quota_cpus(quota: int, period: int) -> int | None:
+    return max(1, -(-quota // period)) if quota > 0 and period > 0 else None
+
+
+def _v2_limit(folder: Path) -> int | None:
+    parts = (folder / "cpu.max").read_text(encoding="utf-8").split()
+    return _quota_cpus(int(parts[0]), int(parts[1])) if len(parts) == 2 and parts[0] != "max" \
+        else None
+
+
+def _v1_limit(folder: Path) -> int | None:
+    return _quota_cpus(int((folder / "cpu.cfs_quota_us").read_text(encoding="utf-8")),
+                       int((folder / "cpu.cfs_period_us").read_text(encoding="utf-8")))
+
+
+def _cgroup_folders(root: Path) -> list[tuple[str, Path]]:
+    """This process's own cgroup folders from /proc/self/cgroup, each followed by its ancestors
+    up to the mount (a quota set on a parent limits the child too; D-CI-594). Without a cgroup
+    namespace the own folder is a path below the mount, not the mount itself. When the file
+    cannot be read, the mounts alone, as before."""
+    try:
+        lines = PROC_CGROUP.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    out: list[tuple[str, Path]] = []
+    for line in lines:
+        fields = line.split(":", 2)
+        if len(fields) != 3:
+            continue
+        hier, controllers, rel = fields
+        if hier == "0" and controllers == "":
+            kind, mount = "v2", root
+        elif "cpu" in controllers.split(","):
+            kind, mount = "v1", root / "cpu"
+        else:
+            continue
+        folder = mount / rel.lstrip("/")
+        while True:
+            out.append((kind, folder))
+            if folder == mount or mount not in folder.parents:
+                break
+            folder = folder.parent
+    return out or [("v2", root), ("v1", root / "cpu")]
+
+
+def _cgroup_cpu_limit(root: Path | None = None) -> int | None:
+    """The whole CPUs a cgroup quota allows this process, rounded up, or None with no quota
+    (D-CI-590): the tightest quota on its own cgroup or any ancestor (D-CI-594). Formats from
+    the kernel's cgroup documentation: v2 `cpu.max` is "$MAX $PERIOD" with MAX "max" for no
+    limit; v1 `cpu.cfs_quota_us` is -1 for no limit, beside `cpu.cfs_period_us`. A file that
+    is missing or unreadable is no quota, never a guess."""
+    root = CGROUP_ROOT if root is None else root
+    limits: list[int] = []
+    for kind, folder in _cgroup_folders(root):
+        try:
+            limit = _v2_limit(folder) if kind == "v2" else _v1_limit(folder)
+        except (OSError, ValueError, IndexError):
+            continue
+        if limit:
+            limits.append(limit)
+    return min(limits) if limits else None
+
+
+def _usable_cpus() -> int:
+    """The CPUs this process may use: its affinity, capped by a cgroup quota (D-CI-590); where
+    the platform cannot say (no affinity call, or the call fails), the machine's count; never
+    less than 1 (D-CI-38)."""
+    try:
+        usable = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else 0
+    except OSError:
+        usable = 0
+    usable = usable or os.cpu_count() or 1
+    limit = _cgroup_cpu_limit()
+    return min(usable, limit) if limit else usable
+
+
+def browser_worker_count(value: str) -> int:
+    """`auto` is one worker per CPU up to BROWSER_WORKER_CAP (D-CI-35): a browser test is CPU
+    bound (about 2 CPU-seconds each, half of it Chromium), so more workers than CPUs only slow
+    every page toward the 30 s waits; an explicit number is taken as given."""
+    if value == "auto":
+        return max(1, min(BROWSER_WORKER_CAP, _usable_cpus()))
+    return worker_count(value)
+
+
+def _browser_coverage_env() -> dict[str, str]:
+    """Line coverage through sys.monitoring (Python 3.12+) in the browser stage: the default
+    tracer slowed the stage by about a fifth, sys.monitoring by nothing measurable (D-CI-35)."""
+    return {"COVERAGE_CORE": "sysmon"} if sys.version_info >= (3, 12) else {}
+
+
 def _run_pytest(
     cmd: list[str], *, extra_env: dict[str, str] | None = None
 ) -> tuple[bool, list[tuple[int, str, str]]]:
@@ -88,9 +194,12 @@ def _run_pytest(
         stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", cwd=diff_gate.ROOT,
     )
     skips: list[tuple[int, str, str]] = []
+    LAST_RUN["passed"] = None
     assert proc.stdout is not None
     for line in proc.stdout:
         print(line, end="", flush=True)
+        if counted := PASSED_COUNT.search(line):
+            LAST_RUN["passed"] = int(counted.group(1))
         if m := SKIP_LINE.match(line.rstrip()):
             skips.append((int(m.group(1)), m.group(2), m.group(3)))
     ok = proc.wait() == 0
@@ -211,8 +320,9 @@ def _static_gates() -> bool:
     the first, so one run shows the whole list."""
     base, note = diff_gate.diff_base()
     if base is None:
-        print(f"==> static checks: skipped, {note}")
-        return True
+        print(f"Not ready to push: the static checks cannot run, {note}. Run "
+              "`git fetch origin main`.")
+        return False
     print("==> static checks (pyright on changed files, changed-line lint, test floor, "
           "protected paths, test quality)", flush=True)
     names, lines = diff_gate.git_changes(base)
@@ -226,6 +336,7 @@ def _static_gates() -> bool:
                         "`uv sync --extra dev`, then re-run.")
     more_problems, more_warnings = test_floor.run_static(base, lines, names)
     problems += more_problems
+    problems += error_code_base.problems(base)  # codes stay permanent across branches (D-ERR-6)
     warnings += more_warnings
     for line in [*warnings, *problems]:
         print(line)
@@ -236,9 +347,11 @@ def _static_gates() -> bool:
 
 
 def _red_first_gate() -> bool:
-    base, _note = diff_gate.diff_base()
+    base, note = diff_gate.diff_base()
     if base is None:
-        return True
+        print(f"Not ready to push: the red-first proof cannot run, {note}. Run "
+              "`git fetch origin main`.")
+        return False
     print("==> red-first proof for fix: commits (D-TEST-6)", flush=True)
     problems, warnings = test_floor.red_first_problems(base)
     for line in [*warnings, *problems]:
@@ -248,10 +361,131 @@ def _red_first_gate() -> bool:
     return not problems
 
 
+def _export_lint(py: str) -> bool:
+    """Export the working tree the way the public sync does and lint the result (D-CI-27), so a
+    pattern that only breaks after the private-to-public rewrites (ledger row 9) fails here, not
+    in the public gate. Public-only files come from the public repo verbatim and are skipped.
+    The public tree has no publicize.py: it is the export, which the ruff step already linted."""
+    if not (diff_gate.ROOT / "scripts" / "publicize.py").is_file():
+        print("==> export lint: this tree is the public export; the ruff step above linted it")
+        return True
+    print("==> export lint (publicize the working tree, then ruff on the export)", flush=True)
+    started = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="kestrel-export-") as scratch:
+        out = Path(scratch) / "export"
+        proc = subprocess.run(
+            [py, str(diff_gate.ROOT / "scripts" / "publicize.py"), str(diff_gate.ROOT), str(out),
+             "--private-repo", str(diff_gate.ROOT), "--lint-only"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+            cwd=diff_gate.ROOT,
+        )
+        if proc.returncode != 0:
+            print((proc.stdout + proc.stderr).strip())
+            print("Not ready to push: the public export failed; add a sanitizer rule in "
+                  "scripts/publicize.py, never edit the public tree.")
+            return False
+        lint = subprocess.run(
+            [py, "-m", "ruff", "check", "--no-cache", str(out)], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", check=False, cwd=diff_gate.ROOT,
+        )
+        if lint.returncode != 0:
+            print(lint.stdout.replace(str(out) + os.sep, "").strip())
+            print("Not ready to push: lint fails on the public export (the rewrites above change "
+                  "these lines); fix the private source or the rewrite rule.")
+            return False
+    print(f"    ok ({time.monotonic() - started:.0f}s)", flush=True)
+    return True
+
+
+def _stress_gate(py: str, alone: bool = False) -> bool:
+    """The stress run over the tests this branch affects (D-CI-26, scripts/stress.py). Run alone
+    (`--stress`), KESTREL_DIFF_BASE may name a nearer base, so a child or a merge stresses what it
+    changed and not everything since main (D-PROC-15). Inside the full gate the base is main."""
+    override = base_override(alone)
+    base, note = diff_gate.diff_base(override) if override else diff_gate.diff_base()
+    if base is None:
+        print(f"Not ready to push: the stress run needs a git base ({note}).")
+        return False
+    if override:
+        print(f"==> stress: {note}", flush=True)
+    names, _lines = diff_gate.git_changes(base)
+    texts = stress.read_test_texts(diff_gate.ROOT)
+    files = stress.affected_test_files(names, texts, stress.read_texts("kestrel", diff_gate.ROOT))
+    runs = stress.plan(files, stress.clock_seeding(files, texts),
+                       now=datetime.now(UTC))
+    if not runs:
+        print("==> stress run: no affected test files")
+        return True
+    print(f"==> stress run: {len(files)} affected test file(s); budget "
+          f"{stress.BUDGET_S // 60} min for repeats", flush=True)
+    started = time.monotonic()
+    longest_s = 0.0  # the longest run over every affected file so far (D-CI-591)
+    orders = 0
+    failures: list[tuple[str, str]] = []
+    for run in runs:
+        if run.repeat and not stress.budget_allows(time.monotonic() - started, longest_s):
+            print(f"==> stress: {orders} of {stress.REPEATS} random orders ran; the longest full "
+                  f"run took {longest_s:.0f}s, so another would pass the "
+                  f"{stress.BUDGET_S // 60} min budget (D-CI-29)", flush=True)
+            break
+        print(f"==> stress: {run.label}", flush=True)
+        run_started = time.monotonic()
+        if run.hold_port:
+            with stress.PortHolder() as held:
+                if held.already_taken:
+                    print(f"    port {held.port} is already in use (held by another process)")
+                ok, _skips = _run_pytest(stress.pytest_args(py, run), extra_env=run.env)
+        else:
+            ok, _skips = _run_pytest(stress.pytest_args(py, run), extra_env=run.env)
+        replay = None
+        if not ok:
+            # Keep going: every condition runs, so one gate finds every failure (D-CI-34).
+            env = " ".join(f"{k}={v}" for k, v in run.env.items())
+            replay = f"{env} {' '.join(stress.pytest_args('python', run))}".strip()
+            failures.append((run.label, replay))
+        elif not LAST_RUN["passed"]:
+            # Exit code 0 with no test passed is a condition that tested nothing (D-CI-39).
+            failures.append((f"{run.label} (ran no test that passed)",
+                             " ".join(stress.pytest_args("python", run))))
+        if "random order" in run.label:
+            orders += 1
+        if run.files == files:
+            # Not the first order alone: one that failed in seconds (a collection error) would
+            # make a full repeat look cheap and run every repeat past the budget (D-CI-591).
+            longest_s = max(longest_s, time.monotonic() - run_started)
+    if failures:
+        print(f"==> stress: {len(failures)} of the conditions that ran failed; every one is "
+              "listed here with its own Replay line", flush=True)
+        for label, replay in failures:
+            print(f"  FAILED: {label}\n  Replay: {replay}")
+        names = "; ".join(label for label, _ in failures)
+        print(f"Not ready to push: the stress run failed ({len(failures)} condition(s): {names}). "
+              "A test that passes alone but fails here is order-, port- or clock-dependent; "
+              "fix its cause.")
+        return False
+    print(f"    stress run ok ({time.monotonic() - started:.0f}s, {orders} random order(s))",
+          flush=True)
+    return True
+
+
+def base_override(alone: bool, environ: dict[str, str] | None = None) -> str | None:
+    """KESTREL_DIFF_BASE for the stress tier run alone; None, with a printed note when the
+    variable is set, for every other tier (they always compare with main)."""
+    value = (os.environ if environ is None else environ).get(diff_gate.BASE_ENV, "").strip()
+    if not value:
+        return None
+    if not alone:
+        print(f"==> {diff_gate.BASE_ENV}={value} is ignored by this tier; it compares with main "
+              "(only --stress honors it)", flush=True)
+        return None
+    return value
+
+
 PASS_LINES = {
     "full": "Ready to push.",
     "quick": "Quick checks passed; run the full check before pushing.",
     "fast": "Fast checks passed; run the full check before pushing.",
+    "stress": "Stress checks passed; run the full check before pushing.",
 }
 
 
@@ -291,17 +525,28 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="lint, the packaging guards and the static checks")
     parser.add_argument("--fast", action="store_true",
                         help="quick plus the whole suite, without coverage or the browser stage")
+    parser.add_argument("--stress", action="store_true",
+                        help="only the stress run over the tests this branch affects (the full "
+                             "gate runs it too)")
     parser.add_argument("--workers", type=worker_count,
                         default=os.environ.get("KESTREL_TEST_WORKERS", "auto"), metavar="N",
                         help="workers (default: KESTREL_TEST_WORKERS or half the CPUs, "
                              "capped at 8, minimum 1); 0 runs serially")
-    parser.add_argument("--browser-workers", type=worker_count,
-                        default=os.environ.get("KESTREL_BROWSER_WORKERS", "1"), metavar="N",
-                        help="workers for the live browser stage (default 1: each test drives a "
-                             "real browser against a server under coverage, and two at once on "
-                             "a small machine push slow pages past the 30 s waits)")
+    parser.add_argument("--browser-workers", type=browser_worker_count,
+                        default=os.environ.get("KESTREL_BROWSER_WORKERS", "auto"), metavar="N",
+                        help="workers for the live browser stage (default: one per CPU, at most "
+                             f"{BROWSER_WORKER_CAP}; each test is CPU bound, and more workers "
+                             "than CPUs push slow pages past the 30 s waits)")
     parser.add_argument("--junitxml", metavar="PATH", help="write test outcomes for comparison")
     return parser
+
+
+def _never_fail_on_a_character() -> None:
+    """A character the output encoding cannot hold is escaped, never fatal. On Windows stdout
+    redirected to a file is cp1252, and one U+FFFD in a test's output crashed the gate."""
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(errors="backslashreplace")
 
 
 def main() -> int:
@@ -310,9 +555,11 @@ def main() -> int:
     `check.py && git push` is safe."""
     parser = _build_parser()
     args = parser.parse_args()
-    if args.quick and args.fast:
-        parser.error("choose --quick or --fast, not both")
-    tier = "quick" if args.quick else "fast" if args.fast else "full"
+    if sum((args.quick, args.fast, args.stress)) > 1:
+        parser.error("choose one of --quick, --fast or --stress")
+    tier = ("quick" if args.quick else "fast" if args.fast
+            else "stress" if args.stress else "full")
+    _never_fail_on_a_character()
     real = sys.stdout
     tee = _LastLine(real)
     sys.stdout = tee
@@ -333,16 +580,43 @@ def main() -> int:
     return code
 
 
+def _known_facts_line() -> str | None:
+    """How the known-facts register divides (enforced, debt, practice), from the pre-flight
+    tool beside this file. None where that tool is absent: it is not part of every copy of this
+    tree. A register that cannot be read is said, never skipped silently."""
+    tool = Path(__file__).resolve().parent / "preflight.py"
+    if not tool.is_file():
+        return None
+    import preflight  # noqa: PLC0415  (same folder; present only beside the register)
+
+    try:
+        return preflight.count_line()
+    except (OSError, ValueError) as exc:
+        return f"Known facts: the register could not be read ({exc})"
+
+
 def _gate(args: argparse.Namespace) -> int:
     py = sys.executable
+    if args.stress:
+        if not _stress_gate(py, True):
+            return 1
+        print(PASS_LINES["stress"])
+        return 0
+    base_override(False)  # says so when the variable is set and this tier ignores it
     plan = _plan_diff_guards()
     if plan is not None and plan[2]:
         _report_unmapped(plan[2])
         return 1
-    if plan is None and not (args.quick or args.fast):
-        print("Not ready to push: the diff guards (browser files for touched pages, diff "
-              "coverage) need a git base; fetch origin/main or create main.")
+    if plan is None:
+        print("Not ready to push: the diff guards (static checks, red-first proof, browser files "
+              "for touched pages, diff coverage) need a git base to compare with and something "
+              "to compare; run `git fetch origin main` (or create main) and run this again. "
+              "No tier passes without them (D-CI-37).")
         return 1
+    if args.quick:
+        facts = _known_facts_line()
+        if facts:
+            print(f"==> {facts}", flush=True)
     steps = [("ruff", [py, "-m", "ruff", "check", "."])]
     tests = QUICK_TESTS if args.quick else []
     for label, cmd in steps:
@@ -350,6 +624,8 @@ def _gate(args: argparse.Namespace) -> int:
             print("Not ready to push: fix the failure above first.")
             return 1
     if not _static_gates():
+        return 1
+    if not _export_lint(py):
         return 1
     pytest_args = [py, "-m", "pytest", "-q", "-rs", "-p", "no:cacheprovider",
                    "-n", str(args.workers), "--dist", "worksteal", "--max-worker-restart", "0"]
@@ -376,6 +652,8 @@ def _gate(args: argparse.Namespace) -> int:
             print("Quick checks passed; run the full check before pushing.")
         return 0
     assert plan is not None  # checked before the suite ran
+    if not _stress_gate(py):
+        return 1
     browser_files, changed_lines, _unmapped = plan
     if browser_files:
         # Browser tests are gated off in the main run; run the selected files for real, and add
@@ -387,7 +665,7 @@ def _gate(args: argparse.Namespace) -> int:
         ok, bskips = _run_pytest(
             [*browser_args, "--cov=kestrel", "--cov-append", "--cov-report=",
              "--junitxml", str(junit), *browser_files],
-            extra_env={**cov_env, "KESTREL_LIVE_BROWSER": "1"},
+            extra_env={**cov_env, **_browser_coverage_env(), "KESTREL_LIVE_BROWSER": "1"},
         )
         _report_skips(bskips)
         if not ok:

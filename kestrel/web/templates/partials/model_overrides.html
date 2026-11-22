@@ -7,13 +7,13 @@
 {% from "partials/model_picker.html" import model_select with context %}
 <div id="hosted-overrides" data-testid="hosted-overrides">
   <h3>Hosted models per step</h3>
-  {% if ov_message %}<div class="k-pill {{ 'k-pill--good' if ov_ok else 'k-pill--warn' }}" role="status" data-testid="override-message" style="white-space: normal; display: block; margin: 6px 0">{{ ov_message }}</div>{% endif %}
+  {% if ov_message %}<div class="k-pill {{ 'k-pill--good' if ov_ok else 'k-pill--warn' }} u-ws-normal u-d-block u-m-6px-0" role="status" data-testid="override-message">{{ ov_message }}</div>{% endif %}
   {% if not ov_backend %}
-    <p class="k-muted">No hosted provider is connected, so there is nothing to override yet. Connect one under <a class="k-link" href="/models">Online model</a> or <a class="k-link" href="/settings#hosted">Settings &gt; Hosted (BYOK)</a>; it picks a default model per step, which you can then override here.</p>
+    <p class="k-muted">No hosted provider is connected, so there is nothing to override yet. Connect one under <a class="k-link" href="/models">Online model</a> or <a class="k-link" href="/settings#hosted">Settings &gt; This computer</a>; it picks a default model per step, which you can then override here.</p>
   {% else %}
   <p class="k-muted">Connect picked a default model for each step from {{ ov_label }}. Override any step with a model of your own; a step you leave alone keeps its default, and connecting again keeps every override. Deeper reads stay opt-in per opportunity whatever model it uses.</p>
   {% if ov_error %}
-    <div class="k-pill k-pill--warn" data-testid="override-error" style="white-space: normal; display: block; margin: 6px 0">{{ ov_error }}
+    <div class="k-pill k-pill--warn u-ws-normal u-d-block u-m-6px-0" data-testid="override-error">{{ ov_error }}
       <button class="k-btn k-btn--sm" type="button" hx-get="/models/hosted/overrides?open=1&refresh=1" hx-target="#hosted-overrides" hx-swap="outerHTML" data-busy-text="Fetching the model list again.">Try again</button></div>
   {% endif %}
   {% if ov_open and ov_models %}

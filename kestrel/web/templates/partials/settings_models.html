@@ -4,7 +4,7 @@
    System page. Theme variables only. #}
 {% import "partials/local_only.html" as lo with context %}
 <div id="settings-models" data-testid="settings-models">
-  <p class="muted" style="margin-top:0">What each tier runs on now. <a href="/models">Compare models</a></p>
+  <p class="muted u-mt-0">What each tier runs on now. <a href="/models">Compare models</a></p>
   <table class="data" data-testid="effective-tiers">
     <thead><tr><th>Tier</th><th>Model</th><th>Runs on</th></tr></thead>
     <tbody>
@@ -18,14 +18,14 @@
     </tbody>
   </table>
 
-  <h3 style="margin-top:1.2rem">Local hardware profile</h3>
-  <p class="muted" style="margin-top:0">Which local models fit this machine.</p>
+  <h3 class="u-mt-12">Local hardware profile</h3>
+  <p class="muted u-mt-0">Which local models fit this machine.</p>
   <details data-testid="profile-details"><summary class="muted">Show details</summary>
     <p class="muted">Changing it only records the profile. The System tab shows the downloads and builds it needs.</p></details>
   {% call lo.fence(request) %}
   <form method="post" action="/setup/profile" hx-post="/setup/profile"
         hx-target="#models-profile-result" hx-select="[role=status]" hx-swap="innerHTML"
-        style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+        class="u-d-flex u-gap-6px u-ai-center u-fw-wrap">
     <input type="hidden" name="from" value="models">
     <select name="profile" aria-label="Hardware profile" data-testid="profile-select">
       {% for name in profile_names %}<option value="{{ name }}"{% if name == active_profile %} selected{% endif %}>{{ name }}</option>{% endfor %}
@@ -33,10 +33,10 @@
     <button class="btn quiet" type="submit">Change</button>
   </form>
   {% endcall %}
-  <div id="models-profile-result" aria-live="polite" style="margin-top:.4rem"></div>
+  <div id="models-profile-result" aria-live="polite" class="u-mt-04"></div>
 
   <div hx-get="/models/hosted/overrides" hx-trigger="intersect once" hx-swap="outerHTML"
-       style="margin-top:1.2rem" data-testid="overrides-loader">
+       class="u-mt-12" data-testid="overrides-loader">
     <p class="muted">Loading...</p>
   </div>
 </div>

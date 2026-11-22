@@ -158,6 +158,8 @@ def test_a_too_short_paste_warns_and_the_role_stays_put(live):
     try:
         oid = ids["empty"]
         page.click(f"#row-{oid} .pl-title__t")
+        page.wait_for_selector("[data-testid=panel-paste-open]")
+        wait_for_layout(page)  # D-TEST-821: the panel is fetched by htmx
         page.click("[data-testid=panel-paste-open]")
         page.fill("#pl-paste-text", "Director of Operations, remote.")
         page.click("[data-testid=panel-paste-save]")

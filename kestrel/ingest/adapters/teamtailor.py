@@ -36,8 +36,18 @@ from xml.etree import ElementTree
 
 import httpx
 
-from kestrel.errors import ROBOTS_SENTENCE
-from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
+from kestrel.ingest.base import (
+    AdapterError,
+    NoticeKind,
+    PostingBatch,
+    RawPosting,
+    ShapeError,
+    SourceConfigError,
+    feeds_off,
+    hedged_refusal,
+    rate_limited,
+    robots_refused,
+)
 from kestrel.ingest.country_names import country_name
 from kestrel.ingest.http import UnsafeURLError
 
@@ -49,10 +59,8 @@ _REFUSED = (401, 403)
 
 
 def feed_off_message(domain: str) -> str:
-    return (
-        f"{domain} has its public job feed turned off, so Kestrel cannot read its roles. "
-        "Open the roles you want and add each with One posting."
-    )
+    """The shared feed-off sentence for `domain` (base.feeds_off)."""
+    return feeds_off(domain).sentence
 
 
 class TeamtailorAdapter:
@@ -71,12 +79,12 @@ class TeamtailorAdapter:
         domain = config["domain"]
         batch = PostingBatch()
         outcome = await self._get(f"https://{domain}/jobs.json", client, domain, batch)
-        if batch.partial_error:
+        if batch.notices:
             return batch
         if outcome is not None:
             feed = outcome
             if not isinstance(feed, dict) or not isinstance(feed.get("items"), list):
-                raise AdapterError(f"Teamtailor feed for {domain} had an unexpected shape")
+                raise ShapeError(f"Teamtailor feed for {domain} had an unexpected shape")
             for item in feed["items"]:
                 posting = _from_json(item, config) if isinstance(item, dict) else None
                 if posting is not None:
@@ -84,17 +92,17 @@ class TeamtailorAdapter:
             return batch
         # No JSON feed: try the RSS once before saying the feeds are off.
         text = await self._get_text(f"https://{domain}/jobs.rss", client, domain, batch)
-        if batch.partial_error:
+        if batch.notices:
             return batch
         if text is None:
-            batch.partial_error = feed_off_message(domain)
+            batch.add(feeds_off(domain))
             return batch
         batch.extend(_from_rss(text, config))
         return batch
 
     async def _get(self, url: str, client: Any, domain: str, batch: PostingBatch) -> Any:
         """The JSON feed parsed, or None when this site has none (missing, gone or not JSON).
-        A 429, a refusal or robots.txt sets batch.partial_error and returns None."""
+        A 429, a refusal or robots.txt adds a notice to the batch and returns None."""
         try:
             return await client.get_json(
                 url, rate_per_sec=_RATE, check_robots=True, public_only=True
@@ -108,7 +116,7 @@ class TeamtailorAdapter:
         except httpx.HTTPError as exc:
             raise AdapterError(f"Teamtailor feed fetch failed for {domain}: {exc}") from exc
         except PermissionError:
-            batch.partial_error = _robots_message(domain)
+            batch.add(robots_refused())
             return None
 
     async def _get_text(
@@ -126,7 +134,7 @@ class TeamtailorAdapter:
         except httpx.HTTPError as exc:
             raise AdapterError(f"Teamtailor feed fetch failed for {domain}: {exc}") from exc
         except PermissionError:
-            batch.partial_error = _robots_message(domain)
+            batch.add(robots_refused())
             return None
 
     @staticmethod
@@ -135,22 +143,12 @@ class TeamtailorAdapter:
         if code in _GONE:
             return None  # not here: the caller tries the next feed, then says it is off
         if code == 429:
-            batch.partial_error = (
-                f"{domain} is rate limiting requests. Kestrel will try again next run."
-            )
+            batch.add(rate_limited(domain))
         elif code in _REFUSED:
-            batch.partial_error = (
-                f"{domain} refuses automated reads of its job feed, so Kestrel cannot read its "
-                "roles. Add roles you want with One posting."
-            )
+            batch.note(NoticeKind.STOPPED, hedged_refusal(domain))  # a 401/403 proves no cause
         else:
             raise AdapterError(f"Teamtailor feed fetch failed for {domain}: {exc}") from exc
         return None
-
-
-def _robots_message(domain: str) -> str:
-    """The authored robots sentence; the site is never named in it."""
-    return ROBOTS_SENTENCE
 
 
 # ----------------------------------------------------------------------------------- JSON Feed
@@ -194,12 +192,12 @@ def _from_rss(text: str, config: dict) -> list[RawPosting]:
             f"Teamtailor RSS for {config['domain']} was refused (it declares entities)"
         )
     try:
-        root = ElementTree.fromstring(text)
+        root = ElementTree.fromstring(text)  # noqa: S314  stdlib XML on fetched data; expat caps entity expansion; a hardened parser is under review
     except ElementTree.ParseError as exc:
         raise AdapterError(f"Teamtailor RSS for {config['domain']} was unreadable") from exc
     channel = root.find("channel")
     if channel is None:
-        raise AdapterError(f"Teamtailor RSS for {config['domain']} had an unexpected shape")
+        raise ShapeError(f"Teamtailor RSS for {config['domain']} had an unexpected shape")
     channel_title = _strip(channel.findtext("title"))
     out: list[RawPosting] = []
     for item in channel.findall("item"):

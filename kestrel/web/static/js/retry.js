@@ -14,6 +14,8 @@
 
   function $(sel, scope) { return (scope || doc).querySelector(sel); }
   function $$(sel, scope) { return Array.prototype.slice.call((scope || doc).querySelectorAll(sel)); }
+  // The menu button on a role's row and the one on a group's banner open the same menu.
+  var MODEL_BTN = '[data-testid="rt-model"], [data-testid="rt-group-model"]';
   function liveRows() { return $$('#rt-list .rt-row').filter(function (r) { return !r.hidden; }); }
   function stepNow() { var s = $('#rt-step'); return s ? s.value : 'all'; }
 
@@ -56,11 +58,11 @@
   /* ---------------------------------------------------------------------------- the model menu */
   function closeMenus() {
     $$('.rt-menu-slot').forEach(function (s) { s.innerHTML = ''; });
-    $$('[data-testid="rt-model"]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
+    $$(MODEL_BTN).forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
   }
   // A second click on the button closes the menu instead of asking for it again.
   function onClick(e) {
-    var btn = e.target.closest && e.target.closest('[data-testid="rt-model"]');
+    var btn = e.target.closest && e.target.closest(MODEL_BTN);
     if (btn) {
       var slot = $('.rt-menu-slot', btn.parentNode);
       if (slot && slot.firstChild) {
@@ -79,7 +81,7 @@
     if (!t) return;
     if (t.classList && t.classList.contains('rt-menu-slot')) {
       var menu = $('.rt-menu', t);
-      var btn = $('[data-testid="rt-model"]', t.parentNode);
+      var btn = $(MODEL_BTN, t.parentNode);
       if (btn) btn.setAttribute('aria-expanded', 'true');
       if (menu) {
         var r = menu.getBoundingClientRect();

@@ -17,11 +17,11 @@
     <div class="src-dstatus">{{ sm.health_pill(v) }}<span class="src-sub">{{ v.last if v.enabled else 'Paused. Turn it on to include it in runs.' }}</span></div>
     {% if note %}<div class="src-msg is-{{ note.tone }}" role="status" data-testid="drawer-note">{{ ui.icon('check' if note.tone == 'good' else 'alert') }}<div>{{ note.text }}</div></div>{% endif %}
     {% if v.reason and v.health != 'g' %}
-    <div class="src-msg is-{{ v.health }}" data-testid="drawer-reason">{{ ui.icon('alert') }}<div>{{ v.reason }}{% if v.health == 'b' and editable %}<div><button type="button" class="k-link" data-src-edit>Update the address</button></div>{% endif %}</div></div>
+    <div class="src-msg is-{{ v.health }}" data-testid="drawer-reason">{{ ui.icon('alert') }}<div>{{ v.reason }}{% if v.code %}<div class="src-code" data-testid="drawer-code">Code {{ v.code }}</div>{% endif %}{% if v.health == 'b' and editable %}<div><button type="button" class="k-link" data-src-edit>Update the address</button></div>{% endif %}</div></div>
     {% endif %}
     <div>
       <div class="src-k">Last 10 checks</div>
-      <div class="src-hist" role="img" aria-label="Last 10 checks">{% for c in v.spark %}<i class="{{ c if c != 'g' else '' }}" style="height:{{ 8 if c == 'm' else (28 if c == 'g' else 40) }}px"></i>{% endfor %}</div>
+      <div class="src-hist" role="img" aria-label="Last 10 checks">{% for c in v.spark %}<i class="{{ c if c != 'g' else '' }}" data-k-style="height:{{ 8 if c == 'm' else (28 if c == 'g' else 40) }}px"></i>{% endfor %}</div>
       <div class="src-sub src-hist__cap"><span>10 checks ago</span><span data-testid="hist-n">{{ v.spark | replace('m', '') | length }} of 10 recorded</span><span>Latest</span></div>
     </div>
     <dl class="src-kv" data-testid="drawer-facts">
@@ -30,6 +30,8 @@
       <dd><span class="k-select"><select id="src-cad" class="k-input" name="cadence_hours" hx-post="/sources/{{ v.id }}/cadence" hx-trigger="change" hx-swap="none" data-testid="drawer-cadence">{% for h, label in cadences %}<option value="{{ h }}"{{ ' selected' if h == cadence }}>{{ label }}</option>{% endfor %}</select></span></dd>
     </dl>
     {% if v.sites %}<div class="src-sub" data-testid="site-counts">{% for site in v.sites %}{{ site.label }} {{ site.count }}{{ ', ' if not loop.last }}{% endfor %}</div>{% endif %}
+    {% if v.bodies %}<div class="src-sub" data-testid="body-shares"><span>No description in the last run:</span>{% for b in v.bodies %} <span data-testid="body-share" data-state="{{ b.state }}">{{ b.label }} {{ b.text }}{{ ';' if not loop.last }}</span>{% endfor %}</div>
+    {% for b in v.bodies if b.warn %}<div class="src-msg is-w" data-testid="body-warning">{{ ui.icon('alert') }}<div>{{ b.warn }}</div></div>{% endfor %}{% endif %}
     {% if v.model_used %}<div class="src-sub" data-testid="run-model-used">Last run on {{ v.model_used }}</div>{% endif %}
     {% if v.unreadable %}<div class="src-sub" data-testid="unreadable-links">{{ v.unreadable }} {{ 'link' if v.unreadable == 1 else 'links' }} could not be read.</div>{% endif %}
     <div class="src-msg is-info">{{ ui.icon('check') }}<div>{{ robots }}</div></div>

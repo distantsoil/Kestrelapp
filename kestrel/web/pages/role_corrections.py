@@ -57,7 +57,7 @@ SIMILAR_SHOWN = 8
 
 # The whole list of messages save_correction can raise that a person may act on (the other
 # CorrectionError messages name an internal value and show the fallback instead).
-_REFUSALS = ("They mean something else needs a note", "the requirement is empty")
+_REFUSALS = (corr.NOTE_NEEDED, corr.REQUIREMENT_EMPTY)
 
 
 def _warn(text: str) -> HTMLResponse:

@@ -23,7 +23,7 @@
     <span class="mono">{{ i.target }}</span>
     <span class="setup-progress-step">{{ i.step }}{% if i.percent is not none and i.status == 'leased' %} <b data-testid="setup-percent">{{ i.percent }}%</b>{% endif %}</span>
     {% if i.status in ('leased', 'done') %}<progress max="100"{% if i.percent is not none %} value="{{ i.percent }}"{% endif %}>{{ i.percent or 0 }}%</progress>{% endif %}
-    {% if i.error %}<div class="setup-progress-error">{{ i.error }}</div>{% endif %}
+    {% if i.error %}<div class="setup-progress-error">{{ i.error }}</div>{% if i.code %}<div class="setup-progress-code" data-testid="setup-progress-code">Code {{ i.code }}</div>{% endif %}{% endif %}
   </li>
   {% endfor %}
 </ul>
@@ -40,12 +40,12 @@
       <button class="btn" hx-post="{{ post_base }}/cancel" hx-target="{{ target }}" hx-swap="outerHTML" data-testid="setup-cancel-{{ s.action }}">Cancel</button>
     {% elif running and s.action != 'check' %}
       {% if action and action.name == s.action and action.status == 'running' %}<span class="pill review">running</span>
-      {% else %}<button class="btn" disabled style="opacity:.6">{{ s.action_label }}</button>{% endif %}
+      {% else %}<button class="btn u-o-06" disabled>{{ s.action_label }}</button>{% endif %}
     {% else %}
-      <button class="btn{% if s.status == 'now' %} pri{% endif %}"
+      <button class="btn{% if s.status == 'now' %} pri{% endif %} u-o-06"
               hx-post="{{ post_base }}/{{ s.action }}" hx-target="{{ target }}" hx-swap="outerHTML"
               data-testid="setup-action-{{ s.action }}"
-              {% if not s.action_enabled %}disabled style="opacity:.6"{% endif %}>{% if models and models.failed and models.kind == s.action and s.action_enabled %}Try again{% else %}{{ s.action_label }}{% endif %}</button>
+              {% if not s.action_enabled %}disabled{% endif %}>{% if models and models.failed and models.kind == s.action and s.action_enabled %}Try again{% else %}{{ s.action_label }}{% endif %}</button>
     {% endif %}
   {% endif %}
   {% if s.link and not s.link_external %}<a class="btn{% if s.status == 'now' and not s.action %} pri{% endif %}" href="{{ s.link }}">{{ s.link_label }}</a>{% endif %}

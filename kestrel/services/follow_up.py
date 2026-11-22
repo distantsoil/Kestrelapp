@@ -18,6 +18,7 @@ from kestrel.config import Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Opportunity, Org, Pursuit, Task
 from kestrel.docs.current_employer import load_employer_map
+from kestrel.llm.engine_cycle import EngineWaitError, engine_unreachable
 from kestrel.llm.plain_repair import enforce
 from kestrel.llm.prompts import load_prompt
 from kestrel.llm.service_name import service_name
@@ -82,8 +83,13 @@ def routing(settings: Settings) -> dict[str, Any]:
 async def send_problem(session: AsyncSession, settings: Settings) -> str | None:
     if not routing(settings)["online"]:
         return None
-    if not settings.llm.hosted_mode.active:
-        return "Nothing was sent. Turn on Hosted mode and accept its disclosure first."
+    from kestrel.services.setup_state import online_send_held, send_refusal
+
+    why_not = online_send_held(settings)
+    if why_not is not None:
+        from kestrel.config import ONLINE_CONSENT_HOW
+
+        return send_refusal(why_not, f"Nothing was sent. First, {ONLINE_CONSENT_HOW}.")
     if settings.confidential_mode and not await load_employer_map(session):
         return (
             "Nothing was sent. Confidential mode is on. Choose your current employer "
@@ -185,20 +191,29 @@ async def _write(session: AsyncSession, client: Any, task: Task) -> dict[str, An
     if result.quarantined:
         return {"error": "The reply could not be validated. It was set aside in Needs another try."}
     if not result.ok or result.value is None:
-        raise RuntimeError("The model could not write this draft. Check Models, then try again.")
+        error = EngineWaitError if result.engine_unreachable else RuntimeError
+        raise error("The model could not write this draft. Check Models, then try again.")
     plain = await enforce(spec, result.value, messages=messages, run=run)
     return {"result": plain.value.model_dump(), "style_flags": plain.flags}
 
 
 async def drain(
     sm: async_sessionmaker[AsyncSession], make_client: Any, *, stop: Any = None,
+    settings: Any = None,
 ) -> int:
-    from kestrel.pipeline.worker import _renew_lease
+    from kestrel.pipeline.worker import _renew_lease, engine_lost_for, local_engine_ready
 
+    if settings is None:  # the worker cycle passes its own; a caller without them reads them
+        async with sm() as session:
+            settings = await load_settings_with_db(session)
+    if not await local_engine_ready(settings, TIER):
+        return 0  # Ollama is not answering or lacks the model: nothing leased, no try spent
     queue = TaskQueue(sm)
     worker_id = "follow-up-drafts"
     count = 0
     while stop is None or not stop.is_set():
+        if engine_lost_for(settings, TIER):
+            break  # a call this cycle could not reach Ollama: lease nothing more (round 6)
         task = await queue.lease(worker_id, types=[TASK_TYPE], lease_seconds=900)
         if task is None:
             break
@@ -217,7 +232,8 @@ async def drain(
         except Exception as exc:
             log.warning("follow_up_failed", task_id=task.id, error_type=type(exc).__name__)
             await queue.fail(task.id, "The draft could not be written. Check Models and try again.",
-                             worker_id=worker_id, retry=True)
+                             worker_id=worker_id, retry=True,
+                             engine_wait=engine_unreachable(exc))
         finally:
             beat.cancel()
             with contextlib.suppress(asyncio.CancelledError):

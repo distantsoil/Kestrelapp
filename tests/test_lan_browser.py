@@ -207,7 +207,10 @@ def test_add_a_server_on_your_network_and_give_a_step_a_model(live, view, width)
         page.wait_for_selector('[data-testid="mo-nw-found"]')
         wait_for_layout(page)
         _shot(page, "models-network-test", view)
-        page.click('[data-testid="mo-nw-save"]')
+        # D-TEST-825: wait for the save itself, not a selector that the test step already put up.
+        with page.expect_response(lambda r: r.request.method == "POST"
+                                  and r.url.endswith("/models/network/save")):
+            page.click('[data-testid="mo-nw-save"]')
         page.wait_for_selector('[data-testid="mo-nw-found"]')
         wait_for_layout(page)
         page.select_option('[data-testid="mo-nw-model-tier2"]', "qwen3-14b")

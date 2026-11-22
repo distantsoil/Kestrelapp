@@ -199,6 +199,13 @@ class WindowApi:
             _gtk_begin_resize(self._native(), edge)
 
     # ------------------------------------------------------------- the splash page's buttons
+    def bridge_check(self) -> bool:
+        """The app page reached the window channel (kestrel/desktop/bridge_check.py)."""
+        from kestrel.desktop import bridge_check
+
+        bridge_check.window_reached()
+        return True
+
     def splash_retry(self) -> None:
         if self._retry:
             self._retry()

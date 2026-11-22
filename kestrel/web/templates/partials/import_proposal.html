@@ -1,20 +1,20 @@
 {% if markdown and (filename or warnings) and not extracted_shown %}
   {# What was READ from the uploaded file, shown before any proposal so the operator can check the
      conversion. The verbatim check runs against exactly this text. #}
-  <div class="panel" style="margin-top:.8rem; padding:1rem" data-testid="import-extracted">
+  <div class="panel u-mt-08 u-p-1" data-testid="import-extracted">
     <h3>Text read from {{ filename or 'your file' }}
       {% if source_format %}<span class="muted">({{ source_format }})</span>{% endif %}</h3>
     {% for w in warnings %}
-      <div class="warnbox" style="margin-bottom:.5rem">{{ w }}</div>
+      <div class="warnbox u-mb-05">{{ w }}</div>
     {% endfor %}
     <details open>
       <summary class="muted">Extracted markdown ({{ markdown.splitlines() | length }} lines)</summary>
-      <pre style="white-space:pre-wrap; max-height:24rem; overflow:auto; margin:.5rem 0 0">{{ markdown }}</pre>
+      <pre class="u-ws-pre-wrap u-maxh-24 u-ov-auto u-m-05-0-0">{{ markdown }}</pre>
     </details>
   </div>
 {% endif %}
 {% if error %}
-  <div class="warnbox" style="margin-top:.8rem" data-testid="import-error">{{ error }}</div>
+  <div class="warnbox u-mt-08" data-testid="import-error">{{ error }}</div>
   {% if retryable and markdown %}
     {# Retry on the text already read: no re-upload, no re-conversion. Same processing panel. #}
     {% include "partials/import_processing.html" %}
@@ -22,7 +22,7 @@
 {% elif proposal and proposal.value and ob %}
   {% include "partials/onboarding_proposal.html" %}
 {% elif proposal and proposal.value %}
-  <div class="panel" style="margin-top:.8rem; padding:1rem">
+  <div class="panel u-mt-08 u-p-1">
     <h3>Proposed import</h3>
     {% if proposal.flags.non_verbatim or proposal.flags.too_many_derived %}
       <div class="warnbox">
@@ -69,7 +69,7 @@
           <b>Kestrel may have missed {{ proposal.flags.missed_roles | length }} role{{ '' if proposal.flags.missed_roles | length == 1 else 's' }}.</b>
           These lines look like job headers but were not read as roles. Add each one by hand after
           importing, or run the import again.
-          <ul style="margin:.4rem 0 0 1rem">
+          <ul class="u-m-04-0-0-1">
           {% for line in proposal.flags.missed_roles %}<li>{{ line }}</li>{% endfor %}
           </ul>
         </div>
@@ -80,7 +80,7 @@
         <div class="warnbox" data-testid="import-unplaced">
           <b>{{ proposal.flags.unplaced | length }} line(s) were not placed in any slot.</b>
           Choose where each one goes, or leave it out. A heading line is usually best left out.
-          <table style="margin-top:.4rem">
+          <table class="u-mt-04">
           {% for line in proposal.flags.unplaced %}
             <tr><td>{{ line }}<input type="hidden" name="unplaced_line" value="{{ line }}"></td>
               <td><select name="unplaced_to" aria-label="Where this line goes">

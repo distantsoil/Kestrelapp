@@ -32,6 +32,7 @@ from kestrel.interview.prep import live_view
 from kestrel.pipeline._shared import settings_with_override, tier_is_hosted
 from kestrel.services.online_consent import confirmation_matches
 from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.services.setup_state import online_send_held, send_refusal
 from kestrel.web import prep_view as pv
 from kestrel.web.auth import LOCAL_ONLY
 from kestrel.web.deps import sessionmaker, templates
@@ -60,8 +61,9 @@ async def _client_settings(session: AsyncSession, form) -> tuple[object | None, 
 
         if not confirmed:
             return None, "Nothing was sent. Confirm the online model first.", ""
-        if not settings.llm.hosted_mode.active:
-            return None, "Nothing was sent. Online models need Hosted mode, which is off.", ""
+        why_not = online_send_held(settings)
+        if why_not is not None:
+            return None, send_refusal(why_not, _HOSTED_OFF), ""
         if not pick.startswith(HOSTED_PREFIX):
             return None, "Nothing was sent. That is not a model on the online list.", ""
         offered, _ = await _offered_models(settings, None)
@@ -87,6 +89,7 @@ async def _client_settings(session: AsyncSession, form) -> tuple[object | None, 
     return settings, None, "computer"
 
 
+_HOSTED_OFF = "Nothing was sent. Online models need Hosted mode, which is off."
 _HELD = (
     "Nothing was sent. Confidential mode is on and no current employer is chosen, so Kestrel "
     "will not send this. Choose your employer in Settings, or practice on your computer."
@@ -280,8 +283,8 @@ async def set_route(request: Request, opportunity_id: int):
                     "Open the dialog again."
                 )
             pick = ""
-        elif not settings.llm.hosted_mode.active:
-            problem = "Nothing was sent. Online models need Hosted mode, which is off."
+        elif (why_not := online_send_held(settings)) is not None:
+            problem = send_refusal(why_not, _HOSTED_OFF)
         elif pick.removeprefix("hosted:") not in {m["id"] for m in info.get("models", [])}:
             problem = "Nothing was sent. That model is not on the online list."
         label = ""

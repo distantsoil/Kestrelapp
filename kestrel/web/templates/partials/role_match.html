@@ -107,7 +107,7 @@
     <header class="k-sec-head"><span class="k-badge">{{ ric('target') }}</span><div class="k-grow"><h3>Match map</h3></div></header>
     <svg viewBox="0 0 140 140" class="rl-wheel" role="img" aria-label="{{ wheel.center }} of the things they ask for are met">
       <g transform="rotate(-90 70 70)"><circle r="{{ wheel.r }}" cx="70" cy="70" fill="none" class="rl-wtrack" stroke-width="16"/>
-        {% for a in wheel.arcs %}<circle class="rl-wseg rl-wseg--{{ a.state }}" data-k="{{ a.k }}" data-c="{{ a.state }}" r="{{ wheel.r }}" cx="70" cy="70" fill="none" stroke-width="16" style="--d: {{ a.dash }}; stroke-dashoffset: {{ a.offset }}; animation-delay: {{ a.k * 90 }}ms"><title>{{ a.text }}: {{ a.word|lower }}</title></circle>{% endfor %}
+        {% for a in wheel.arcs %}<circle class="rl-wseg rl-wseg--{{ a.state }}" data-k="{{ a.k }}" data-c="{{ a.state }}" r="{{ wheel.r }}" cx="70" cy="70" fill="none" stroke-width="16" data-k-style="--d: {{ a.dash }}; stroke-dashoffset: {{ a.offset }}; animation-delay: {{ a.k * 90 }}ms"><title>{{ a.text }}: {{ a.word|lower }}</title></circle>{% endfor %}
       </g><text x="70" y="78" text-anchor="middle" class="rl-wn" data-testid="wheel-center">{{ wheel.center }}</text></svg>
     <div class="rl-wleg">
       <button type="button" class="rl-wchip" data-f="met"><i class="rl-wdot rl-wdot--met"></i>{{ wheel.met }} met</button>

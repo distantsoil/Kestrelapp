@@ -14,6 +14,7 @@ import asyncio
 import json
 import os
 import sqlite3
+import sys
 import zipfile
 
 import pytest
@@ -30,6 +31,7 @@ from kestrel.db.engine import forget_engine, make_async_engine, reset_engine
 from kestrel.db.models import DocMaster, DocRender, MlModel, Opportunity, Org, PrepPack
 from kestrel.services.backup import InvalidBackupError, create_backup, restore_backup
 from tests.learning_fakes import craft_reranker_evil_model, craft_reranker_inert_artifact
+from tests.symlink_probe import link_folder, symlink_or_skip
 
 pytestmark = pytest.mark.usefixtures("_isolate_data_home")
 
@@ -1198,3 +1200,127 @@ def test_a_ticked_restore_keeps_key_names_in_settings_yml(tmp_path):
     got = yaml.safe_load((paths.config_dir() / "settings.yml").read_text(encoding="utf-8"))
     assert got["llm"]["backends"]["local"]["base_url"] == "http://192.168.2.25:8000/v1"
     assert got["llm"]["backends"]["local"].get("api_key_env") != "OPENROUTER_API_KEY"
+
+
+# ------------------------------------------------------------- the ml folder in a backup
+def _archive_contents(archive) -> dict[str, bytes]:
+    with zipfile.ZipFile(archive) as z:
+        return {n: z.read(n) for n in z.namelist()}
+
+
+def test_a_backup_copies_no_file_through_a_link_in_the_ml_folder(tmp_path):
+    """A link planted in the ml folder, named like a model file or not, is not followed: the
+    file it points at never lands in the archive. Kestrel's own model file still does."""
+    from kestrel.services.backup import ML_PREFIX
+
+    private = tmp_path / "outside" / "private.txt"
+    private.parent.mkdir()
+    private.write_bytes(b"invented private bytes")
+    ml = paths.ml_dir()
+    ml.mkdir(parents=True, exist_ok=True)
+    (ml / "reranker_employment_v1.pkl").write_bytes(b"model")
+    symlink_or_skip(ml / "reranker_employment_v2.pkl", private)
+    symlink_or_skip(ml / "notes.bin", private)
+    got = _archive_contents(create_backup(tmp_path / "out"))
+    assert got[f"{ML_PREFIX}reranker_employment_v1.pkl"] == b"model"
+    assert b"invented private bytes" not in got.values()
+    assert f"{ML_PREFIX}reranker_employment_v2.pkl" not in got
+    assert f"{ML_PREFIX}notes.bin" not in got
+
+
+def test_a_backup_copies_nothing_through_a_linked_ml_folder(tmp_path):
+    from kestrel.services.backup import ML_PREFIX
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "reranker_employment_v1.pkl").write_bytes(b"not kestrel's")
+    ml = paths.ml_dir()
+    ml.parent.mkdir(parents=True, exist_ok=True)
+    link_folder(ml, elsewhere)
+    got = _archive_contents(create_backup(tmp_path / "out"))
+    assert not [n for n in got if n.startswith(ML_PREFIX)]
+
+
+# ------------------------------------------- nothing outside the data folder enters a backup
+def test_no_link_or_hard_link_anywhere_in_the_data_folder_enters_a_backup(tmp_path):
+    """Links, junctions and hard links planted in the documents, prep packs and config folders
+    copy nothing from outside into the archive; the real files beside them still go in."""
+    from kestrel.services.backup import CONFIG_PREFIX, DOCS_PREFIX
+
+    outside = tmp_path / "outside"
+    (outside / "folder").mkdir(parents=True)
+    secret = outside / "secret.txt"
+    secret.write_bytes(b"INVENTED OUTSIDE BYTES")
+    (outside / "folder" / "a.yml").write_bytes(b"INVENTED OUTSIDE BYTES")
+    (outside / "folder" / "b.pdf").write_bytes(b"INVENTED OUTSIDE BYTES")
+    docs = paths.data_dir() / "documents"
+    packs = paths.data_dir() / "prep_packs"
+    cfg = paths.config_dir()
+    for d in (docs, packs, cfg):
+        d.mkdir(parents=True, exist_ok=True)
+    (docs / "resume.pdf").write_bytes(b"%PDF real")
+    (cfg / "profile.yml").write_bytes(b"name: Invented Person\n")
+    symlink_or_skip(docs / "cv.pdf", secret)
+    os.link(secret, packs / "pack.pdf")
+    symlink_or_skip(cfg / "extra.yml", secret)
+    os.link(secret, cfg / "hard.yml")
+    link_folder(cfg / "linked", outside / "folder")
+    got = _archive_contents(create_backup(tmp_path / "out"))
+    assert b"INVENTED OUTSIDE BYTES" not in got.values()
+    assert got[f"{DOCS_PREFIX}documents/resume.pdf"] == b"%PDF real"
+    assert got[f"{CONFIG_PREFIX}profile.yml"] == b"name: Invented Person\n"
+    for name in (f"{DOCS_PREFIX}documents/cv.pdf", f"{DOCS_PREFIX}prep_packs/pack.pdf",
+                 f"{CONFIG_PREFIX}extra.yml", f"{CONFIG_PREFIX}hard.yml",
+                 f"{CONFIG_PREFIX}linked/a.yml"):
+        assert name not in got, name
+
+
+def test_a_documents_folder_that_is_a_link_puts_nothing_in_a_backup(tmp_path):
+    from kestrel.services.backup import DOCS_PREFIX
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "a.pdf").write_bytes(b"INVENTED OUTSIDE BYTES")
+    docs = paths.data_dir() / "documents"
+    docs.parent.mkdir(parents=True, exist_ok=True)
+    link_folder(docs, elsewhere)
+    got = _archive_contents(create_backup(tmp_path / "out"))
+    assert not [n for n in got if n.startswith(f"{DOCS_PREFIX}documents/")]
+
+
+def test_a_database_that_is_a_link_is_never_copied_into_a_backup(tmp_path):
+    """The database replaced by a link to some other SQLite file: the backup stops with a plain
+    reason before anything is written through the link, and no archive carries that file."""
+    import sqlite3
+
+    other = tmp_path / "other-program.db"
+    con = sqlite3.connect(other)
+    con.execute("CREATE TABLE notes (body TEXT)")
+    con.execute("INSERT INTO notes VALUES ('INVENTED OUTSIDE ROW')")
+    con.commit()
+    con.close()
+    before = other.read_bytes()
+    db = paths.db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    db.unlink(missing_ok=True)
+    symlink_or_skip(db, other)
+    out = tmp_path / "out"
+    with pytest.raises(PermissionError):
+        create_backup(out)
+    assert other.read_bytes() == before  # no migration wrote through the link
+    assert not out.exists() or not list(out.glob("*.zip"))
+
+
+@pytest.mark.skipif(sys.platform != "linux",
+                    reason="only Linux file systems accept a file name that is not UTF-8")
+def test_a_file_name_that_is_not_text_does_not_stop_a_backup(tmp_path):
+    from kestrel.services.backup import CONFIG_PREFIX
+
+    cfg = paths.config_dir()
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "profile.yml").write_bytes(b"name: Invented Person\n")
+    with open(os.path.join(os.fsencode(cfg), b"bad\xff.yml"), "wb") as fh:
+        fh.write(b"x: 1\n")
+    got = _archive_contents(create_backup(tmp_path / "out"))
+    assert f"{CONFIG_PREFIX}profile.yml" in got
+    assert not [n for n in got if n.startswith(CONFIG_PREFIX) and "bad" in n]

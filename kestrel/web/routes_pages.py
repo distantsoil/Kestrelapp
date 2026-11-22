@@ -22,6 +22,7 @@ from kestrel.pipeline import lane
 from kestrel.services import tier0_override
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.urls import safe_web_url
+from kestrel.web import posting_format
 from kestrel.web.auth import LOCAL_ONLY, refuse_unless_local, request_is_local
 from kestrel.web.deps import active_track, sessionmaker, templates
 from kestrel.web.fit import (
@@ -32,6 +33,7 @@ from kestrel.web.fit import (
     GROUP_NEW,
     GROUP_NOT_FIT,
     RuleWhy,
+    blocker_lines,
     explain_rule,
     fit_word_for_verdict,
     forced_words,
@@ -109,6 +111,7 @@ def page_filters(params, request=None) -> OppFilters:
     expose and so `filters_from_query` does not parse. With `request`, the track is the active
     tab's (D-UI-57): the page never lists both tracks at once."""
     f = filters_from_query(params)
+    f.id_lookup = True
     f.track = active_track(request) if request is not None else f.track
     f.shortlisted = params.get("shortlisted") in _TRUE
     f.new_today = params.get("new_today") in _TRUE
@@ -189,6 +192,22 @@ def _groups(page, f: OppFilters) -> list[dict]:
     return out
 
 
+async def _label_id_rows(s, f: OppFilters, rows) -> None:
+    """An ID query's words on its rows (Hidden company, the duplicate's main-copy note), from
+    the same lookup the command palette prints (D-UI-771). Nothing on an ordinary search."""
+    from kestrel.services.role_id_query import parse_role_id, role_id_hits
+
+    role_id = parse_role_id(f.q) if f.id_lookup else None
+    if role_id is None:
+        return
+    hits = {h.opp_id: h for h in await role_id_hits(s, role_id)}
+    for r in rows:
+        if r.opp.id in hits:
+            h = hits[r.opp.id]
+            r.id_label, r.id_note = h.label, h.note
+            r.id_track = h.track if h.track != f.track else ""
+
+
 def _filters_active(f: OppFilters) -> bool:
     return any(
         (
@@ -244,6 +263,9 @@ async def _redact_rows(s, settings, rows) -> None:
     older = await older_ids(s, [(row.opp, row.ev) for row in rows])
     for row in rows:
         row.older = row.opp.id in older
+    from kestrel.web.pipeline_view import attach_sources
+
+    await attach_sources(s, rows)  # before any ORM field is edited for display
     if settings.confidential_mode:
         mapping = await redaction_map(s)
         for row in rows:
@@ -372,6 +394,7 @@ async def opportunities(request: Request):
             page = await list_opportunities(s, f)
         settings = await load_settings_with_db(s)
         await _redact_rows(s, settings, page.rows)
+        await _label_id_rows(s, f, page.rows)
         await _redact_signals(s, settings, signal_rows)
         n_not_fit = page.group_counts.get(GROUP_NOT_FIT, 0)
         # Only Not a fit to show: its first page opens in place (D-UI-62).
@@ -381,6 +404,7 @@ async def opportunities(request: Request):
                 s, replace(f, section="not_fit", page=1, page_size=NF_PAGE)
             )
             await _redact_rows(s, settings, nf_page.rows)
+            await _label_id_rows(s, f, nf_page.rows)
         # Only when the list is empty: is that "nothing matches" or "nothing ingested yet"?
         has_any = True
         if not (page.total or n_not_fit or signal_rows):
@@ -479,6 +503,7 @@ async def opportunities_not_fit(request: Request):
         )
         settings = await load_settings_with_db(s)
         await _redact_rows(s, settings, page.rows)
+        await _label_id_rows(s, f, page.rows)
     ctx = {
         "nf": page, "notfit_only": True, "append": nf > 1, "f": f,
         "query": {k: v for k, v in eff.items() if k not in ("open", "nf_page")},
@@ -530,10 +555,13 @@ def contradicted(key: str, opp: Any) -> bool:
 
 
 def watch_lines(
-    legitimacy: dict | None, ghost_score: float | None = None, opp: Any = None
+    legitimacy: dict | None, ghost_score: float | None = None, opp: Any = None,
+    blockers: Any = None, notes: Any = None,
 ) -> list[str]:
     """The drawer's Watch line: the legitimacy flags in plain words, plus a likely ghost. A flag
-    that a known fact about the posting rules out is left out and logged (contradicted)."""
+    that a known fact about the posting rules out is left out and logged (contradicted). Then each
+    model blocker the operator's own data did not uphold, with why it did not count (D-SCORE-22),
+    and the read's own worth-checking lines."""
     out: list[str] = []
     for sig in (legitimacy or {}).get("signals") or []:
         if isinstance(sig, dict):
@@ -549,6 +577,14 @@ def watch_lines(
             out.append(text)
     if ghost_score is not None and ghost_score >= 0.6:
         out.append("May be a ghost posting.")
+    for row in blocker_lines(blockers):
+        if not row["counted"] and row["note"] not in out:
+            out.append(row["note"])
+    # A v4 read's own worth-checking lines (D-SCORE-24): what the model says needs confirming.
+    for line in notes if isinstance(notes, list) else []:
+        text = str(line or "").strip()
+        if text and text not in out:
+            out.append(text)
     return out
 
 
@@ -633,7 +669,10 @@ def decision_extras(detail: dict) -> dict:
         "model_word": model_word,
         "rules_word": rules_word,
         "why": why,
-        "watch": watch_lines(legit, opp.ghost_score, opp),
+        "watch": watch_lines(
+            legit, opp.ghost_score, opp, (detail.get("ev_json") or {}).get("blockers"),
+            ((detail.get("ev_json") or {}).get("blocks") or {}).get("worth_checking"),
+        ),
         # The legitimacy check doubted the posting (P1/P2 "suspect" or "reject").
         "legit_flag": isinstance(legit, dict) and legit.get("status") in ("suspect", "reject"),
         "ai_disclaimer": AI_DISCLAIMER,
@@ -643,6 +682,7 @@ def decision_extras(detail: dict) -> dict:
         "tailor_label": words(opp.track)["tailor"],
         "archive_reasons": ARCHIVE_REASONS,
         "forced_words": forced_words,
+        "blocker_lines": blocker_lines,
         "rule_why": rule_why,
         "override_note": override_note,
     }
@@ -858,6 +898,9 @@ async def _detail_context(s, opp_id: int) -> dict | None:
             "dedup_rows": dedup_rows,
             "title_display": redact_text(opp.title, mapping, enabled=conf) or "(untitled)",
             "description_display": redact_text(opp.description_md, mapping, enabled=conf),
+            # The Posting tab's formatted text (issue #210): our own nodes, never markup.
+            "posting_blocks": posting_format.parse(
+                opp.description_md, lambda t: redact_text(t, mapping, enabled=conf) or ""),
             "tailor_master": _pick_master(detail["masters"], opp.track),
             "tabs": _TABS,
         }

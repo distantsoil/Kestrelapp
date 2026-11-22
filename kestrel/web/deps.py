@@ -300,7 +300,7 @@ def _read_ui_rows() -> dict[str, object]:
         try:
             conn.execute("PRAGMA busy_timeout=2000")
             rows = conn.execute(
-                f"SELECT key, value FROM setting WHERE key IN ({marks})", _UI_KEYS
+                f"SELECT key, value FROM setting WHERE key IN ({marks})", _UI_KEYS  # noqa: S608  identifiers are code constants, values are bound
             ).fetchall()
         finally:
             conn.close()
@@ -484,6 +484,15 @@ def templates() -> Jinja2Templates:
         t = Jinja2Templates(directory=paths.web_templates_dir())
         t.env.globals["verdict_class"] = _verdict_class
         t.env.globals["static_url"] = static_url
+        from kestrel import phone as _phone
+
+        t.env.globals["phone_regions"] = _phone.region_options
+        t.env.globals["phone_default_region"] = _phone.clean_region
+        t.env.globals["phone_pin"] = _phone.pin
+        from kestrel.config import HOSTED_PROVIDER_READS
+
+        # The provider-reads line of the ticked online disclosure (D-REL-41): one source.
+        t.env.globals["provider_reads"] = HOSTED_PROVIDER_READS
         t.env.globals["nav_groups"] = NAV_GROUPS
         t.env.globals["bottom_bar"] = BOTTOM_BAR
         t.env.globals["nav_active"] = nav_active
@@ -496,6 +505,12 @@ def templates() -> Jinja2Templates:
         t.env.globals["words"] = words
         t.env.globals["scoring_chip"] = scoring_chip
         t.env.globals["unscored_label"] = UNSCORED_LABEL
+        from kestrel.web.fit import EMPTY_POSTING_WHY
+        from kestrel.web.unscored import action_for, row_line
+
+        t.env.globals["unscored_line"] = row_line
+        t.env.globals["unscored_action"] = action_for
+        t.env.globals["empty_posting_why"] = EMPTY_POSTING_WHY
         t.env.globals["flash_text"] = flash_text
         t.env.globals["closed_reason_text"] = closed_reason_text
         from kestrel.ingest.generated import US_NOTE
@@ -535,7 +550,8 @@ def templates() -> Jinja2Templates:
         t.env.filters["run_counts"] = lambda c: {
             k: v for k, v in (c or {}).items()
             # D-SRC-17: the dropped-title sample has its own disclosure, never a raw dump.
-            if k not in (_run_model.OVERRIDE_KEY, _run_model.LABEL_KEY, "dropped_title_sample")
+            if k not in (_run_model.OVERRIDE_KEY, _run_model.LABEL_KEY, "dropped_title_sample",
+                         "error_code", "bodies")
         }
         t.env.filters["run_model_label"] = lambda c: _run_model.label_of(c)
         t.env.filters["comma"] = lambda n: (

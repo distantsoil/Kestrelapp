@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import structlog
 from fastapi import APIRouter, Request, Response
@@ -34,6 +34,7 @@ from kestrel.services import hidden_orgs, saved_views
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.urls import safe_web_url
 from kestrel.web import pipeline_view as pv
+from kestrel.web import posting_format
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
 from kestrel.web.fit import (
@@ -221,7 +222,9 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
     }
     if kind == "role":
         watch = list(
-            detail.get("watch") or watch_lines(ev_json.get("legitimacy"), opp.ghost_score, opp)
+            detail.get("watch") or watch_lines(ev_json.get("legitimacy"), opp.ghost_score, opp,
+                                               ev_json.get("blockers"),
+                                               (ev_json.get("blocks") or {}).get("worth_checking"))
         )
         warn = pv.warning_text(opp, ev, older)
         if warn and not watch:
@@ -251,15 +254,24 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
     elif kind == "nf":
         ctx.update(
             rule_why=detail.get("rule_why"),
-            excerpt=_excerpt(detail.get("description_display")),
+            excerpt=_excerpt(opp.description_md, detail),
         )
     elif kind == "signal":
         ctx.update(_signal_context(opp, ev, ev_json, detail))
     return ctx
 
 
-def _excerpt(text: str | None, limit: int = 600) -> str:
-    flat = " ".join((text or "").split())
+def _excerpt(text: str | None, detail: dict[str, Any], limit: int = 600) -> str:
+    """The posting's words with every mark removed (issue #210): a short excerpt is one run of
+    plain text, so formatting does not apply and raw marks must not show. Confidential mode
+    redacts after the marks are gone, like the Posting tab."""
+    from kestrel.privacy import EmployerMap
+    from kestrel.web.redact import redact_text
+
+    mapping = detail.get("mapping") or EmployerMap()
+    conf = bool(detail.get("confidential"))
+    flat = posting_format.plain_text(
+        text, lambda t: redact_text(t, mapping, enabled=conf) or "")
     if len(flat) <= limit:
         return flat
     return flat[: limit - 1].rstrip() + "…"
@@ -645,6 +657,32 @@ async def decide_unsave(request: Request, opp_id: int):
     return _answer({"pipelineRefresh": True})
 
 
+KEEP_ANYWAY_ASK = (
+    "Nothing was sent. Scoring this role goes to an online model, so Score again shows what "
+    "would be sent first."
+)
+
+
+KEEP_ANYWAY_CHANGED = (
+    "Nothing was sent. Your corrections changed, or were never shown. Open Score again to see "
+    "what would be sent."
+)
+
+
+def _keep_anyway_ask(request: Request, opp_id: int) -> Response:
+    """Open Score again for this one role: its set-aside card offers Score this role anyway, and
+    its ask-first step lists the correction lines the send carries. The URL is built here from
+    the role id, never from the form."""
+    from fastapi.responses import RedirectResponse
+
+    url = "/rescore/choose?" + urlencode(
+        {"opp_ids": str(int(opp_id)), "page": "1", "next": "/opportunities"}
+    )
+    if request.headers.get("HX-Request"):
+        return HTMLResponse(f"<p>{KEEP_ANYWAY_ASK}</p>", headers={"HX-Redirect": url})
+    return RedirectResponse(url, status_code=303)
+
+
 @router.post("/opportunities/{opp_id}/decide/keep-anyway", response_class=HTMLResponse)
 async def decide_keep_anyway(request: Request, opp_id: int):
     """Keep it anyway, on a role the rules set aside (D-UI-62, D-UI-74): it is scored with the
@@ -659,16 +697,33 @@ async def decide_keep_anyway(request: Request, opp_id: int):
             settings = await load_settings_with_db(s)
             from kestrel.services.online_consent import approval_problem
             problem = await approval_problem(s, settings, ("tier1", "tier2"), form)
+            if problem and "online_approval" not in form:
+                # The button posts no confirmation: scoring goes online, so hand the role to the
+                # Score again dialog, which lists what would be sent, including the correction
+                # lines, and binds them to the send (issue #178, D-PRIV-671). Nothing is queued.
+                return _keep_anyway_ask(request, opp_id)
             if problem:
                 return _answer({
                     "k-toast": _toast(
                         "Nothing was sent. Confirm the online scoring first.", tone="warn"
                     )
                 })
+            # An approval posted here binds only the lines a panel showed for this role, read
+            # again in this session (D-PRIV-674): a stamp with no or a stale digest sends nothing.
+            from kestrel.learning.correction_lines import confirm_corrections
+            from kestrel.services.online_consent import read_approval
+
+            approval = read_approval(form.get("online_approval"))
+            confirmed = None
+            if approval:
+                confirmed = await confirm_corrections(
+                    s, [opp_id], form.get("corrections_digest"))
+                if confirmed is None:
+                    return _answer({"k-toast": _toast(KEEP_ANYWAY_CHANGED, tone="warn")})
             result = await enqueue_rescore(
                 s, [opp_id], tier0_anyway=True, score_stubs=True,
                 explain=rule_explainer(s, settings),
-                online_approval=form.get("online_approval"),
+                online_approval=approval, corrections=confirmed,
             )
             await s.commit()
             if not (result.queued or result.already):

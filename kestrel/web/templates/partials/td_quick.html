@@ -8,7 +8,7 @@
 {% set tq = '&tour=1' if tour else '' %}{% set w = words(track) %}
 <div id="td-quick" class="td-quick" data-testid="td-quick" data-k-morph data-empty="{{ 0 if quick else 1 }}"
      hx-get="/today/quick?track={{ track }}{{ tq }}"
-     hx-trigger="every 30s [!document.querySelector('#td-quick dialog:modal')], run-refresh from:body, td-refresh from:body"
+     hx-trigger="every 30s, run-refresh from:body, td-refresh from:body" data-k-when="poll=no-td-quick-modal"
      hx-swap="outerHTML" data-no-busy>
   {% if quick %}
   <section class="td-qr" data-testid="td-qr" aria-label="Quick round">

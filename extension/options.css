@@ -1,0 +1,34 @@
+/* Kestrel Capture settings page. Colors only from theme.css tokens. */
+body.opts { background: var(--bg); }
+.layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+.side { background: var(--paper); border-right: 1px solid var(--line); padding: 18px 12px; display: flex; flex-direction: column; gap: 2px; }
+.brandline { display: flex; align-items: center; gap: 8px; margin: 0 6px 14px; }
+.brandline .logo { width: 24px; height: 24px; border-radius: 6px; }
+.side a { color: var(--ink); text-decoration: none; padding: 9px 10px; border-radius: var(--r-sm); font-weight: 600; transition: background var(--dur-1) var(--ease); }
+.side a:hover { background: var(--soft); }
+.side a.on { background: var(--tint-info); color: var(--link-ink); }
+.content { padding: 28px 32px; max-width: 760px; min-width: 0; }
+.sec { display: none; animation: k-view var(--dur-2) var(--ease); }
+.sec.on { display: block; }
+h1 { font-size: var(--fs-xl); margin: 0 0 12px; }
+.card { background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 14px 16px; margin: 0 0 14px; }
+.card summary { cursor: pointer; font-weight: 700; }
+.pillbig { display: inline-flex; gap: 6px; align-items: center; padding: 4px 12px; border-radius: var(--r-pill); background: var(--soft); font-weight: 700; font-size: var(--fs-sm); }
+.pillbig.good { background: var(--good-bg); color: var(--good-ink); }
+.keyrow { display: flex; gap: 8px; margin: 0 0 8px; } .keyrow input { flex: 1; min-width: 0; }
+.sw { display: flex; align-items: center; gap: 10px; padding: 10px 0; font-weight: 600; cursor: pointer; }
+.sw input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.sw .track { width: 38px; height: 22px; border-radius: 11px; background: var(--line); position: relative; flex: none; transition: background var(--dur-1) var(--ease); }
+.sw .track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--paper); box-shadow: var(--shadow-soft); transition: transform var(--dur-1) var(--ease); }
+.sw input:checked + .track { background: var(--brand); }
+.sw input:checked + .track::after { transform: translateX(16px); }
+.sw input:focus-visible + .track { outline: 2px solid var(--focus); outline-offset: 2px; }
+.sites { list-style: none; padding: 0; margin: 0; } .sites li { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; gap: 8px; overflow-wrap: anywhere; }
+.links { display: flex; gap: 16px; flex-wrap: wrap; } .links a { color: var(--link-ink); font-weight: 600; }
+ul.plain { margin: 0 0 12px; padding-left: 18px; } ul.plain li { margin: 0 0 6px; }
+@media (max-width: 640px) {
+  .layout { grid-template-columns: 1fr; }
+  .side { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }
+  .brandline { width: 100%; }
+  .content { padding: 18px 16px; }
+}

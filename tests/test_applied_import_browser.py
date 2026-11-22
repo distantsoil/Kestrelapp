@@ -50,7 +50,11 @@ def test_sample_file_walks_every_step_and_adds_the_applications(live):
     page.wait_for_selector('[data-testid="st-imp-sample"]')
     wait_for_layout(page)
     page.click('[data-testid="st-imp-sample"]')
+    page.wait_for_selector('[data-testid="st-imp-next"]')
+    wait_for_layout(page)  # D-TEST-821: each wizard step is swapped in by htmx
     page.click('[data-testid="st-imp-next"]')
+    page.wait_for_selector('[data-testid="st-imp-add"]')
+    wait_for_layout(page)
     page.click('[data-testid="st-imp-add"]')
     page.wait_for_selector('[data-testid="st-imp-done"]')
     assert "5 applications added" in page.inner_text('[data-testid="st-imp-done"]')
@@ -93,12 +97,15 @@ def _to_review(page, base, on_load_js):
     page.click('[data-testid="st-imp-sample"]')
     page.wait_for_selector('[data-testid="st-imp-next"]')
     page.evaluate(
-        """(body) => document.addEventListener('htmx:load', (e) => {
+        # Compiled here, inside the evaluate call: compiling it in the listener is eval from
+        # the page, which the app's Content-Security-Policy refuses (D-INST-8).
+        """(body) => { const run = new Function('add', body);
+           document.addEventListener('htmx:load', (e) => {
              const add = e.target.querySelector && e.target.querySelector('#st-imp-add');
              if (!add) return;
              window.__unticked = e.target.querySelectorAll('input.st-check:checked').length === 0;
-             new Function('add', body)(add);
-           })""",
+             run(add);
+           }); }""",
         on_load_js,
     )
     page.click('[data-testid="st-imp-next"]')
@@ -164,6 +171,8 @@ def test_a_large_tracker_chosen_from_applications_is_added(live, tmp_path):
     wait_for_layout(page)
     page.set_input_files('[data-testid="st-imp-file"]', str(tracker))
     page.click('[data-testid="st-imp-next"]')
+    page.wait_for_selector('[data-testid="st-imp-add"]')
+    wait_for_layout(page)  # D-TEST-821
     page.click('[data-testid="st-imp-add"]', timeout=30000)
     page.wait_for_selector('[data-testid="st-imp-done"]', timeout=60000)
     assert "600 applications added" in page.inner_text('[data-testid="st-imp-done"]')
@@ -231,7 +240,11 @@ def test_a_reimport_lists_only_exceptions_keeps_progress_and_undoes_in_one_step(
     page.wait_for_selector('[data-testid="st-imp-sample"]')
     wait_for_layout(page)
     page.click('[data-testid="st-imp-sample"]')
+    page.wait_for_selector('[data-testid="st-imp-next"]')
+    wait_for_layout(page)  # D-TEST-821: each wizard step is swapped in by htmx
     page.click('[data-testid="st-imp-next"]')
+    page.wait_for_selector('[data-testid="st-imp-add"]')
+    wait_for_layout(page)
     page.click('[data-testid="st-imp-add"]')
     page.wait_for_selector('[data-testid="st-imp-done"]')
     again = tmp_path / "again.csv"

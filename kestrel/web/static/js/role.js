@@ -228,6 +228,7 @@
      picks into its hidden fields, writes the one effect line and keeps Save honest. Nothing here
      sends anything: a Save posts a local correction, and Score again is the existing dialog. */
   var flip = null;      // what #rl-match looked like before a swap: row places, open parts
+  var reopen = null;    // what was open in the matches before a swap, reopened when it settles
   var cxWant = null;    // whether the Your view strip should end up open after its swap
   function instant(fn) {
     var m = $('#rl-match'); if (!m) { fn(); return; }
@@ -396,14 +397,7 @@
     if (!t || t.id !== 'rl-match' || !flip) return;
     var f = flip; flip = null;
     var m = $('#rl-match'); if (!m) return;
-    instant(function () {
-      if (f.ev) { var eb = $('#rl-evbody', m), eh = $('[data-rl-evtoggle]', m); if (eb) eb.classList.add('on'); if (eh) eh.setAttribute('aria-expanded', 'true'); }
-      f.tags.forEach(function (id) {
-        var box = doc.getElementById(id); if (!box) return;
-        box.classList.add('on');
-        var btn = $('[data-rl-tag][aria-controls="' + id + '"]', m); if (btn) btn.setAttribute('aria-expanded', 'true');
-      });
-    });
+    reopen = f;
     if (f.row) {
       var back = $$('.rl-mrow', m).filter(function (n) { return n.getAttribute('data-id') === f.row; })[0];
       var pen = back && ($('[data-testid="match-undo"]', back) || $('[data-rl-fix], .rl-pen', back));
@@ -421,8 +415,27 @@
     }
     if (cx) cx.after(1200, function () { $$('.rl-mrow.is-flash', m).forEach(function (n) { n.classList.remove('is-flash'); }); });
   }
+  // htmx puts the markup's own classes back on every element with an id when a swap settles,
+  // about 20 ms after afterSwap, so what was open is reopened then, in the same task and with
+  // the animation held off: reopening it any earlier is undone and the section closes.
+  function onSettleMatch(e) {
+    var t = e.target;
+    if (!t || t.id !== 'rl-match' || !reopen) return;
+    var f = reopen; reopen = null;
+    var m = $('#rl-match'); if (!m) return;
+    instant(function () {
+      if (f.ev) { var eb = $('#rl-evbody', m), eh = $('[data-rl-evtoggle]', m); if (eb) eb.classList.add('on'); if (eh) eh.setAttribute('aria-expanded', 'true'); }
+      f.tags.forEach(function (id) {
+        var box = doc.getElementById(id); if (!box) return;
+        box.classList.add('on');
+        var btn = $('[data-rl-tag][aria-controls="' + id + '"]', m); if (btn) btn.setAttribute('aria-expanded', 'true');
+      });
+    });
+  }
   // The Your view strip is swapped out of band: keep its old state for the first frame, then
-  // move to the new one, so it opens and closes instead of snapping.
+  // move to the new one once the swap has settled (settling puts the markup's class back on an
+  // element with an id, which would undo an earlier change), so it opens and closes instead of
+  // snapping.
   function onOobBefore(e) {
     var d = e.detail || {};
     if (!d.target || d.target.id !== 'rl-cx') return;
@@ -830,7 +843,7 @@
     mount: function (main, ctx) {
       cx = ctx;
       pendingDir = 0; pendingKind = ''; focusKey = null; dialogWatch = null;
-      flip = null; cxWant = null; pendingRow = ''; rsHeld = false;
+      flip = null; reopen = null; cxWant = null; pendingRow = ''; rsHeld = false;
       rsTimer = 0; rsBusy = false; rsLanding = false;
       // The order the file added them in: the capture-phase tab click stays ahead of the rest.
       ctx.on(root, 'resize', onInkResize);
@@ -850,7 +863,8 @@
       ctx.on(doc, 'htmx:beforeSwap', onBeforeSwap);
       ctx.on(doc, 'htmx:afterSwap', onAfterSwap);
       ctx.on(doc, 'htmx:oobBeforeSwap', onOobBefore);
-      ctx.on(doc, 'htmx:oobAfterSwap', onOobAfter);
+      ctx.on(doc, 'htmx:afterSettle', onSettleMatch);
+      ctx.on(doc, 'htmx:afterSettle', onOobAfter);
       ctx.on(doc, 'rl-similar', onSimilar);
       ctx.on(doc, 'click', onAdjustClick);
       ctx.on(doc, 'click', onMenuClick);

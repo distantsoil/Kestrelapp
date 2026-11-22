@@ -359,7 +359,7 @@ def test_about_you_gate_tracks_summary_and_the_more_details_fold(live, theme):
         page.wait_for_selector("#ob-head")
         wait_for_layout(page)
         assert page.is_visible("#ob-head") and page.is_visible("#ob-li")
-        assert page.is_disabled("#ob-li")
+        assert page.is_enabled("#ob-li")  # a real field since D-REL-26
         _shot(page, theme, 1280, "about", "-open")
         assert not errors, errors
     finally:
@@ -464,12 +464,18 @@ def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(li
         ctx.close()
 
 
-# Every animation frame from the press until 1.2 s after it (by the clock, never a frame count:
-# 75 frames last 1.25 s at 60 Hz but only 0.5 s at 144 Hz, which ends the sampling before the
-# 0.36 s slide's copy is gone on a fast display), the most visible step
-# pane's opacity, how many panes are in the frame, the arriving pane's own opacity, and how many
-# animations run inside the leaving copy (its own slide only).
-_PANE_FRAMES = """() => { window.__f = []; const t0 = performance.now();
+# Every animation frame from the press until 1.2 s after the swap (by the clock, never a frame
+# count: 75 frames last 1.25 s at 60 Hz but only 0.5 s at 144 Hz, which ends the sampling before
+# the 0.36 s slide's copy is gone on a fast display). The window counts from the swap, the first
+# frame with a new step or a leaving copy, not from the press: the swap is an htmx round trip,
+# and under load its latency alone used the margin of a window counted from the press
+# (D-TEST-798). The 10 s cap only ends a sampler whose swap never came; the test waits for
+# the sampler's own end (window.__done), never a fixed sleep. Each frame holds the most visible
+# step pane's opacity, how many panes are in the frame, the arriving pane's own opacity, and how
+# many animations run inside the leaving copy (its own slide only).
+_PANE_FRAMES = """() => { window.__f = []; window.__done = false;
+  const start = performance.now(); let t0 = null;
+  const step0 = document.querySelector('#ob-step').getAttribute('data-step');
   const seen = p => { let o = 1;
     for (let e = p; e && e !== document.body; e = e.parentElement)
       o *= +getComputedStyle(e).opacity;
@@ -481,7 +487,11 @@ _PANE_FRAMES = """() => { window.__f = []; const t0 = performance.now();
     window.__f.push([panes.length ? Math.max(...panes.map(seen)) : 0, panes.length,
                      fresh ? seen(fresh) : 0,
                      copy ? copy.getAnimations({subtree: true}).length : 0]);
-    if (performance.now() - t0 < 1200) requestAnimationFrame(tick); };
+    const now = performance.now();
+    if (t0 === null && (copy || document.querySelector('#ob-step').getAttribute('data-step')
+                                  !== step0)) t0 = now;
+    if (t0 === null ? now - start < 10000 : now - t0 < 1200) requestAnimationFrame(tick);
+    else window.__done = true; };
   requestAnimationFrame(tick); }"""
 
 
@@ -502,7 +512,7 @@ def test_a_step_change_never_leaves_the_wizard_blank(live):
             page.evaluate(_PANE_FRAMES)
             page.click(f'[data-testid="{button}"]')
             page.wait_for_selector(f'#ob-step[data-step="{step}"]')
-            page.wait_for_timeout(1400)
+            page.wait_for_function("window.__done === true")
             frames = page.evaluate("window.__f")
             assert len(frames) >= 30, frames  # 1.2 s at 30 Hz or better
             dimmest = min(f[0] for f in frames)
@@ -511,7 +521,14 @@ def test_a_step_change_never_leaves_the_wizard_blank(live):
             assert together >= 10, (button, [f[1] for f in frames[:40]])
             assert min(f[2] for f in frames if f[1] == 2) < 0.6, (button, frames[:20])
             assert max(f[3] for f in frames) <= 1, (button, [f[3] for f in frames[:40]])
-            assert frames[-1][1] == 1, (button, frames[-6:])
+            # The end state is read after the product's own drop (animationend, or the 600 ms
+            # cx.after in onboarding.js), not from the sampler's last frame: a frame's timing is
+            # not the product's state, and under load the last sampled frame held two panes
+            # (D-TEST-798). A copy that never leaves fails here as a timeout; one that leaves
+            # but leaves two panes fails the count.
+            page.wait_for_selector("#ob-step .ob-leaving", state="detached", timeout=5000)
+            panes = page.evaluate("document.querySelectorAll('#ob-step .ob-pane').length")
+            assert panes == 1, (button, panes, frames[-6:])
             assert page.evaluate("document.querySelectorAll('[id=\"ob-step\"]').length") == 1
         assert not errors, errors
     finally:
@@ -545,5 +562,36 @@ def test_with_reduced_motion_a_step_change_is_instant_and_leaves_one_pane(live):
         page.click('[data-testid="ob-next"]')
         page.wait_for_selector('#ob-step[data-step="models"]')
         assert page.evaluate("document.querySelectorAll('#ob-step .ob-pane').length") == 1
+    finally:
+        ctx.close()
+
+
+_STYLE = "e => [getComputedStyle(e).fontWeight, getComputedStyle(e).fontSize]"
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [390, 1280])
+def test_a_chosen_resume_name_is_bold_and_larger_and_resets(live, tmp_path, theme, width):
+    """Owner, 2026-11-17: once a resume is chosen it was not obvious. Its name shows bold and
+    two points larger (13 px to 15 px); Start over puts the plain hint back."""
+    ctx, page, errors = _open(live, theme, width, "resume")
+    try:
+        name = page.locator("[data-ob-filename]")
+        assert name.evaluate(_STYLE) == ["400", "13px"]
+        resume = tmp_path / "invented-resume.md"
+        resume.write_text("# Pat Example\n\n- Ran an invented depot.\n", encoding="utf-8")
+        page.set_input_files("#ob-imp-file", str(resume))
+        page.wait_for_function(
+            "() => document.querySelector('[data-ob-filename]').classList.contains('is-chosen')")
+        wait_for_layout(page)
+        assert name.inner_text() == "invented-resume.md"
+        weight, size = name.evaluate(_STYLE)
+        assert int(weight) >= 600 and size == "15px"
+        _shot(page, theme, width, "resume", "-chosen")
+        page.set_input_files("#ob-imp-file", [])
+        page.wait_for_function(
+            "() => !document.querySelector('[data-ob-filename]').classList.contains('is-chosen')")
+        assert "invented-resume.md" not in name.inner_text()
+        assert not errors, errors
     finally:
         ctx.close()

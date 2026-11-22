@@ -386,7 +386,7 @@
 .rl-docfoot { margin-top: 12px; align-items: center; }
 
 /* ----------------------------------------------------------------------- the other four tabs */
-.rl-posting .rl-desc { font-size: 14.5px; line-height: 1.7; max-width: 820px; white-space: pre-wrap; overflow-wrap: anywhere;
+.rl-posting .rl-desc { font-size: 14.5px; line-height: 1.7; max-width: 820px; overflow-wrap: anywhere;
   margin-top: 8px; }
 .rl-liveline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0 0; }
 .rl-facts2 { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 6px 0 10px; font-size: 14px; }

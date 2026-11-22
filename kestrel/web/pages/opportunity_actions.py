@@ -47,7 +47,7 @@ from kestrel.db.models import (
 from kestrel.learning.capture import bulk_marks, not_bulk
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import authored_error, plain_error
 from kestrel.web.fit import GOOD, IMPORTED_REASON, NOT_FIT, verdict_for_fit
 from kestrel.web.queries import latest_evaluation, record_override
 from kestrel.web.words import words
@@ -562,7 +562,8 @@ async def _queue_research(request: Request, opp_id: int, kind: str) -> HTMLRespo
                     message = ("Queued. Progress is on the Organization tab." if added
                                else "Already queued. Progress is on the Organization tab.")
                 except ValueError as exc:
-                    error = str(exc)
+                    log.info("research_not_queued", kind=kind, error=type(exc).__name__)
+                    error = authored_error(exc, jobs.ENQUEUE_REFUSALS, jobs.ENQUEUE_FALLBACK)
         return await _render(request, s, opp_id, message=message, error=error)
 
 

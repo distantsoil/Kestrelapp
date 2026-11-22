@@ -19,9 +19,13 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 
 import kestrel
+from kestrel import error_codes
 from kestrel.web.errors import plain_error
 
 log = structlog.get_logger()
+
+# The one code every page failure carries (SPEC-INTERFACES.md 2.7, D-ERR-16).
+PAGE_ERROR_CODE = "APP-001"
 
 
 def wants_page(request: Request) -> bool:
@@ -50,6 +54,7 @@ def details_text(request: Request, exc: BaseException, *, now: datetime | None =
 
     when = now or datetime.now().astimezone()
     return "\n".join([
+        f"Code {error_codes.get(PAGE_ERROR_CODE).code}",
         f"Page: {page_name(request.url.path)}",
         "Time: " + format_display(when, "short", kind="datetime",
                                   time_style="24h_seconds", separator=", "),
@@ -65,7 +70,8 @@ def render(request: Request, exc: BaseException) -> Response:
         from kestrel.web.deps import templates
 
         return templates().TemplateResponse(
-            request, "error.html", {"details": text, "retry_href": request.url.path or "/"},
+            request, "error.html", {"details": text, "retry_href": request.url.path or "/",
+             "error_code": PAGE_ERROR_CODE},
             status_code=500,
         )
     except Exception as render_exc:  # the error page must never raise
@@ -74,6 +80,7 @@ def render(request: Request, exc: BaseException) -> Response:
             "<!doctype html><meta charset=utf-8><title>Kestrel</title>"
             "<h1>Kestrel couldn't load this page</h1>"
             "<p>Your roles and settings are safe on this computer. Try again.</p>"
+            f"<p>Code {PAGE_ERROR_CODE}</p>"
             f"<pre>{escape(text)}</pre>"
         )
         return HTMLResponse(body, status_code=500)
@@ -82,7 +89,7 @@ def render(request: Request, exc: BaseException) -> Response:
 async def handle(request: Request, exc: Exception) -> Response:
     log.error(
         "unhandled_error", path=request.url.path, error_type=type(exc).__name__,
-        exc_info=exc,
+        error_code=PAGE_ERROR_CODE, exc_info=exc,
     )
     if wants_page(request):
         return render(request, exc)

@@ -1,32 +1,52 @@
-{# Settings > Hosted, Your keys (release round R1): the one place a user adds a provider key. Paste,
-   Test (one cheap authenticated call that checks the key with the provider), Save. A saved
-   key is never rendered back: only its last four characters. OpenRouter is listed first, with
-   "Free models available". Key names and the file they live in are under Show details at the
-   bottom of the Advanced section, for power users only. #}
-<section id="hosted-keys" class="key-box" data-testid="hosted-keys">
-  <h3 style="margin-top:0">Your keys</h3>
-  <p class="muted" style="margin:.2rem 0 .6rem">Paste a key from your provider's website, press Test to check it, then Save. Test asks the provider one question (is this key valid) and sends nothing about you.</p>
+{# Settings > Online models, Your keys (release round R1, #224): the one place a user adds a provider
+   key. Paste, Test (one cheap authenticated call that checks the key with the provider), Save. A
+   saved key is never rendered back: only its last four characters. OpenRouter is listed first, with
+   "Free models available". Under each provider, its balance: OpenRouter's balance setting (the
+   same form as before, POST /settings/hosted/balance), or a no-JS toggletip for a provider Kestrel
+   reads no balance from. Key names and the file they live in are under Advanced. #}
+{% import "ui/macros.html" as ui %}
+<section id="hosted-keys" class="k-card ho-card key-box" data-testid="hosted-keys" aria-labelledby="ho-keys-title">
+  <h2 class="ho-h2" id="ho-keys-title">Your keys</h2>
+  <p class="k-muted ho-small">Paste a key from your provider's website, press Test to check it, then Save. Test asks the provider one question (is this key valid) and sends nothing about you.</p>
   {% if key_result %}
-  <div class="{{ 'okbox' if key_result.ok else 'warnbox' }}" role="status" aria-live="polite" data-testid="key-result" data-key-ok="{{ 'true' if key_result.ok else 'false' }}" style="padding:.5rem .9rem; margin-bottom:.6rem">{{ key_result.text }}</div>
+  <div class="ho-msg {{ 'ho-msg--ok' if key_result.ok else 'ho-msg--warn' }}" role="status" aria-live="polite" data-testid="key-result" data-key-ok="{{ 'true' if key_result.ok else 'false' }}">{{ key_result.text }}</div>
   {% endif %}
   {% for pid in preset_order if hosted_backends.get(presets[pid].backend) %}
   {% set p = presets[pid] %}
   {% set b = hosted_backends[p.backend] %}
+  <div class="ho-keyrow">
   <form class="key-row" data-provider="{{ pid }}" hx-post="/settings/hosted/keybox" hx-target="#hosted-panel" hx-swap="outerHTML" autocomplete="off">
     <input type="hidden" name="provider" value="{{ pid }}">
     {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}">{% endif %}
     <div class="key-row-head">
-      <b>{{ p.label }}</b>{% if pid in free_providers %} <span class="pill apply" data-testid="free-models-{{ pid }}">Free models available</span>{% endif %}
-      <span class="muted" data-testid="key-status-{{ pid }}">{% if b.key_present %}Key saved{% if b.key_tail and is_local(request) %}, ends in <span class="mono">{{ b.key_tail }}</span>{% endif %}{% else %}No key saved{% endif %}</span>
-      <a href="{{ p.console }}" target="_blank" rel="noopener" class="muted">Get a key</a>
+      <b>{{ p.label }}</b>{% if pid in free_providers %} <span class="k-pill k-pill--good" data-testid="free-models-{{ pid }}">Free models available</span>{% endif %}
+      <span class="k-muted ho-block" data-testid="key-status-{{ pid }}">{% if b.key_present %}Key saved{% if b.key_tail and is_local(request) %}, ends in <span class="mono">{{ b.key_tail }}</span>{% endif %}{% else %}No key saved{% endif %}</span>
+      <a href="{{ p.console }}" target="_blank" rel="noopener" class="ho-small">Get a key</a>
     </div>
     <div class="key-row-input">
       <label class="sr-only" for="key-{{ pid }}">{{ p.label }} API key</label>
       <input id="key-{{ pid }}" type="password" name="api_key" placeholder="Paste a key that starts {{ p.key_prefix }}" spellcheck="false">
-      <button class="btn" type="submit" name="op" value="test">Test</button>
-      <button class="btn pri" type="submit" name="op" value="save">Save</button>
-      {% if b.env in kestrel_keys %}<button class="btn ghost" type="submit" name="op" value="remove">Remove</button>{% endif %}
+      <span class="ho-btns">
+      <button class="k-btn" type="submit" name="op" value="test">Test</button>
+      <button class="k-btn k-btn--primary" type="submit" name="op" value="save">Save</button>
+      {% if b.env in kestrel_keys %}<button class="k-btn k-btn--quiet" type="submit" name="op" value="remove">Remove</button>{% endif %}
+      </span>
     </div>
   </form>
+  {% if b.provider == 'openrouter' %}
+  {% if openrouter_key_present %}
+  <form hx-post="/settings/hosted/balance" hx-trigger="change" hx-target="#hosted-panel" hx-swap="outerHTML"
+        class="ho-bal" data-testid="balance-setting">
+    <label class="ho-check"><input type="checkbox" name="show_balance" value="on" {% if show_balance %}checked{% endif %}> Show balance with free models too</label>
+    <span class="k-muted ho-small">Paid models always show it.</span>
+  </form>
+  <details class="ho-tip" data-k-fold data-testid="balance-details"><summary><span class="ho-tipbtn">{{ ui.icon('info', 'k-ic--sm') }}</span><span class="k-muted ho-small">How Kestrel reads the balance</span></summary>
+    <p class="ho-tipbody">The sidebar shows your OpenRouter balance for paid models. This box also turns it on for free models only. Kestrel asks OpenRouter for your key's remaining credit about every five minutes: one request that carries your key and nothing else. Other providers show this month's spend from Kestrel's own log, with no request.</p></details>
+  {% endif %}
+  {% else %}
+  <details class="ho-tip" data-k-fold data-testid="balance-tip-{{ pid }}"><summary><span class="k-muted ho-small">No balance</span><span class="ho-tipbtn" aria-label="Why there is no balance for {{ p.label }}">{{ ui.icon('info', 'k-ic--sm') }}</span></summary>
+    <p class="ho-tipbody">Kestrel reads a balance only from OpenRouter. For {{ p.label }} it shows this month's spend from its own log instead, with no request to the provider.</p></details>
+  {% endif %}
+  </div>
   {% endfor %}
 </section>

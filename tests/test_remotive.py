@@ -255,7 +255,7 @@ async def test_the_fifth_fetch_in_a_local_day_is_refused_even_after_a_restart(sm
         await engine.dispose()
     assert outcome.status == "partial"
     assert api.call_count == 4  # the fifth never reached the network
-    assert last.error and "4 times a day" in last.error and "tomorrow" in last.error
+    assert last.error and "daily limit of 4 fetches" in last.error and "tomorrow" in last.error
 
 
 @respx.mock

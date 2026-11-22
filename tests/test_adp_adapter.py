@@ -163,6 +163,9 @@ async def test_adp_detail_error_skips_only_that_posting():
     respx.get(f"{_LIST_URL}/{_ITEM3}").mock(return_value=Response(200, json=_DETAIL))
     postings = await _fetch()
     assert [p.external_id for p in postings] == [_ITEM1, _ITEM3]
+    # the skipped role is said, so the run is partial (D-ERR-24 round 8)
+    assert postings.partial_error.startswith("ADP did not return the details of 1 of its ")
+    assert [n.kind for n in postings.notices] == ["body_unread"]
 
 
 @respx.mock

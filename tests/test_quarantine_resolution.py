@@ -29,6 +29,7 @@ from kestrel.web.queries import (
     scoring_failed_count,
 )
 from tests import clock_seed
+from tests.page_source import as_written
 
 FAILED_MODEL = "nvidia/nemotron-3.5-super-vl:free"
 GOOD_MODEL = "~deepseek/deepseek-pro-latest"
@@ -364,7 +365,7 @@ def test_the_page_lists_each_role_once_and_the_score_again_dialog_still_opens_on
     assert 'value="same" checked' not in body
     assert _picked(body, "kestrel-other:latest")
     assert f'name="quarantine_id" value="{ids["q_rescore"]}"' in body
-    assert "showModal" in body and 'data-testid="score-again-dialog" open' not in body
+    assert "showModal" in as_written(body) and 'data-testid="score-again-dialog" open' not in body
 
     # The model that failed is not offered now: Same model, and a note that says so.
     body = client.get("/rescore/choose", params={"opp_ids": ids["t2"], "model": FAILED_MODEL},

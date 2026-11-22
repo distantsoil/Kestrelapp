@@ -24,6 +24,10 @@ from kestrel.db.models import Setting
 
 KEY = "onboarding.state"
 MODE_KEY = "llm.mode"
+# The "grab a drink" notice after the wizard (D-UI-249): written once, the first time onboarding
+# completes, and never again. A restart of onboarding finds the row and adds nothing, so the
+# notice belongs to the first run only.
+BREAK_KEY = "onboarding.first_run_break"
 
 
 @dataclass(frozen=True)
@@ -164,11 +168,82 @@ async def is_fresh_install(session: AsyncSession) -> bool:
     return not _profile_exists() and not await _mode_stored(session)
 
 
+async def mark_first_run_break(session: AsyncSession) -> bool:
+    """Queue the first-run notice, once per install. True when it was queued now; False when the
+    row already exists (shown or pending). The caller commits."""
+    if await session.get(Setting, BREAK_KEY) is not None:
+        return False
+    # "stories": "due" arms the one automatic story build of the first run (D-STORY-700).
+    session.add(Setting(key=BREAK_KEY, value={"pending": True, STORIES_FIELD: STORIES_DUE}))
+    return True
+
+
+async def first_run_break_pending(session: AsyncSession) -> bool:
+    row = await session.get(Setting, BREAK_KEY)
+    return bool(row is not None and isinstance(row.value, dict) and row.value.get("pending"))
+
+
+async def dismiss_first_run_break(session: AsyncSession) -> None:
+    """The notice was seen: it never shows again. The story flag is not the notice's to clear
+    (D-STORY-700): a person who closes the notice early still gets the first build. The caller
+    commits."""
+    row = await session.get(Setting, BREAK_KEY)
+    if row is None:
+        session.add(Setting(key=BREAK_KEY, value={"pending": False}))
+    else:
+        value = dict(row.value) if isinstance(row.value, dict) else {}
+        value["pending"] = False
+        row.value = value
+        row.updated_at = utcnow_iso()
+
+
+# The first run's one automatic story build (D-STORY-700). Kept in the same setting row as the
+# notice, in the database, so a killed app still owes it: "due" from the first completion of
+# onboarding until a finished run with deep reads has asked for it, then "done" for good. A row
+# written by a restart of onboarding, or before this existed, has no field, so it is never due.
+STORIES_FIELD = "stories"
+STORIES_DUE = "due"
+STORIES_DONE = "done"
+
+
+async def first_run_stories_due(session: AsyncSession) -> bool:
+    row = await session.get(Setting, BREAK_KEY)
+    return bool(
+        row is not None and isinstance(row.value, dict)
+        and row.value.get(STORIES_FIELD) == STORIES_DUE
+    )
+
+
+async def finish_first_run_stories(session: AsyncSession) -> None:
+    """The one automatic build has been asked for (or refused): never again. Caller commits."""
+    row = await session.get(Setting, BREAK_KEY)
+    if not (row is not None and isinstance(row.value, dict)
+            and row.value.get(STORIES_FIELD) == STORIES_DUE):
+        return
+    row.value = {**row.value, STORIES_FIELD: STORIES_DONE}
+    row.updated_at = utcnow_iso()
+
+
+async def first_run_stories_expected(session: AsyncSession, settings: Any) -> bool:
+    """Whether the notice may say stories are coming (D-STORY-701): the build is due AND Tier 2
+    is local. With Tier 2 online `request_build` queues nothing without a confirmed dialog, so
+    the notice must not promise it. One decision for the copy and for the queueing."""
+    from kestrel.services.online_consent import held_for_consent
+
+    if not await first_run_stories_due(session):
+        return False
+    return not held_for_consent(settings, "tier2", None)
+
+
 async def restart(session: AsyncSession) -> OnboardingState:
     """"Restart onboarding, keep my details": back to step 1, nothing else changes. The forms
     open prefilled because they read the profile that is still there. The caller commits."""
     state = OnboardingState()
     await save(session, state)
+    # The first-run notice is for the first run only (D-UI-249): an install that restarts
+    # onboarding (keep or clear, or one onboarded before the notice existed) has had its first run.
+    if await session.get(Setting, BREAK_KEY) is None:
+        session.add(Setting(key=BREAK_KEY, value={"pending": False}))
     return state
 
 

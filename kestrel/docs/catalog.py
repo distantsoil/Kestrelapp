@@ -341,7 +341,27 @@ def document_header(master: DocMaster) -> dict:
     for key, val in (master.header or {}).items():
         if val not in (None, "", [], {}):
             header[key] = val
+    _add_linkedin(header, block, getattr(master, "look", None))
     return header
+
+
+def _add_linkedin(header: dict, block: dict, look: dict | None) -> None:
+    """The person's own LinkedIn address in the contact line (D-PHONE-7): when it is set, the
+    document's look has not turned it off, and the master's own links do not already carry it.
+    `linkedin` is the text to print; `linkedin_href` is set only for a normalized address, so
+    text kept as typed prints as plain text and never becomes a link."""
+    from kestrel import linkedin
+
+    stored = str(block.get("linkedin_profile") or "").strip()
+    if not stored or (look or {}).get("linkedin") == "off":
+        return
+    target = linkedin.href(stored)
+    handle = target.rsplit("/in/", 1)[-1].lower() if target else ""
+    if handle and any(linkedin.handle_of(x) == handle for x in header.get("links") or []):
+        return  # the same whole handle (ann is not anna), however the master wrote the link
+    header["linkedin"] = linkedin.short(stored)
+    if target:
+        header["linkedin_href"] = target
 
 
 def resolve(catalog: MasterCatalog, config: dict) -> RenderDoc:
@@ -433,7 +453,7 @@ def resolve(catalog: MasterCatalog, config: dict) -> RenderDoc:
             [entry(token, e) for e in entries_of(catalog.master, token)]
             if token in KINDS else []
         )
-        if token == "education":
+        if token == "education":  # noqa: S105  a text token kind, not a secret
             # Legacy credential sections (slots and variants) and typed entries share a heading.
             roles = role_blocks("credential")
             if roles or entries:

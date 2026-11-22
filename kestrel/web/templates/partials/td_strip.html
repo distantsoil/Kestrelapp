@@ -15,7 +15,7 @@
 {% set tq = '&tour=1' if tour else '' %}
 <div id="td-top" class="td-top" data-testid="td-top" data-k-morph data-state="{{ st.state }}"
      hx-get="/today/strip?track={{ track }}{{ tq }}"
-     hx-trigger="every {{ '5s' if st.busy else '30s' }} [!document.querySelector('#td-top dialog:modal')], run-refresh[!document.querySelector('#td-top dialog:modal')] from:body, td-refresh[!document.querySelector('#td-top dialog:modal')] from:body"
+     hx-trigger="every {{ '5s' if st.busy else '30s' }}, run-refresh from:body, td-refresh from:body" data-k-when="poll=no-td-top-modal; run-refresh=no-td-top-modal; td-refresh=no-td-top-modal"
      hx-swap="outerHTML" data-no-busy>
   <div class="td-strip" id="td-strip" data-testid="td-strip">
     {# ------------------------------------------------------------------------ 1. last run #}
@@ -26,7 +26,7 @@
         {% if st.state == 'active' %}
           <span class="td-face">
             <span class="td-k" data-testid="run-headline">{{ st.scanning_label }}</span>
-            <span class="td-bar" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ st.pct.done|round|int }}"><i class="td-bar__done" style="--w: {{ st.pct.done }}%"></i><i class="td-bar__now" style="--w: {{ st.pct.now }}%"></i></span>
+            <span class="td-bar" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ st.pct.done|round|int }}"><i class="td-bar__done" data-k-style="--w: {{ st.pct.done }}%"></i><i class="td-bar__now" data-k-style="--w: {{ st.pct.now }}%"></i></span>
           </span>
         {% elif st.state == 'paused' %}
           <span class="td-face">

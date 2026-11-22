@@ -29,7 +29,11 @@
       </div>
       <div class="pf-f">
         <label for="pa-phone">Phone</label>
-        <input class="k-input" id="pa-phone" type="text" name="phone" value="{{ block.phone or '' }}" autocomplete="tel">
+        {% with ph_id='pa-phone', ph_value=block.phone or '', ph_country=block.phone_country, ph_entered=block.phone_entered or '', ph_e164=block.phone_e164 or '' %}{% include 'partials/phone_field.html' %}{% endwith %}
+      </div>
+      <div class="pf-f">
+        <label for="pa-li">LinkedIn profile</label>
+        {% with li_id='pa-li', li_value=block.linkedin_profile or '' %}{% include 'partials/linkedin_field.html' %}{% endwith %}
       </div>
       <div class="pf-f">
         <label for="pa-loc">Home location</label>

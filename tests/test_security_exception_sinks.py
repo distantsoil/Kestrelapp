@@ -154,7 +154,7 @@ def test_bench_promote_online_list_failure_names_the_provider_and_nothing_else(m
     monkeypatch.setattr(hm, "fetch_models", boom)
     r = _fresh_app().post("/bench/promote", data={"tier": "tier2", "model": "hosted:vendor/x"})
     assert "The model list from openrouter could not be fetched." in r.text
-    assert "Settings &gt; Hosted" in r.text
+    assert "Settings &gt; This computer" in r.text  # where keys live now (round 7)
     assert SECRET not in r.text and "secret-dir" not in r.text
 
 
@@ -165,7 +165,13 @@ def test_run_now_says_why_hosted_cannot_run_from_the_settings_not_an_exception()
     assert r.status_code == 400 and "acknowledged" in r.json()["reason"]
     r = client.post("/runs/now", data={"mode": "hosted", "confirmed": "1"})
     assert r.status_code == 400 and "Not queued: " in r.text and "acknowledged" in r.text
-    assert "Hosted" in r.text  # the sentence points at Settings > Hosted
+    # The sentence names the one consent form that exists (D-SCORE-60), now on Settings > Online
+    # models (D-PRIV-796).
+    import html
+
+    text = html.unescape(r.text)
+    assert "Settings > Online models" in text
+    assert "tick I understand what each hosted tier sends" in text
 
 
 def test_run_now_reads_the_reason_again_from_the_settings_never_from_the_exception(monkeypatch):
@@ -688,7 +694,7 @@ def test_score_again_model_list_failure_names_the_provider_and_nothing_else(monk
     assert override is None
     assert why == (
         f"The model list from {preset['label']} could not be fetched. Check the key and your "
-        "connection under Settings > Hosted."
+        "connection under Settings > This computer."
     )
     _nothing_of_it(why)
 

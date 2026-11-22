@@ -72,6 +72,45 @@ PYTHON=.venv/bin/python packaging/build_dmg.sh           # macOS
 $env:PYTHON=".venv\Scripts\python.exe"; packaging\build_windows.ps1   # Windows, needs Inno Setup 6
 ```
 
+#### The macOS disk image window, checked on a Mac
+
+The window (background, arrow, icon positions, volume icon) needs dmgbuild, which `uv sync` does
+not install. Without it the script builds the plain image and prints "dmgbuild is not installed";
+that image is not the one to check. From a clone of the branch, on an Apple silicon Mac:
+
+```bash
+uv python install 3.12
+uv sync --extra dev
+uv pip install --only-binary :all: --require-hashes -r packaging/macos/dmg-requirements.txt
+uv run python scripts/fetch_embed_model.py
+env -u APPLE_SIGNING_IDENTITY PYTHON="$(uv python find)" packaging/build_dmg.sh
+```
+
+It prints `==> writing .../dist/Kestrel-<version>.dmg with the Kestrel window (dmgbuild)` and ends
+with `UNSIGNED` and `done: .../dist/Kestrel-<version>.dmg`. If it says "making the plain image",
+the line above it says why; fix that before taking screenshots.
+
+To look at the window in light and then dark mode (the version is the one in
+`kestrel/__init__.py`):
+
+```bash
+VERSION="$(sed -nE 's/^__version__ = "([^"]+)"$/\1/p' kestrel/__init__.py)"
+osascript -e 'tell application "System Events" to tell appearance preferences to set dark mode to false'
+open "dist/Kestrel-$VERSION.dmg"
+# Screenshot the window: Cmd+Shift+4, then Space, then click the window (it saves to the Desktop).
+hdiutil detach "/Volumes/Kestrel $VERSION"
+osascript -e 'tell application "System Events" to tell appearance preferences to set dark mode to true'
+open "dist/Kestrel-$VERSION.dmg"
+# Screenshot again, then eject and set dark mode back to your usual setting.
+hdiutil detach "/Volumes/Kestrel $VERSION"
+```
+
+Check: a 660 by 400 window with no toolbar or sidebar; the Kestrel band at the top; Kestrel.app on
+the left and Applications on the right with the indigo arrow between them; "Drag Kestrel to
+Applications" near the bottom; the Kestrel icon on the mounted disk; icon labels readable in both
+modes; a sharp background on a Retina screen. If the window keeps old positions from an earlier
+build, eject it, delete the old disk image and build again.
+
 ## Release notes and the website
 
 The release notes are the operator-facing CHANGELOG section, not a list generated from pull
@@ -149,20 +188,55 @@ SmartScreen prompt immediately; an OV certificate removes it once the file has b
 
 ### macOS (Developer ID + notarization)
 
-| Secret | Value |
-|---|---|
-| `APPLE_CERT_P12_BASE64` | the "Developer ID Application" certificate and key exported from Keychain Access as .p12, base64-encoded: `base64 -i cert.p12` |
-| `APPLE_CERT_PASSWORD` | the .p12 password |
-| `APPLE_SIGNING_IDENTITY` | the certificate's common name, for example `Developer ID Application: Jane Doe (ABCDE12345)` |
-| `APPLE_ID` | the Apple ID that owns the developer account |
-| `APPLE_TEAM_ID` | the ten-character team id |
-| `APPLE_APP_PASSWORD` | an app-specific password for that Apple ID (appleid.apple.com, Sign-In and Security) |
+macOS signing is off until it is set up, and an unsigned disk image says so in the release notes.
+It uses **repository variables** for the names and IDs (not secret: every signed app carries them)
+and **environment secrets** for the certificate and the key, so only the job that names the
+environment can read them.
 
-The workflow imports the certificate into a temporary keychain, `build_dmg.sh` signs every Mach-O
-in the bundle inside-out with the hardened runtime and `packaging/macos/entitlements.plist`, signs
-the dmg, submits it with `notarytool --wait`, and staples the ticket. With only
-`APPLE_SIGNING_IDENTITY` and the certificate, the app is signed but not notarized, which still
-triggers Gatekeeper; all six are needed for a quiet first launch.
+| Name | Kind | Value |
+|---|---|---|
+| `APPLE_TEAM_ID` | variable | the ten-character team ID |
+| `APPLE_DEVELOPER_ID_NAME` | variable | the certificate's full name, such as `Developer ID Application: Jane Doe (ABCDE12345)` |
+| `APPLE_NOTARY_KEY_ID`, `APPLE_NOTARY_ISSUER_ID` | variables | the App Store Connect API key's Key ID and Issuer ID |
+| `APPLE_CERT_P12_BASE64`, `APPLE_CERT_PASSWORD` | `release` secrets | the Developer ID Application certificate exported from Keychain Access as .p12 (`base64 -i cert.p12 \| pbcopy`), and its password |
+| `APPLE_NOTARY_KEY_P8` | `release` secret | the whole text of the API key's `AuthKey_<id>.p8` |
+| `APPLE_TEST_SIGNING_NAME` | variable | optional: an **Apple Development** certificate's full name, for the dry run |
+| `APPLE_TEST_CERT_P12_BASE64`, `APPLE_TEST_CERT_PASSWORD` | `release-test` secrets | optional: that certificate as .p12 text, and its password |
+
+With all four production variables set, a version tag signs and notarizes; with none set it builds
+unsigned; with some set, preflight stops the release and names what is missing, and the signing
+job does the same for a missing secret. A release whose `release` environment holds an Apple secret
+while the variables are missing also stops (the `macos-sign-check` job), and so does a dry run with
+`APPLE_TEST_SIGNING_NAME` but no `APPLE_TEAM_ID`. A version tag must read `vX.Y.Z` or
+`vX.Y.Z-suffix`; preflight refuses any other shape before anything builds. The `macos` job builds with no secret; `macos-sign` (version
+tags, `release` environment) imports the certificate into a temporary keychain with a random
+password, signs every Mach-O file inside-out with the hardened runtime and
+`packaging/macos/entitlements.plist`, signs the disk image, notarizes it with `notarytool` and the
+API key, staples the ticket, deletes the keychain and the key, and then verifies with `codesign
+--verify --deep --strict`, the signer name and team, `stapler validate` and `spctl` before it marks
+the build signed. The script is `packaging/macos/sign_dmg.sh`.
+
+**Dry run.** A manual run from `main` with the test variables set runs `macos-sign-test` in the
+`release-test` environment: the same steps with the Apple Development certificate, no
+notarization, and a check that Gatekeeper refuses the result. It cannot read the Developer ID
+certificate or the API key. The first notarized build is a prerelease tag such as `v1.2.3-rc.1`.
+
+**The window.** `build_dmg.sh` lays out the disk image with dmgbuild (pinned by hash in
+`packaging/macos/dmg-requirements.txt`): the background from `packaging/macos/dmg-background.svg`,
+whose colors are light-theme tokens from `kestrel/web/static/css/tokens.css` (rerun
+`scripts/make_dmg_background.py` after changing either, and commit the two PNGs), fixed icon positions and window
+size, and the Kestrel volume icon. If dmgbuild fails, or the layout files would carry a local
+path, it makes the plain image instead.
+
+### Homebrew tap
+
+After a stable release with a notarized disk image, the `homebrew-tap` job updates
+`Casks/kestrel.rb` and `LICENSE` in `distantsoil/homebrew-kestrel` from the release's own
+`latest.json` (`scripts/homebrew_cask.py` checks the version, URL and SHA-256 first). It needs a
+fine-grained token limited to that repository with Contents read and write, stored as the
+`HOMEBREW_TAP_TOKEN` secret of the `release` environment. Without a notarized build it prints
+"skipped: macOS build not notarized" and changes nothing. Users install
+the `kestrel` cask from that tap.
 
 ### Linux
 
@@ -196,6 +270,7 @@ the Linux notices page lists. To bump it:
   when `fusermount` is missing).
 - **macOS** builds only on a macOS runner (`hdiutil`, `codesign`, `notarytool`, `iconutil`). The
   bundle structure, `Info.plist` keys and `packaging/kestrel.icns` are checked by
-  `tests/test_packaging.py`; the window itself is verified on the first tagged build.
+  `tests/test_packaging.py`; the signing, notarization and tap steps by `tests/test_release_macos.py`
+  with stand-in tools; the disk image window and a notarized launch are verified on a real Mac.
 - **Windows** builds only on a Windows runner (Inno Setup, `signtool`). The `.iss` and the
   `kestrel-cli.exe` twin are checked by the same tests; the installer is verified by installing it.

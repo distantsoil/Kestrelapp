@@ -30,7 +30,19 @@ import httpx
 import structlog
 
 from kestrel.errors import ROBOTS_SENTENCE
-from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
+from kestrel.ingest import failure_code
+from kestrel.ingest.base import (
+    AdapterError,
+    Notice,
+    NoticeKind,
+    PostingBatch,
+    RawPosting,
+    ShapeError,
+    SourceConfigError,
+    hedged_refusal,
+    rate_limited,
+    server_error,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -58,9 +70,11 @@ def _refuse_declaration(*_args: Any) -> None:
 
 
 class _Slow(Exception):
-    def __init__(self, message: str) -> None:
-        super().__init__(message)
-        self.message = message
+    """A 403/429/5xx: stop and keep what was collected, with the notice that says why."""
+
+    def __init__(self, notice: Notice) -> None:
+        super().__init__(notice.sentence)
+        self.notice = notice
 
 
 class JobviteAdapter:
@@ -91,7 +105,7 @@ class JobviteAdapter:
                 eid = await self._resolve(config["slug"], client)
             text = await self._get(client, _FEED.format(eid=eid), f"the feed for {label}")
         except _Slow as slow:
-            batch.partial_error = slow.message
+            batch.add(slow.notice)
             return batch
         root = _parse(text, label)
         for job in root.findall("job"):
@@ -104,7 +118,7 @@ class JobviteAdapter:
         page = await self._get(client, _BOARD.format(slug=slug), f"the board {slug}")
         found = _EID_IN_PAGE.search(page)
         if not found or not _EID.fullmatch(found.group(1)):
-            raise AdapterError(f"Jobvite board not found: {slug}")
+            raise AdapterError(f"Jobvite board not found: {slug}", code=failure_code.NOT_FOUND)
         return found.group(1)
 
     async def _get(self, client: Any, url: str, what: str) -> str:
@@ -120,12 +134,15 @@ class JobviteAdapter:
         except httpx.HTTPError as exc:
             raise AdapterError(f"Jobvite fetch failed for {what}: {type(exc).__name__}") from exc
         if 300 <= r.status_code < 400:
-            raise AdapterError(f"Jobvite board not found: {what} (it redirected away)")
-        if r.status_code in (403, 429) or r.status_code >= 500:
-            raise _Slow(
-                f"Jobvite is rate limiting or unavailable for {what}. Kestrel will try again "
-                "next run."
+            raise AdapterError(
+                f"Jobvite board not found: {what} (it redirected away)", code=failure_code.NOT_FOUND
             )
+        if r.status_code == 429:
+            raise _Slow(rate_limited("Jobvite", what))
+        if r.status_code >= 500:
+            raise _Slow(server_error("Jobvite", what))
+        if r.status_code == 403:
+            raise _Slow(Notice(NoticeKind.STOPPED, hedged_refusal("Jobvite", what)))
         if r.status_code != 200:
             raise AdapterError(f"Jobvite fetch failed for {what}: status {r.status_code}")
         return r.text
@@ -151,11 +168,11 @@ def _parse(text: str, label: Any) -> ElementTree.Element:
     except expat.ExpatError:
         pass  # not well formed: the real parse below says so in plain words
     try:
-        root = ElementTree.fromstring(cleaned)
+        root = ElementTree.fromstring(cleaned)  # noqa: S314  stdlib XML on fetched data; expat caps entity expansion; a hardened parser is under review
     except ElementTree.ParseError as exc:
         raise AdapterError(f"Jobvite reply for {label} was not valid XML") from exc
     if root.tag != "result":
-        raise AdapterError(f"Jobvite reply for {label} had an unexpected shape")
+        raise ShapeError(f"Jobvite reply for {label} had an unexpected shape")
     return root
 
 

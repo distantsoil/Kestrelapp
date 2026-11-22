@@ -16,3 +16,8 @@ kestrel/resources/tiktoken_cache/** binary
 # The vendored AppImage runtime (#44): a reviewed ELF, hash-pinned in packaging/build_appimage.sh.
 # Must stay AFTER the `* text=auto` rule so git never touches its bytes.
 packaging/linux/runtime-x86_64 binary
+
+# Append-only logs (D-PROC-17): two branches that both add entries merge with both kept, in the
+# order ours then theirs, instead of a conflict on every merge. Only for files that are appended
+# to and never edited in place: a union merge keeps both versions of an edited line too.
+CHANGELOG.md merge=union

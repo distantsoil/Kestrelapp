@@ -31,6 +31,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from kestrel.analytics import run_summary as rsum
 from kestrel.db.models import Evaluation, Run, ScrapeRun, Source
+from kestrel.ingest import failure_code
 from kestrel.ingest.runner import DROPPED_SAMPLE_KEY
 from kestrel.pipeline.runlog import INTERRUPTED
 from kestrel.services import hosted_balance, run_model
@@ -99,6 +100,10 @@ def duration_words(run: Run) -> str | None:
     return f"{mins // 60} h {mins % 60} min"
 
 
+RUN_NOT_RUN_CODE = "RUN-001"
+RUN_INTERRUPTED_CODE = "RUN-002"
+
+
 def _scrape(run: Run) -> dict[str, Any]:
     return dict((run.counts or {}).get("scrape") or {})
 
@@ -110,6 +115,7 @@ def status_of(run: Run) -> dict[str, Any]:
     scrape = _scrape(run)
     errors = int(scrape.get("errors", 0) or 0)
     note = (run.notes or "").strip()
+    code = None  # only a run that did not run, or was cut short, has one (#174, D-ERR-21)
     if run.status == "running":
         key, why = "running", "This run is still going."
     elif run.status == "stopping":
@@ -118,9 +124,11 @@ def status_of(run: Run) -> dict[str, Any]:
     elif run.status == "failed":
         key = "failed"
         why = "No search could run. Nothing was lost; they run again."
+        code = RUN_NOT_RUN_CODE
     elif run.status == INTERRUPTED:
         key = "failed"
         why = "Kestrel closed before this run ended. Nothing was lost."
+        code = RUN_INTERRUPTED_CODE
     elif errors:
         key = "partial"
         n = f"{errors} search{'es' if errors != 1 else ''}"
@@ -133,7 +141,7 @@ def status_of(run: Run) -> dict[str, Any]:
     if note and run_model.SWITCHED_TO_COMPUTER_MARK in note and key != "stopped":
         why = note
     label, tone = _STATUS[key]
-    return {"key": key, "label": label, "tone": tone, "why": why}
+    return {"key": key, "label": label, "tone": tone, "why": why, "code": code}
 
 
 def counts_of(run: Run) -> dict[str, int]:
@@ -550,9 +558,15 @@ async def context(session) -> dict[str, Any]:
 
 @router.get("/runs", response_class=HTMLResponse)
 async def page(request: Request):
+    partial = bool(request.headers.get("HX-Request"))
     async with sessionmaker()() as s:
         ctx = await context(s)
-    tmpl = "partials/runs_fragment.html" if request.headers.get("HX-Request") else "runs.html"
+        if not partial:
+            # Why roles have no score: built with the page, never on the 5 s poll.
+            from kestrel.web.unscored import summary as unscored_summary
+
+            ctx["unscored"] = await unscored_summary(s)
+    tmpl = "partials/runs_fragment.html" if partial else "runs.html"
     # One URL serves the page and the poll's fragment: caches must tell them apart.
     return templates().TemplateResponse(request, tmpl, ctx, headers={"Vary": "HX-Request"})
 
@@ -664,7 +678,8 @@ async def sources_in(session, run: Run) -> list[dict[str, Any]]:
             word, tone = "OK", "good"
         elif sr.status == "partial":
             word, tone = (
-                "Rate-limited" if "rate" in rsum.problem_words(sr.error, sr.status) else "Partial",
+                "Rate-limited" if "rate" in rsum.problem_words(
+                    sr.error, sr.status, failure_code.stored_code(sr.counts)) else "Partial",
                 "warn",
             )
         else:
@@ -677,11 +692,13 @@ async def sources_in(session, run: Run) -> list[dict[str, Any]]:
                 "new": new,
                 "word": word,
                 "tone": tone,
-                "why": rsum.problem_words(sr.error, sr.status)
+                "why": rsum.problem_words(sr.error, sr.status, failure_code.stored_code(sr.counts))
                 if sr.status in ("failed", "partial")
                 else None,
                 "error": (sr.error or "")[:160] or None,
                 "model": run_model.label_of(sr.counts),
+                "code": failure_code.stored_code(sr.counts)
+                if sr.status in ("failed", "partial") else None,
             }
         )
     return out

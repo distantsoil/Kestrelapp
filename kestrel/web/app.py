@@ -52,7 +52,8 @@ _PAGE_MODULES = (
     "escalate", "opportunity_actions", "runs_page", "runs_detail", "needs_try", "models",
     "backup", "applied", "rescore", "updates", "announcements", "pipeline", "role",
     "role_corrections", "settings_prefs", "settings_roles", "settings_learn", "settings_data",
-    "settings_computer", "settings_privacy", "work_search_log",
+    "settings_computer", "settings_privacy", "settings_extension", "work_search_log",
+    "extension_api", "ollama_env", "phone", "proof_points",
 )
 
 # Worker pause is a process-wide flag the tray toggles via /api/worker/pause|resume. A paused
@@ -88,6 +89,16 @@ async def wait_for_idle_cycle(timeout: float) -> bool:
 def is_paused() -> bool:
     """Paused by the operator (the tray) OR held by a maintenance operation (restore, reset)."""
     return _paused.is_set() or _holds["n"] > 0
+
+
+def user_paused() -> bool:
+    """Paused by the operator (the tray, or Stop on Runs), whatever any maintenance hold does."""
+    return _paused.is_set()
+
+
+def maintenance_held() -> bool:
+    """Held by a maintenance operation (a restore or a reset), which ends on its own."""
+    return _holds["n"] > 0
 
 
 def set_paused(paused: bool) -> None:
@@ -321,6 +332,24 @@ async def _seed_shipped_layouts() -> None:
         log.warning("shipped_layouts_seed_failed", error=f"{type(exc).__name__}: {exc}")
 
 
+async def _ensure_install_id() -> None:
+    """Write the install ID when there is none (D-INST-1). A database that cannot answer yet
+    leaves it to the first page that reads it; never a failed start."""
+    import sqlite3
+
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.services import install_id
+
+    try:
+        async with get_sessionmaker()() as s:
+            await install_id.ensure(s)
+            await s.commit()
+    except (SQLAlchemyError, sqlite3.Error, OSError) as exc:
+        log.warning("install_id_start_failed", error_type=type(exc).__name__)
+
+
 async def _load_enabled_tracks() -> None:
     """Warm the enabled-tracks cache the templates read (D-UI-26)."""
     from kestrel.db.engine import get_sessionmaker
@@ -426,7 +455,13 @@ async def _worker_loop(stop: asyncio.Event) -> None:
     from kestrel.pipeline.tier0 import run_tier0_batch
     from kestrel.pipeline.tier1 import handle_t1
     from kestrel.pipeline.tier2 import handle_t2
-    from kestrel.pipeline.worker import TierStats, Worker, held_types
+    from kestrel.pipeline.worker import (
+        TierStats,
+        Worker,
+        begin_engine_cycle,
+        end_engine_cycle,
+        held_types,
+    )
     from kestrel.queue.queue import deferred_count, release_holds
     from kestrel.research.jobs import drain as drain_research
     from kestrel.research.org_summary import drain_org_summaries, request_weekly
@@ -496,6 +531,13 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 # once. Still-held tasks keep their mark, and the queue no longer leases them
                 # (#154), so they cost nothing for as long as the hold lasts.
                 await release_holds(sm, settings)
+                # Every cycle, not only at startup (D-WORKER-7): scoring leases a gone worker
+                # left behind go back to the queue, dead scoring tasks go to Needs another try,
+                # and orphans get their one re-queue, all before anything is leased.
+                await worker.sweep()
+                # One engine answer for the whole cycle (D-WORKER-6 amended, round 4): the work
+                # check below and every drain read it, so they never disagree.
+                await begin_engine_cycle(settings)
                 # A Run row per cycle that has work (D-UI-34), so Today and Runs see what this
                 # loop does; an idle cycle writes nothing.
                 cycle, carried = carried or runlog.CycleRun(sm, mode=settings.llm.mode), None
@@ -507,7 +549,11 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 cycle.on_open = functools.partial(_hold_if_free, settings, approval)
                 if cycle.run_id is not None:
                     _hold_if_free(settings, approval)
-                if await runlog.has_pipeline_work(sm, skip_types=held_types(settings)):
+                # Tiers that cannot run now wait without opening a Run row each idle cycle: out
+                # of credit (D-LLM-8) or waiting on the local engine, probed again here so the
+                # cycle Ollama comes back in opens its Run before scoring (D-WORKER-6 amended).
+                skip = tuple(dict.fromkeys(held_types(settings) + await worker.engine_skip_types()))
+                if await runlog.has_pipeline_work(sm, skip_types=skip):
                     await cycle.ensure_open()
                 # Scheduled scrapes first: the scheduler, tray and MCP only enqueue them, and
                 # Tier 0 below is what turns their new postings into pipeline work.
@@ -529,6 +575,16 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 await worker.drain_tier("t2", settings.concurrency.tier2, handle_t2, t2)
                 await cycle.record("tier2", runlog.tier_counts(t2), did_work=t2.completed > 0,
                                    roles=t2.roles)
+                # The first run's one automatic story build (D-STORY-700): asked for after the
+                # scoring tiers have drained, so it queues behind them and runs in the story
+                # drain below, one tier at a time. It never fails the cycle.
+                if not is_paused() and not stop.is_set():
+                    try:
+                        from kestrel.interview.first_run import queue_first_run_stories
+
+                        await queue_first_run_stories(sm, produced_tier2=t2.completed > 0)
+                    except Exception as exc:  # noqa: BLE001 - the next cycle asks again
+                        log.warning("first_run_stories_error", error_type=type(exc).__name__)
                 # What the person asked for comes before background work (D-WORKER-1): stories
                 # they asked to build, then the letters they asked to draft, ahead of the
                 # background lane and the scheduled jobs. A story build runs in short passes
@@ -549,7 +605,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                         from kestrel.web.pages.role import run_letter_drafts
 
                         try:  # a letter pass must never take the tiers, training or checks with it
-                            await run_letter_drafts(stop=stop)
+                            await run_letter_drafts(stop=stop, settings=settings)
                         except Exception as exc:  # noqa: BLE001 - isolated; the next cycle retries
                             log.warning("letter_drafts_pass_error", error_type=type(exc).__name__)
                 # Idle after every normal tier: free the day's share of roles waiting in the
@@ -576,7 +632,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                     # Company summaries (P16): Tier 2 again, queued on page open, follow, Refresh.
                     await request_weekly(sm)
                     await drain_org_summaries(sm, client, settings, stop=stop)
-                    await drain_research(sm, stop=stop)
+                    await drain_research(sm, stop=stop, settings=settings)
                     # Suggested companies on Sources (D-SRC-19): a few public board lookups, a
                     # small number of companies a pass, never beside a model tier. A failure of
                     # one company is recorded on its row and never stops the cycle.
@@ -589,7 +645,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
 
                     await drain_follow_ups(
                         sm, lambda cfg: LLMClient(cfg, http=http, http_local=http_local),
-                        stop=stop)
+                        stop=stop, settings=settings)
                     # Model check (D-DRIFT-11): its own drained step, after every tier has
                     # drained and never beside them, so it cannot swap models under the worker.
                     await drain_checks(sm, settings, make_client=lambda s: LLMClient(
@@ -645,6 +701,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                     except Exception as close_exc:  # the restart sweep closes it instead
                         log.warning("cycle_run_close_failed", error=str(close_exc))
             finally:
+                end_engine_cycle()
                 _cycle_idle.set()
             if idle:
                 if carried is None:  # no run is open: the one moment retention may work
@@ -720,7 +777,7 @@ async def _online_lane(stop: asyncio.Event) -> None:
                     from kestrel.web.pages.role import run_letter_drafts
 
                     active = True
-                    await run_letter_drafts(stop=stop)
+                    await run_letter_drafts(stop=stop, settings=settings)
             except Exception as exc:  # noqa: BLE001 - the next pass retries
                 log.warning("online_lane_letters_error", error_type=type(exc).__name__)
             # With no online tier the lane drains nothing, so it waits ~15 s between settings
@@ -1200,6 +1257,9 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
         from kestrel.web.auth import ensure_tunnel_key
 
         await ensure_tunnel_key()
+        # The install ID (D-INST-1): an existing install gets one on its first start after the
+        # upgrade, a new one on its first start. Never sent anywhere (D-INST-2).
+        await _ensure_install_id()
         # Safe mode (#130, D-UI-252): the person chose "Start with optional features off" on the
         # loading window. The database, the web app and the pipeline worker stay; every optional
         # start below is skipped for this run.
@@ -1314,7 +1374,10 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
 
     # No generated API pages (/docs, /redoc, /openapi.json): nothing in Kestrel reads them, and the
     # full route list is not for a key holder to browse (D-SEC-10).
-    app = FastAPI(
+    # KestrelFastAPI puts the Content-Security-Policy outside the whole stack (kestrel/web/csp.py).
+    from kestrel.web.csp import KestrelFastAPI
+
+    app = KestrelFastAPI(
         title="Kestrel", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
 
@@ -1458,6 +1521,10 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
     # A page that fails gets a calm page with the plain details (D-UI-152); anything that is not
     # a page navigation keeps Starlette's own answer.
     app.add_exception_handler(Exception, error_page.handle)
+    from kestrel.web.pages.extension_api import Refused, refused_response
+
+    # The extension's routes refuse a missing or wrong key with their own JSON (D-EXT-741).
+    app.add_exception_handler(Refused, refused_response)
 
     # A database another process or request is still writing (after busy_timeout) is a moment's
     # wait, never a server error: say so plainly, as a toast for an htmx request (hardware check,
@@ -1526,6 +1593,12 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
     )
 
     app.mount("/static", _VersionedStatic(directory=paths.web_static_dir()), name="static")
+    from kestrel.web.csp import router as frame_css_router
+
+    app.include_router(frame_css_router)
+    from kestrel.web.routes_window import router as window_router
+
+    app.include_router(window_router)
     app.include_router(api_router)
     app.include_router(learning_router)
     app.include_router(quick_router)

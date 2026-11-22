@@ -79,6 +79,11 @@ async def test_smartrecruiters_detail_error_skips_only_that_posting():
 
     assert len(postings) == 1
     assert postings[0].external_id == "743999900000001"
+    # the skipped role is said, so the run is partial (D-ERR-24 round 8)
+    assert postings.partial_error.startswith(
+        "SmartRecruiters did not return the details of 1 of its "
+    )
+    assert [n.kind for n in postings.notices] == ["body_unread"]
 
 
 @respx.mock

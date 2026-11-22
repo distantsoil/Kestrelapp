@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import html as htmllib
 import json
+import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -139,7 +140,9 @@ def test_roles_carry_a_liveness_chip_only_when_the_page_says_so():
     _opp(org_id, "Gone", liveness="closed")
     html = _page(client, org_id)
     assert "Kestrel checked the company's careers page today and this role is still listed." in html
-    assert "Possibly stale: posted 63 days ago, still listed" in html
+    # D-TEST-825: load may add a day; require at least the 63 seeded days, same wording.
+    stale = re.search(r"Possibly stale: posted (\d+) days ago, still listed", html)
+    assert stale is not None and int(stale.group(1)) >= 63, html
     assert html.count('data-testid="co-chip"') == 2  # Never has none; Gone is not an open role
     assert "Never" in html and "Gone" not in html.split(' id="co-roles"')[1].split("</section>")[0]
 

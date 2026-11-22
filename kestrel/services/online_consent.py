@@ -63,6 +63,16 @@ HELD = (
     "Nothing was sent. Confidential mode is on and no current employer is chosen, so Kestrel "
     "will not send this. Choose your employer in Settings."
 )
+HOSTED_OFF = "Nothing was sent. Online models need Hosted mode, which is off."
+# The registry code for each refusal above, keyed by the sentence itself, so a code and its
+# words are one decision (#174, D-ERR-512). Wording and codes only: nothing here decides whether
+# anything is sent.
+REFUSAL_CODES: dict[str, str] = {
+    NOT_CONFIRMED: "ONL-003",
+    CHANGED: "ONL-004",
+    HELD: "ONL-005",
+    HOSTED_OFF: "ONL-006",
+}
 
 
 def tier_goes_online(settings: Settings, tier: str) -> bool:
@@ -166,8 +176,11 @@ async def approval_problem(
         return NOT_CONFIRMED
     if not approval_covers(approval, form.get(APPROVAL_KEY)):
         return CHANGED
-    if not settings.llm.hosted_mode.active:
-        return "Nothing was sent. Online models need Hosted mode, which is off."
+    from kestrel.services.setup_state import online_send_held, send_refusal
+
+    why_not = online_send_held(settings)
+    if why_not is not None:
+        return send_refusal(why_not, HOSTED_OFF)
     if await employer_state(session, settings) == "held":
         return HELD
     return None
@@ -177,18 +190,35 @@ def held_for_approval(
     settings: Settings, tiers: Iterable[str], payload: Mapping[str, Any] | None,
 ) -> bool:
     """Hold queued work an operator confirmed for named destinations when its actual client's
-    destinations are no longer among them, or Hosted mode is off. Unstamped work is the
-    scheduled pipeline: the accepted Hosted mode disclosure is its standing consent (SPEC 6.4)
-    and the client enforces it per call, so it is not held here, with one exception: a task
-    that names its own model (`model_override`) on an online destination is never the scheduled
-    pipeline, so without a stamp it is held, whoever queued it (D-SEC-22)."""
+    destinations are no longer among them, or online models are not in use (switched off, a
+    stale tick, or On this computer chosen: setup_state.online_send_held, D-PRIV-798). Held
+    work stays queued with its payload untouched and is released when the hold ends
+    (queue.release_holds): it then runs online if online is in use again, or on this computer if
+    its step now resolves to a local model. Unstamped work is the scheduled pipeline: the
+    accepted Hosted mode disclosure is its standing consent (SPEC 6.4) and the client enforces
+    it per call, so it is not held here, with two exceptions. A task that names its own model
+    (`model_override`) on an online destination is never the scheduled pipeline, so without a
+    stamp it is held, whoever queued it (D-SEC-22). And while On this computer is chosen, a task
+    whose step still names an online destination (a cycle that began online) is held rather
+    than sent to the client to be refused and spend a try (D-PRIV-799)."""
+    from kestrel.services.setup_state import LOCAL_CHOSEN, online_send_held
+
+    why_not = online_send_held(settings)
+    not_in_use = why_not is not None
     stamped = (payload or {}).get(APPROVAL_KEY)
     if stamped is None:
-        return _unstamped_override_online(settings, tiers, payload)
+        return _unstamped_override_online(settings, tiers, payload) or (
+            why_not == LOCAL_CHOSEN and any(_names_external(settings, tier) for tier in tiers)
+        )
     expected = approval_for(settings, tiers)
-    return bool(expected) and (
-        not settings.llm.hosted_mode.active or not approval_covers(expected, stamped)
-    )
+    return bool(expected) and (not_in_use or not approval_covers(expected, stamped))
+
+
+def _names_external(settings: Settings, tier: str) -> bool:
+    """Whether `tier` is configured on an external backend, whatever Hosted mode says."""
+    tcfg = settings.llm.tiers.get(tier)
+    backend = settings.llm.backends.get(tcfg.backend) if tcfg is not None else None
+    return bool(backend is not None and backend.external)
 
 
 def _unstamped_override_online(
@@ -229,7 +259,7 @@ def confirmation_matches(
 async def employer_state(session: AsyncSession, settings: Settings) -> str:
     """ "hidden" (confidential mode, an employer chosen), "held" (confidential mode, none chosen:
     the send is refused) or "off"."""
-    if not settings.confidential_mode or not settings.llm.hosted_mode.redact_confidential:
+    if not settings.confidential_mode:  # the one condition the send itself reads (D-PRIV-805)
         return "off"
     from kestrel.docs.current_employer import load_employer_map
 
@@ -274,9 +304,12 @@ async def online_route(
             return {"online": False, "where": netloc.label_for(loc, host)}
         return {"online": False}
     sends = sends or settings.llm.hosted_mode.disclosure_terms()["sends"][tier]
+    from kestrel.services.setup_state import online_send_held
+
+    online_held = online_send_held(settings)  # the one gate for online sends (D-PRIV-798)
     return {
         "online": True,
-        "hosted_active": settings.llm.hosted_mode.active,
+        "hosted_active": online_held is None, "online_held": online_held,
         "tier": tier,
         "model": configured_model(settings, tier),
         "dest": destination_id(settings, tier),
@@ -319,7 +352,12 @@ def consent_problem(route: Mapping[str, Any], form: Mapping[str, Any]) -> str | 
     if not confirmation_matches(route, form):
         return CHANGED
     if not route.get("hosted_active"):
-        return "Nothing was sent. Online models need Hosted mode, which is off."
+        why_not = route.get("online_held")
+        if not why_not:
+            return HOSTED_OFF
+        from kestrel.services.setup_state import send_refusal
+
+        return send_refusal(str(why_not), HOSTED_OFF)
     if route.get("employer") == "held":
         return HELD
     return None

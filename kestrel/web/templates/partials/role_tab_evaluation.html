@@ -10,6 +10,7 @@
 <div id="rl-tab-evaluation" class="rl-grid" data-tab="evaluation">
  <div class="rl-main">
   {% if rescoring %}{% include "partials/role_rescoring.html" %}{% endif %}
+  {% if vector_failure %}<section class="k-card rl-card" role="status" data-testid="eval-vector"><p class="rl-quiet">{{ vector_failure }}</p></section>{% endif %}
   {% if scoring_held %}<section class="k-card rl-card" role="status" data-testid="scoring-held">
     <h3>Waiting for your confirmation</h3>
     <p>The model or online service changed. Nothing was sent. Choose Score again to review and approve the current destination.</p>
@@ -21,13 +22,13 @@
   <section class="k-card rl-card rl-card--score" data-testid="score-card">
     <div class="rl-score">
       <div class="rl-ringwrap">
-        <div class="rl-ring rl-ring--{{ ring_tone }}" style="--p: {{ ring_pct }}" role="img" aria-label="{{ '%.1f'|format(fit.score) }} out of 5">
+        <div class="rl-ring rl-ring--{{ ring_tone }}" data-k-style="--p: {{ ring_pct }}" role="img" aria-label="{{ '%.1f'|format(fit.score) }} out of 5">
           <div><div><b data-testid="score-holistic">{{ '%.1f'|format(fit.score) }}</b><br><small>out of 5</small></div></div></div>
         {% if rescoring and rescoring.again %}<span class="rl-earlier" data-testid="earlier-score">{{ earlier_label }}</span>{% endif %}
         <span class="k-pill k-pill--{{ 'good' if ring_tone == 'good' else 'warn' }} rl-fitpill" data-testid="verdict-pill" data-fit="{{ fit.word }}">{{ ric('check' if ring_tone == 'good' else 'alert') }}{{ fit.word|capitalize }}</span>
       </div>
       <div class="rl-dims" data-testid="dimensions">
-        {% for d in dims %}<div class="rl-dim"{% if d.why %} title="{{ d.why }}"{% endif %}><span>{{ d.name }}</span><i><u style="--w: {{ d.pct }}%"></u></i><b>{{ '%.1f'|format(d.score) }}</b></div>{% endfor %}
+        {% for d in dims %}<div class="rl-dim"{% if d.why %} title="{{ d.why }}"{% endif %}><span>{{ d.name }}</span><i><u data-k-style="--w: {{ d.pct }}%"></u></i><b>{{ '%.1f'|format(d.score) }}</b></div>{% endfor %}
       </div>
       {% if read %}
       <div class="rl-read" data-testid="read"><h4><span class="rl-hb rl-hb--g">{{ ric('target') }}</span>{{ read.title }}</h4><p>{{ read.text }}</p>
@@ -52,22 +53,26 @@
   </section>
  {% else %}
   <section class="k-card rl-card" data-testid="not-scored">
-    <header class="k-sec-head"><span class="k-badge k-badge--warn">{{ ric('alert') }}</span><div class="k-grow"><h3>{{ ('Not scored' if rule_why else unscored_label) if rule_why or hidden_why else (rescoring.title if rescoring else fit.word|capitalize) }}</h3></div></header>
-    <p class="rl-quiet" data-testid="eval-why">{% if rule_why %}{{ rule_why.text }} No model read it. {{ rule_why.verb }} <a href="{{ rule_why.href }}" data-testid="eval-rule-link">{{ rule_why.place }}</a>.{% elif hidden_why %}{{ hidden_why }}{% if opp.archive_reason == 'applied' %} Kestrel does not score {{ w.roles }} you already applied for. Put it back to score it.{% else %} Kestrel did not send it to a model, because there is nothing to read. It waits for a description you paste, or for a rescrape that brings one.{% endif %}{% elif scoring_held %}Scoring is paused until you confirm the current model and online service.{% elif rescoring %}{{ rescoring.hint }} The details appear here when the review finishes.{% elif fit.word == 'not a fit' %}Not a fit by the {{ fit.why or 'rule' }}, before any model ran.{% elif fit.why %}{{ fit.why|capitalize }}.{% else %}Being scored. The details appear here when the review finishes.{% endif %}</p>
+    {% set us = unscored_state if unscored_state and unscored_state.text and not rule_why and not hidden_why and not scoring_held and (not rescoring or unscored_state.state in ('app_paused', 'maintenance', 'credit', 'engine_down', 'model_missing', 'local_only')) else none %}
+    <header class="k-sec-head"><span class="k-badge k-badge--warn">{{ ric('alert') }}</span><div class="k-grow"><h3>{{ us.label if us else (('Not scored' if rule_why else unscored_label) if rule_why or hidden_why else (rescoring.title if rescoring else fit.word|capitalize)) }}</h3></div></header>
+    {% if us %}<p class="rl-quiet" data-testid="eval-unscored" data-unscored="{{ us.state }}">{{ us.text }}{% if us.action and us.state not in ('dead', 'dead_final', 'stuck', 'failed') %} <a href="{{ us.action.href }}" data-testid="eval-unscored-action">{{ us.action.label }}</a>{% endif %}</p>
+    {% else %}<p class="rl-quiet" data-testid="eval-why">{% if rule_why %}{{ rule_why.text }} No model read it. {{ rule_why.verb }} <a href="{{ rule_why.href }}" data-testid="eval-rule-link">{{ rule_why.place }}</a>.{% elif hidden_why %}{{ hidden_why }}{% if opp.archive_reason == 'applied' %} Kestrel does not score {{ w.roles }} you already applied for. Put it back to score it.{% else %} Kestrel did not send it to a model, because there is nothing to read. It waits for a description you paste, or for a rescrape that brings one.{% endif %}{% elif scoring_held %}Scoring is paused until you confirm the current model and online service.{% elif rescoring %}{{ rescoring.hint }} The details appear here when the review finishes.{% elif fit.word == 'not a fit' %}Not a fit by the {{ fit.why or 'rule' }}, before any model ran.{% elif fit.why %}{{ fit.why|capitalize }}.{% else %}Being scored. The details appear here when the review finishes.{% endif %}</p>{% endif %}
     {% if twin %}<p class="rl-quiet" data-testid="eval-twin">{{ twin.sentence }} <a href="/opportunities/{{ twin.opp_id }}">See the scored copy</a></p>{% endif %}
     {% if not rescoring and (not hidden_why or opp.archive_reason != 'applied') %}<a class="k-btn k-btn--sm" href="/rescore/choose?opp_ids={{ opp.id }}&page=1&next={{ base }}" data-testid="score-anyway">{{ 'Score this ' ~ w.role ~ ' anyway' if rule_why else ('Score anyway' if hidden_why else 'Score again') }}</a>{% endif %}
+    {% if empty_posting and blocked_note %}<p class="rl-quiet" data-testid="eval-blocked-note">{{ blocked_note }}</p>{% endif %}
     {% if empty_posting and not rescoring %}{{ paste_block(opp, posting_url, 'role') }}{% endif %}
     <p class="rl-quiet" data-testid="role-id">Role ID {{ opp.id }}, for diagnostics: quote it when you report a problem with this role.</p>
   </section>
  {% endif %}
 
- {% if scored and (watch or legit_flag or ev_json.blockers) %}
+ {% set counted_bl = blocker_lines(ev_json.blockers)|selectattr('counted')|list %}
+ {% if scored and (watch or legit_flag or counted_bl) %}
   <section class="k-card k-card--warn rl-card rl-watch" data-testid="watch">
     <header class="k-sec-head"><span class="k-badge k-badge--warn">{{ ric('alert') }}</span><div class="k-grow"><h3>Worth checking</h3></div></header>
     <ul class="rl-list">
       {% for line in watch %}<li data-testid="fit-watch">{{ line }}</li>{% endfor %}
       {% if legit_flag %}<li><span class="k-pill k-pill--warn" data-testid="legit-flag">may not be a real opening</span></li>{% endif %}
-      {% for bl in ev_json.blockers or [] %}<li class="rl-blocker"><b>{{ bl.kind|replace('_', ' ')|capitalize }}</b>: {{ bl.detail }}</li>{% endfor %}
+      {% for bl in counted_bl %}<li class="rl-blocker" data-testid="blocker-counted"><b>{{ bl.label }}</b>: {{ bl.detail }}</li>{% endfor %}
     </ul>
   </section>
  {% endif %}
@@ -78,10 +83,10 @@
     <div class="rl-pay">{{ pay.text }}{% if pay.estimate %}<span class="rl-est" tabindex="0">est.<span class="rl-tip" role="tooltip">Kestrel's estimate from similar roles. The posting does not list pay.</span></span>{% endif %}</div>
     {% if pay.band %}
     <div class="rl-pband" role="img" aria-label="Where this pay sits against your floor and target">
-      {% if pay.band.bracket %}<span class="rl-pband__sim" style="left: {{ pay.band.bracket.left }}%; width: {{ pay.band.bracket.width }}%"></span><span class="rl-pband__simt" style="left: {{ pay.band.bracket.left + pay.band.bracket.width / 2 }}%">Similar roles · {{ pay.similar.n }}</span>{% endif %}
+      {% if pay.band.bracket %}<span class="rl-pband__sim" data-k-style="left: {{ pay.band.bracket.left }}%; width: {{ pay.band.bracket.width }}%"></span><span class="rl-pband__simt" data-k-style="left: {{ pay.band.bracket.left + pay.band.bracket.width / 2 }}%">Similar roles · {{ pay.similar.n }}</span>{% endif %}
       <div class="rl-pband__bar"></div>
-      {% if pay.band.marker is not none %}<span class="rl-pband__mk" style="left: {{ pay.band.marker }}%"></span>{% endif %}
-      {% for t in pay.band.ticks %}<span class="rl-pband__tk{{ ' is-low' if t.low else '' }}" style="left: {{ t.pos }}%">{{ t.label }}</span>{% endfor %}
+      {% if pay.band.marker is not none %}<span class="rl-pband__mk" data-k-style="left: {{ pay.band.marker }}%"></span>{% endif %}
+      {% for t in pay.band.ticks %}<span class="rl-pband__tk{{ ' is-low' if t.low else '' }}" data-k-style="left: {{ t.pos }}%">{{ t.label }}</span>{% endfor %}
     </div>
     {% endif %}
     <div class="rl-dsm rl-dsm--{{ pay.tone or 'plain' }}" data-testid="pay-note">{{ pay.note }}</div>
@@ -91,7 +96,7 @@
     <div class="rl-dl2"><span class="rl-hb rl-hb--v">{{ ric('ladder') }}</span><div class="rl-dl">{{ level.label or ('Buyer access' if consulting else 'Level') }}</div></div>
     {% if level %}
       <div class="rl-strong">{{ level.text }}</div>
-      {% if level.ladder %}<div class="rl-ladder" role="img" aria-label="Where this role sits against your level">{% for st in level.ladder %}<div class="rl-st{{ ' is-you' if st.you else '' }}{{ ' is-role' if st.role else '' }}" style="height: {{ st.height }}%">{% if st.pin %}<span class="rl-pin">{{ st.pin }}</span>{% endif %}{{ st.word }}</div>{% endfor %}</div>{% endif %}
+      {% if level.ladder %}<div class="rl-ladder" role="img" aria-label="Where this role sits against your level">{% for st in level.ladder %}<div class="rl-st{{ ' is-you' if st.you else '' }}{{ ' is-role' if st.role else '' }}" data-k-style="height: {{ st.height }}%">{% if st.pin %}<span class="rl-pin">{{ st.pin }}</span>{% endif %}{{ st.word }}</div>{% endfor %}</div>{% endif %}
       {% if level.note %}<div class="rl-dsm">{{ level.note }}</div>{% endif %}
     {% else %}<div class="rl-strong rl-unk">Not recorded</div>{% endif %}
   </section>

@@ -60,3 +60,46 @@ def test_loopback_still_connects():
 def test_this_machines_own_name_is_allowed():
     assert _is_loopback(socket.gethostname())
     socket.getaddrinfo(socket.gethostname(), None)
+
+
+
+def test_the_served_app_cannot_reach_a_public_host():
+    """D-TEST-792: the app a browser test drives runs on the loop uvicorn picks for it
+    (web.serve._make_server, as running_server builds it). That loop must be one the guard sees:
+    uvloop resolves and connects in libuv and went around it unseen, on Linux and macOS only."""
+    import threading
+
+    from kestrel.web.serve import _make_server, bind_free_port, wait_for_health
+
+    seen: list[BaseException | None] = []
+
+    async def app(scope, receive, send):
+        if scope["type"] == "lifespan":
+            while (msg := await receive())["type"] != "lifespan.shutdown":
+                await send({"type": msg["type"] + ".complete"})
+            await send({"type": "lifespan.shutdown.complete"})
+            return
+        if scope["path"] == "/out":
+            try:
+                async with httpx.AsyncClient() as c:
+                    await c.get("https://boards.example.com/")
+                seen.append(None)
+            except BaseException as exc:  # noqa: BLE001 - recorded for the assertion below
+                seen.append(exc)
+        await send({"type": "http.response.start", "status": 200,
+                    "headers": [(b"content-type", b"application/json")]})
+        await send({"type": "http.response.body", "body": b'{"status":"ok"}'})
+
+    sock, port = bind_free_port(ladder=False, host="127.0.0.1")
+    server = _make_server(app, log_level="warning")
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+    thread.start()
+    try:
+        assert wait_for_health(port, timeout=15.0)
+        with httpx.Client() as c:
+            c.get(f"http://127.0.0.1:{port}/out", timeout=15.0)
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10.0)
+    assert len(seen) == 1
+    assert isinstance(seen[0], OutboundNetworkInTest), repr(seen[0])

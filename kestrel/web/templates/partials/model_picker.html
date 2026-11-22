@@ -14,7 +14,7 @@
    A caller marks the combobox inert with data-combo-disabled or root.kecombo.setDisabled(bool). #}
 {% macro model_option(m, reason=None, selected=None, value_prefix='', show_id=True) -%}
 <option value="{{ value_prefix }}{{ m.id }}" data-free="{{ '1' if m.free else '0' }}"
-        {%- if not m.free %} x-bind:hidden="typeof freeOnly !== 'undefined' && freeOnly"{% endif %}
+        {%- if not m.free %} x-bind:hidden="$data.freeOnly === true"{% endif %}
         {%- if reason %} disabled title="{{ reason }}"{% endif %}
         {%- if selected and selected == m.id %} selected{% endif %}>
   {{- m.name }}{% if show_id and m.name != m.id %} ({{ m.id }}){% endif %} · {% if m.context_length %}{{ m.context_length|comma }} context{% else %}context not listed{% endif %} · {{ m.price }}{% if m.mode_label is defined and m.mode_label %} · {{ m.mode_label }}{% endif %}{% if reason %} · unavailable: {{ reason }}{% endif -%}
@@ -31,7 +31,7 @@
      aria-selected="{{ 'true' if selected else 'false' }}"
      {%- if reason %} aria-disabled="true" title="{{ reason }}"{% endif %}
      {%- if free is not none %} data-free="{{ '1' if free else '0' }}"{% endif %}
-     {%- if free is not none and not free %} x-bind:hidden="typeof freeOnly !== 'undefined' && freeOnly"{% endif %}>{{ text }}</div>
+     {%- if free is not none and not free %} x-bind:hidden="$data.freeOnly === true"{% endif %}>{{ text }}</div>
 {%- endmacro %}
 
 {% macro model_select(name, models, reasons={}, local_models=[], hosted_label='Hosted',

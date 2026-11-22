@@ -38,6 +38,7 @@ from kestrel.web.queries import (
     local_day_start_iso,
     t0_rules,
 )
+from tests.page_source import as_written
 
 pytestmark = pytest.mark.usefixtures("_isolate_data_home")
 
@@ -1316,9 +1317,10 @@ def test_scoring_failed_is_its_own_group_with_the_reason_and_score_again():
     assert by_id[ids["e"]].fit.group == fit.GROUP_FAILED
     assert by_id[er_id].fit.group == fit.GROUP_FAILED
     assert by_id[rq_id].fit.group == fit.GROUP_NEW and by_id[rq_id].scoring == "queued"
-    # The newest quarantine speaks; no quarantine at all reads the fallback.
-    assert by_id[ids["e"]].failed_reason == "the model repeated itself"
-    assert by_id[er_id].failed_reason == "scoring did not finish"
+    # The newest quarantine speaks; no quarantine at all reads the fallback. Each is a sentence
+    # of its own on the row, the panel and Runs (owner, issue 196 follow-up, D-WORKER-9).
+    assert by_id[ids["e"]].failed_reason == "The model repeated itself."
+    assert by_id[er_id].failed_reason == "Scoring did not finish."
     assert pg.group_counts[fit.GROUP_FAILED] == 2 and pg.group_counts[fit.GROUP_NEW] == 2
     assert sorted(pg.failed_ids) == sorted([ids["e"], er_id])
     for r in pg.rows:  # SQL and Python agree row for row
@@ -1339,7 +1341,8 @@ def test_scoring_failed_is_its_own_group_with_the_reason_and_score_again():
     # The group links to Needs another try, where each role can be tried again (D-UI-96).
     assert 'href="/quarantine"' in explain and "Open Needs another try" in explain
     e = _row(html, ids["e"])
-    assert "the model repeated itself" in e and 'data-testid="row-score-again"' in e
+    # A sentence of its own (D-WORKER-9).
+    assert "The model repeated itself." in e and 'data-testid="row-score-again"' in e
     assert f'href="/rescore/choose?opp_ids={ids["e"]}&page=1&next=/opportunities"' in e
     assert ">Score again</a>" in e
     rq_row = _row(html, rq_id)
@@ -1674,8 +1677,12 @@ def test_the_list_refreshes_while_any_task_is_live_and_pauses_on_open_not_a_fit(
 
     asyncio.run(_with_session(live))
     with _client() as c:
-        busy = trigger(_get(c, "/opportunities"))
-    assert "every 10s" in busy and "not-fit-rows" in busy
+        page = _get(c, "/opportunities")
+    busy = trigger(page)
+    # The pause is k-head.js's pipeline-idle check (no htmx filter, D-INST-8).
+    when = page.split('id="pipeline-list"')[1].split('data-k-when="')[1].split('"')[0]
+    assert "every 10s" in busy and when == "poll=pipeline-idle"
+    assert "not-fit-rows" in as_written('<script src="/static/js/k-head.js"></script>')
 
 
 def test_pipeline_group_order_puts_not_a_fit_before_being_scored():
@@ -1702,3 +1709,57 @@ def test_pipeline_group_order_puts_not_a_fit_before_being_scored():
     assert GROUP_ORDER == (fit.GROUP_WORTH, fit.GROUP_MAYBE, fit.GROUP_APPLIED,
                            fit.GROUP_NOT_FIT, fit.GROUP_NEW, fit.GROUP_UNSCORED,
                            fit.GROUP_FAILED)
+
+
+def test_a_blocker_the_profile_contradicts_is_a_worth_checking_note_on_every_page():
+    """Issue #208 item 2 (D-SCORE-22): a blocker the check did not uphold reads as the model's
+    flag with why it did not count, on the role page and the Pipeline panel; one that counted
+    reads as the model's flag, never as the operator's rule."""
+    ids = asyncio.run(_seed())
+    note = ("The model flagged location, but the role is remote in your country, "
+            "so it did not count.")
+
+    async def flag(s):
+        b = await s.get(Opportunity, ids["b"])
+        s.add(_ev(b, verdict="pass", verdict_model="consider", score=3.4,
+                  forced_by="blocker:clearance",
+                  blockers=[
+                      {"kind": "location", "detail": "Remote may be acceptable; confirm.",
+                       "check": "contradicted", "check_reason": "remote_in_allowed_country"},
+                      {"kind": "clearance", "detail": "Needs an active clearance.",
+                       "check": "unchecked", "check_reason": "not_checkable"}]))
+        await s.commit()
+
+    asyncio.run(_with_session(flag))
+    with _client() as c:
+        detail = c.get(f"/opportunities/{ids['b']}").text
+        panel = c.get(f"/opportunities/{ids['b']}/panel").text
+    assert f'data-testid="fit-watch">{note}</li>' in detail
+    counted = re.findall(r'data-testid="blocker-counted"><b>([^<]*)</b>: ([^<]*)</li>', detail)
+    assert counted == [("Clearance", "Needs an active clearance.")]
+    assert "The model flagged: needs a security clearance." in detail
+    assert "Capped by your rules" not in detail
+    watch = panel.split('data-testid="panel-watch"')[1].split('<div class="pl-dgrid">')[0]
+    assert note in watch
+
+
+def test_a_v4_reads_own_worth_checking_lines_show_on_the_role_page_and_the_panel():
+    """D-SCORE-24: what the model says needs confirming is a Worth checking line, never a
+    blocker."""
+    ids = asyncio.run(_seed())
+    line = "Confirm whether the role needs two office days a week."
+
+    async def flag(s):
+        b = await s.get(Opportunity, ids["b"])
+        s.add(_ev(b, verdict="consider", verdict_model="consider", score=3.6,
+                  prompt_version="evaluate/v4",
+                  blocks={"a_role_summary": {"what_this_actually_is": "Runs the terminal."},
+                          "worth_checking": [line]}))
+        await s.commit()
+
+    asyncio.run(_with_session(flag))
+    with _client() as c:
+        detail = c.get(f"/opportunities/{ids['b']}").text
+        panel = c.get(f"/opportunities/{ids['b']}/panel").text
+    assert f'data-testid="fit-watch">{line}</li>' in detail
+    assert line in panel.split('data-testid="panel-watch"')[1].split('<div class="pl-dgrid">')[0]

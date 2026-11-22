@@ -29,6 +29,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Opportunity, Task
+from kestrel.learning.correction_lines import (
+    ConfirmedCorrections,
+    CorrectionsNotConfirmed,
+    issued_digests,
+)
 from kestrel.pipeline.tasks import enqueue_once
 from kestrel.queue.queue import RESTART_REFUND_TYPES
 from kestrel.services.run_model import T2_ONLY_KEY
@@ -118,16 +123,28 @@ async def enqueue_rescore(
     *,
     model_override: dict | None = None,
     online_approval: dict | None = None,
+    corrections: ConfirmedCorrections | None = None,
     tier0_anyway: bool = False,
     score_stubs: bool = False,
     explain: Callable[[Opportunity], Awaitable[Any]] | None = None,
+    task_type: str | None = None,
 ) -> RescoreResult:
     """Stage the score-again tasks in the CALLER's session (the caller commits). No stage is
     changed here (module docstring). `tier0_anyway` queues the roles a Tier 0 rule set aside
     too (Score this role anyway); otherwise they are refused, and `explain` (when given) says why
     for each one. `score_stubs` is the operator's explicit Score again (or Score anyway) on a
     role: the task carries `score_stub`, so Tier 2 scores a posting with next to no description
-    (D-SRC-18) instead of leaving it Not scored. Automatic callers leave it off."""
+    (D-SRC-18) instead of leaving it Not scored. Automatic callers leave it off.
+
+    An online approval needs `corrections`, the person's confirmation of these roles' lines from
+    `learning.correction_lines.confirm_corrections` (D-PRIV-674): each task binds the digest
+    confirmed for its role, never one read here. Without it the call raises
+    CorrectionsNotConfirmed and stages nothing.
+
+    `task_type` is a retry of one failed row (kestrel.queue.row_retry): the caller read the task
+    from the row itself, so exactly that type is staged and the role's stage picks nothing."""
+    if task_type is not None and task_type not in ("t1", "t2"):
+        raise ValueError(f"no score-again task of type {task_type!r}")
     result = RescoreResult()
     ids = list(dict.fromkeys(opp_ids))[:MAX_ROLES]
     rows = {
@@ -148,14 +165,17 @@ async def enqueue_rescore(
         approval = read_approval(online_approval)
         if approval:
             extra["online_approval"] = approval
+    _require_confirmed(extra, corrections, [oid for oid in ids if oid in rows])
     base_extra = extra
     for oid in ids:
         opp = rows.get(oid)
         if opp is None:
             result.missing.append(oid)
             continue
-        extra = await _bind_corrections(session, opp, base_extra)
-        if opp.stage == "t0_reject" and tier0_anyway:
+        extra = _bind_corrections(opp, base_extra, corrections)
+        if task_type is not None:
+            kind = task_type  # a row's retry: the type came from the row (row_retry.plan)
+        elif opp.stage == "t0_reject" and tier0_anyway:
             # Only the intent rides on the task; Tier 1 records the override when it runs
             # (D-UI-74 amended), so a task that dies leaves no "You asked to score this".
             anyway_extra = {**extra, "tier0_override": True, "tier0_reason": opp.stage_reason}
@@ -172,32 +192,32 @@ async def enqueue_rescore(
             result.queued.append(oid)
             result.anyway.append(oid)
             continue
-        if opp.stage == "t0_reject":
+        elif opp.stage == "t0_reject":
             result.rules.append(oid)
             if explain is not None:
                 result.rule_whys[oid] = await explain(opp)
             continue
-        if opp.stage in _TO_T1:
-            task_type = "t1"
+        elif opp.stage in _TO_T1:
+            kind = "t1"
         elif opp.stage in _TO_T2:
-            task_type = "t2"
+            kind = "t2"
         else:  # "new": Tier 0 has not seen it
             result.unscreened.append(oid)
             continue
-        if await _reconfirm_held(session, task_type, oid, extra):
+        if await _reconfirm_held(session, kind, oid, extra):
             result.queued.append(oid)
             continue
         added = await enqueue_once(
-            session, task_type, oid, priority=RESCORE_PRIORITY, extra=dict(extra)
+            session, kind, oid, priority=RESCORE_PRIORITY, extra=dict(extra)
         )
         if not added:
             # A live task for the role wins the insert. A pending one takes the operator's flags
             # (rescore, score_stub, requested_at, model override, an approval confirmed in THIS
             # request); a leased one is running on its own payload and is left alone.
-            kind = await _upgrade_waiting(session, task_type, oid, dict(extra))
-            if kind == "running":
+            waiting = await _upgrade_waiting(session, kind, oid, dict(extra))
+            if waiting == "running":
                 result.running.append(oid)
-            elif kind == "upgraded":
+            elif waiting == "upgraded":
                 result.queued.append(oid)
                 result.upgraded.append(oid)
             else:
@@ -207,17 +227,32 @@ async def enqueue_rescore(
     return result
 
 
-async def _bind_corrections(session: AsyncSession, opp: Opportunity, extra: dict) -> dict:
-    """`extra` for one role. A confirmed online send also carries the digest of the correction
-    lines this role's score states now (D-SCORE-3), so Tier 2 holds it, and sends nothing, when a
-    correction is added, changed or removed after the confirmation, on a retry or a give-back
-    too. A request with no online approval binds nothing."""
+def _require_confirmed(
+    extra: dict, corrections: ConfirmedCorrections | None, ids: list[int],
+) -> None:
+    """Refuse, before anything is staged, an online approval with no confirmation, a value not
+    made by `confirm_corrections`, or one that does not cover every role queued."""
+    if "online_approval" not in extra:
+        return
+    issued_digests(corrections)  # raises unless confirm_corrections issued this very value
+    for oid in ids:
+        cast(ConfirmedCorrections, corrections).for_role(oid)  # raises for an unlisted role
+
+
+def _bind_corrections(
+    opp: Opportunity, extra: dict, corrections: ConfirmedCorrections | None,
+) -> dict:
+    """`extra` for one role. A confirmed online send carries the digest of the correction lines
+    the person confirmed for this role (D-SCORE-3, D-PRIV-674), so Tier 2 holds it, and sends
+    nothing, when a correction is added, changed or removed after the confirmation, on a retry
+    or a give-back too. A request with no online approval binds nothing."""
     if "online_approval" not in extra:
         return extra
-    from kestrel.learning.correction_lines import role_digest
     from kestrel.services.online_consent import CORRECTIONS_KEY
 
-    return {**extra, CORRECTIONS_KEY: await role_digest(session, opp)}
+    if corrections is None:  # _require_confirmed already refused this; never bind a guess
+        raise CorrectionsNotConfirmed("no confirmed correction lines")
+    return {**extra, CORRECTIONS_KEY: corrections.for_role(opp.id)}
 
 
 async def _reconfirm_held(

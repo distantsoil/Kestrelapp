@@ -2,6 +2,7 @@
    source links, and the liveness read. posting_link, source_name and dedup_rows are the route's
    display copies (confidential mode redacts them); never print opp.url or source.name here. #}
 {% from "partials/role_icons.html" import ric %}
+{% from "partials/posting_macros.html" import posting_body %}
 <div id="rl-tab-posting" class="rl-postab" data-tab="posting">
   <section class="k-card rl-card rl-posting">
     <div class="rl-dsm" data-testid="posting-sources">Shown exactly as posted.
@@ -18,7 +19,7 @@
       {% elif (opp.liveness_strikes or 0) >= 1 %}<span class="rl-quiet" data-testid="liveness-strike">Looked closed once; checking again.</span>{% endif %}
       {% if opp.liveness_checked_at %}<span class="rl-quiet">checked {{ date_display(opp.liveness_checked_at) }}</span>{% endif %}
     </p>
-    <div class="rl-desc" data-testid="description">{{ description_display or '(no description)' }}</div>
+    <div class="rl-desc kp-text" data-testid="description">{% if posting_blocks %}{{ posting_body(posting_blocks) }}{% else %}(no description){% endif %}</div>
     <details class="rl-details"><summary>Show details</summary>
       <dl class="rl-kv">
         <dt>Posted</dt><dd>{{ date_display(opp.date_posted, fallback=opp.date_posted) or 'not stated' }}</dd>

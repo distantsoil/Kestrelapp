@@ -105,13 +105,15 @@ HOSTED_DISCLOSURE = (
     "Your current employer is redacted only when confidential mode is on and you have chosen it "
     "(Settings > Privacy and access: Confidential mode). With confidential mode on and no employer "
     "chosen, the send is refused and the item is held in quarantine, not rejected.\n"
+    "{provider_reads}\n"
     "Keys stay on this machine and are never sent anywhere but the provider."
 )
 # What the hosted-only setup adds on top of the Settings page's own flow.
 HOSTED_ONLY_ADDENDUM = (
     "Hosted-only setup also routes two tiers the Settings page leaves local by default, because "
     "this machine has no local model to run them on: `tier3` and `trigger` (their sends are listed "
-    "above). Both appear in the Settings > Hosted table and can be set back to local there."
+    "above). Both appear in the Scoring steps on the Models page and can be set back to local "
+    "there."
 )
 # `--yes` runs the install, pull and build steps unasked (D-SETUP-1); it never stands in for the
 # Hosted mode disclosure, which is an informed opt-in, not a step. This flag is the only
@@ -131,7 +133,8 @@ FREE_CAP_NOTE = (
 )
 FREE_TRAIN_NOTE = (
     "Free models may train on your inputs unless OpenRouter data collection is set to deny (the "
-    "shipped default, Settings > Hosted changes it), and with deny on there may be no free model "
+    "shipped default; Settings > This computer > Free models only changes it), and with deny on "
+    "there may be no free model "
     "left to route to."
 )
 
@@ -202,7 +205,7 @@ class SetupState:
     def run(self, cmd: list[str], *, stream: bool = False, timeout: float | None = None) -> int:
         """Run a command; returns the exit code (non-zero on any failure, never raises)."""
         try:
-            proc = subprocess.run(
+            proc = subprocess.run(  # noqa: S603  fixed argv list, no shell
                 cmd,
                 capture_output=not stream,
                 text=True,
@@ -342,7 +345,7 @@ def step_ollama(st: SetupState) -> bool:
         if st.confirm("Start Ollama now?", default=True):
             try:
                 subprocess.Popen(
-                    ["ollama", "serve"],
+                    ["ollama", "serve"],  # noqa: S607  tool found on PATH on purpose
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     stdin=subprocess.DEVNULL,
@@ -469,7 +472,9 @@ def tier_sends(settings: Any) -> dict[str, str]:
 
 
 def hosted_disclosure(settings: Any) -> str:
-    return HOSTED_DISCLOSURE.format(**tier_sends(settings))
+    from kestrel.config import HOSTED_PROVIDER_READS
+
+    return HOSTED_DISCLOSURE.format(**tier_sends(settings), provider_reads=HOSTED_PROVIDER_READS)
 
 
 def _price(m: prov.ModelInfo) -> float | None:
@@ -902,7 +907,8 @@ def step_hosted(st: SetupState) -> bool:
         st.fail("Hosted", f"could not write {paths.db_path()}: {type(exc).__name__}: {exc}")
         return False
     st.echo(OK, f"Hosted mode on (acknowledged {now}); {len(rows)} setting rows written")
-    st.echo(OK, "Run mode: hosted (Settings > Hosted switches back to local models at any time)")
+    st.echo(OK, "Run mode: hosted (Settings > This computer switches back to local models at any "
+             "time)")
     if _embed_inprocess(st):
         st.echo(RUN, EMBED_NOTE)
     return True

@@ -21,8 +21,11 @@ dialog.sf-dialog :focus-visible { outline: 2px solid var(--brand); outline-offse
 .sf-sub { padding: 0 22px 4px; margin: 0; color: var(--muted); }
 .sf-body { padding: 10px 22px 16px; overflow: auto; display: flex; flex-direction: column;
   gap: 12px; min-height: 0; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
-.sf-foot { display: flex; gap: 8px; justify-content: flex-end; align-items: center;
-  padding: 14px 22px; border-top: 1px solid var(--line); background: var(--bg); }
+/* D-UI-351: the row wraps. With flex-end, an overflowing row pushed the first button past the
+   left padding, where the dialog's overflow: hidden clipped it. */
+.sf-foot { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end;
+  align-items: center; padding: 14px 22px; border-top: 1px solid var(--line);
+  background: var(--bg); }
 .sf-foot .sf-l { margin-right: auto; color: var(--muted); font-size: 13px; white-space: nowrap; }
 .sf-foot .k-btn { flex: none; padding: 8px 18px; }
 .sf-ic { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
@@ -114,6 +117,7 @@ a.sf-a:hover { text-decoration: underline; }
 .sf-err { width: min(520px, 100%); background: var(--paper); border: 1px solid var(--line);
   border-radius: var(--r-xl); box-shadow: var(--shadow-pop); overflow: hidden; }
 .sf-err .sf-body { align-items: flex-start; }
+.sf-err-code { font-size: 12.5px; font-weight: 700; color: var(--muted); }
 .sf-err-actions { display: flex; gap: 8px; align-items: center; }
 .sf-code { font: 12.5px/1.5 var(--mono); background: var(--bg); border: 1px solid var(--line);
   border-radius: var(--r-md); padding: 10px 12px; color: var(--ink); overflow: auto;
@@ -141,7 +145,11 @@ a.sf-a:hover { text-decoration: underline; }
 /* At the top of the window, above the search row (surfaces mockup .sf-banners). */
 #update-banner:has(.sf-bn) { padding: 10px 22px 0; }
 @media (max-width: 760px) { #update-banner:has(.sf-bn) { padding: 8px 16px 0; } }
-.sf-notice .sf-msg { flex: 1; min-width: 0; }
+.sf-notice { flex-wrap: wrap; }
+/* A long notice (D-PRIV-795) keeps a readable column: below about 220px of text the buttons wrap
+   under it instead of squeezing it into a strip of single words. */
+.sf-notice .sf-msg { flex: 1 1 220px; min-width: 0; }
+.sf-notice .k-btn { flex: none; }
 
 /* -------------------------------------------------------------------------- score history */
 .sf-hist { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
@@ -160,8 +168,26 @@ a.sf-a:hover { text-decoration: underline; }
 .sf-hist-idle { color: var(--muted); }
 .sf-hist-score { font-weight: 700; }
 
+/* -------------------------------------------------------------------- the update dialog */
+/* D-UI-351: opens with a short rise and fade, the backdrop fades in; at phone width the footer
+   buttons stack one per row and the title may wrap. Show details is the shared details fold. */
+@keyframes sf-upd-in { from { opacity: 0; transform: translateY(10px) scale(.98); } }
+@keyframes sf-upd-scrim { from { opacity: 0; } }
+dialog.sf-upd[open] { animation: sf-upd-in var(--dur-2) var(--ease) both; }
+dialog.sf-upd[open]::backdrop { animation: sf-upd-scrim var(--dur-2) ease both; }
+.sf-upd-det { width: 100%; }
+.sf-upd-det > summary { cursor: pointer; color: var(--link-ink); font-weight: 700; }
+.sf-upd-det > .sf-code { margin-top: 8px; }
+.sf-upd-det > .sf-small { margin: 6px 0 0; }
+@media (max-width: 480px) {
+  .sf-upd .sf-head h2 { white-space: normal; overflow-wrap: anywhere; }
+  .sf-upd .sf-foot .k-btn { flex: 1 1 100%; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sf-choice { transition: none; }
+  dialog.sf-upd[open], dialog.sf-upd[open]::backdrop { animation: none; }
+  .sf-upd-det[open] > :not(summary) { animation: none; }
 }
 
 /* ------------------------------------------------------------------------ the bell panel */
@@ -206,3 +232,65 @@ a.sf-a:hover { text-decoration: underline; }
 .sf-foot-main[hidden], .sf-foot-confirm[hidden] { display: none; }
 /* The error page title. */
 .sf-err-title { margin: 0; font-size: 20px; font-weight: 700; text-transform: none; letter-spacing: normal; }
+
+/* ----------------------------------------------------------------- the first-run notice */
+/* D-UI-249: rises in over a fading scrim; "Got it" sinks it back out before it closes. */
+.sf-break__steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
+  gap: 10px; }
+.sf-break__steps li { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.sf-break__n { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid;
+  place-items: center; background: var(--soft); color: var(--brand); font-size: 13px;
+  font-weight: 700; }
+.sf-break .sf-head h2 { white-space: normal; }
+@media (prefers-reduced-motion: no-preference) {
+  dialog.sf-break[open] { animation: sf-break-in .32s cubic-bezier(.2, .8, .2, 1) both; }
+  dialog.sf-break[open]::backdrop { animation: sf-break-fade .32s ease both; }
+  dialog.sf-break.is-closing { animation: sf-break-out .2s ease-in both; }
+  dialog.sf-break.is-closing::backdrop { animation: sf-break-fade .2s ease-in reverse both; }
+  .sf-break[open] .sf-break__steps li { animation: sf-break-in .36s cubic-bezier(.2, .8, .2, 1) backwards; }
+  .sf-break[open] .sf-break__steps li:nth-child(1) { animation-delay: .12s; }
+  .sf-break[open] .sf-break__steps li:nth-child(2) { animation-delay: .2s; }
+  .sf-break[open] .sf-break__steps li:nth-child(3) { animation-delay: .28s; }
+  .sf-break[open] .sf-break__steps li:nth-child(4) { animation-delay: .36s; }
+}
+@keyframes sf-break-in { from { opacity: 0; transform: translateY(10px) scale(.98); } }
+@keyframes sf-break-out { to { opacity: 0; transform: translateY(6px) scale(.98); } }
+@keyframes sf-break-fade { from { opacity: 0; } }
+/* The illustration (js/first-run-art.js): full width above the heading. On a short window its
+   height is capped and the sides crop (preserveAspectRatio slice), so the steps never scroll away. */
+.sf-break__art { display: block; width: 100%; aspect-ratio: 352 / 210; max-height: 34vh;
+  background: var(--soft); border-bottom: 1px solid var(--line); }
+.sf-break .sf-head { padding-top: 16px; }
+.sf-break__steps li { position: relative; }
+.sf-break__steps li:not(:last-child)::after { content: ""; position: absolute; left: 12.5px;
+  top: 30px; bottom: -6px; width: 1px; background: var(--line); }
+.sf-break__steps li.is-now .sf-break__n { background: var(--brand); color: var(--brand-ink); }
+.sf-break__steps li.is-now > span:nth-child(2) { font-weight: 600; }
+.sf-break__now { margin-left: auto; flex: none; font-size: 12px; font-weight: 700;
+  color: var(--brand); background: var(--soft); border-radius: var(--r-pill); padding: 2px 9px; }
+.sf-fra-l { filter: brightness(.92); }
+.sf-fra-r { filter: brightness(.8); }
+.sf-fra-soft polygon { stroke-linejoin: round; stroke-width: 5; }
+.sf-fra-steam path { fill: none; stroke: var(--il-steam); stroke-width: 2.2; stroke-linecap: round;
+  opacity: .6; }
+@media (prefers-reduced-motion: no-preference) {
+  .sf-fra-steam path { opacity: 0; animation: sf-fra-steam 2.8s ease-out infinite; }
+  .sf-fra-steam path:nth-child(2) { animation-delay: .93s; }
+  .sf-fra-steam path:nth-child(3) { animation-delay: 1.86s; }
+  .sf-fra-sun { animation: sf-fra-sun 16s ease-in-out infinite alternate; }
+  .sf-fra-cloud { animation: sf-fra-cloud 12s linear infinite; }
+  .sf-fra-leaf { transform-box: fill-box; transform-origin: 50% 100%;
+    animation: sf-fra-sway 4s ease-in-out infinite alternate; }
+  .sf-fra-leaf:nth-child(2) { animation-delay: -1.3s; }
+  .sf-fra-leaf:nth-child(3) { animation-delay: -2.6s; }
+  .sf-fra-bob { animation: sf-fra-bob 3.4s ease-in-out infinite; }
+  .sf-fra-sweep { animation: sf-fra-sweep 2.2s ease-in-out infinite; }
+}
+html[data-reduce-motion="1"] .sf-fra-steam path { opacity: .6; }
+@keyframes sf-fra-steam { 0% { opacity: 0; transform: translateY(3px); } 30% { opacity: .9; }
+  100% { opacity: 0; transform: translateY(-9px); } }
+@keyframes sf-fra-sun { to { transform: translate(14px, -6px); } }
+@keyframes sf-fra-cloud { from { transform: translateX(-34px); } to { transform: translateX(38px); } }
+@keyframes sf-fra-sway { from { transform: rotate(-4deg); } to { transform: rotate(4deg); } }
+@keyframes sf-fra-bob { 50% { transform: translateY(-4px); } }
+@keyframes sf-fra-sweep { from { transform: translateX(-18px); } to { transform: translateX(34px); } }

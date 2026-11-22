@@ -7,6 +7,7 @@ CLAUDE.md). Foreign keys are enforced. The worker, scheduler, and every session 
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from pathlib import Path
 
@@ -109,30 +110,48 @@ def make_sync_engine(db_path: str | Path) -> Engine:
 # ---------------------------------------------------------------------------- app-wide singleton
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
+# The database file the cached engine was built for (D-TEST-570). The engine is bound to this
+# path: when the data home now names another file, the cached engine is dropped and a new one is
+# built, so it can never answer for a different database (one that was never migrated reads as
+# "no such table"). A running app does not move its data home, so there it is built once; a move
+# is logged. The lock keeps the engine and its sessionmaker a pair across threads.
+_engine_path: str | None = None
+_engine_lock = threading.RLock()
+
+
+def _current() -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
+    global _engine, _sessionmaker, _engine_path
+    db = str(paths.db_path())
+    with _engine_lock:
+        if _engine is not None and _engine_path != db:
+            log.warning("db_engine_rebuilt_for_moved_data_home")
+            forget_engine()  # bound to another database; its loop may be gone, so never awaited
+        if _engine is None or _sessionmaker is None:
+            paths.ensure_dirs()
+            _engine = make_async_engine(db)
+            _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
+            _engine_path = db
+        return _engine, _sessionmaker
 
 
 def get_engine() -> AsyncEngine:
-    global _engine, _sessionmaker
-    if _engine is None:
-        paths.ensure_dirs()
-        _engine = make_async_engine(paths.db_path())
-        _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
-    return _engine
+    return _current()[0]
 
 
 def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    get_engine()
-    assert _sessionmaker is not None
-    return _sessionmaker
+    return _current()[1]
 
 
 async def reset_engine() -> None:
     """Dispose the app engine (tests, or a data-dir change)."""
-    global _engine, _sessionmaker
-    if _engine is not None:
-        await _engine.dispose()
-    _engine = None
-    _sessionmaker = None
+    global _engine, _sessionmaker, _engine_path
+    with _engine_lock:
+        engine = _engine
+        _engine = None
+        _sessionmaker = None
+        _engine_path = None
+    if engine is not None:
+        await engine.dispose()
 
 
 def forget_engine() -> None:
@@ -140,6 +159,8 @@ def forget_engine() -> None:
     (e.g. after a background serve thread stops): awaiting dispose from another loop would error, so
     the refs are cleared and the dead engine is left to GC. A later caller then builds a fresh one
     on its own loop, avoiding the cross-loop aiosqlite trap."""
-    global _engine, _sessionmaker
-    _engine = None
-    _sessionmaker = None
+    global _engine, _sessionmaker, _engine_path
+    with _engine_lock:
+        _engine = None
+        _sessionmaker = None
+        _engine_path = None

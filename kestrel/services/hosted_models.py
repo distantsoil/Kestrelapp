@@ -14,7 +14,9 @@ the pipeline and doctor need no change. Two state rows beside it, both outside t
 The model list comes from the provider's GET /models (providers.list_models, the same call
 Connect makes), filtered to models Kestrel can ask for JSON (D-UI-48: strict schema, JSON mode,
 or prompt-only, each labeled), and is cached in-process for
-CACHE_TTL_S so opening the picker twice costs one request. The request carries only the key; no
+CACHE_TTL_S (about a day) so opening pickers again and again costs one request a day. It is read
+only while online models are in use (D-REL-41: switched on, the disclosure ticked as it reads now,
+which names this read, and the run card not on Local). The request carries only the key; no
 operator or opportunity data (hard rule 1)."""
 
 from __future__ import annotations
@@ -49,7 +51,7 @@ log = structlog.get_logger()
 CAPS_KEY = "llm.hosted_model_caps"
 DEFAULTS_KEY = HOSTED_MODEL_DEFAULTS_KEY
 OVERRIDES_KEY = HOSTED_MODEL_OVERRIDES_KEY
-CACHE_TTL_S = 600.0
+CACHE_TTL_S = 86400.0  # about a day (D-REL-41)
 # Every tier Hosted mode can route (providers.HOSTED_TIERS), in the Settings table's order.
 ASSIGNABLE_TIERS: tuple[str, ...] = prov.HOSTED_TIERS
 # Tiers with no num_ctx row of their own borrow the budget of the prompt they send: the trigger
@@ -171,7 +173,8 @@ def block_reason(
         and backend.provider == "openrouter"
         and backend.hosted.data_collection == "deny"
     ):
-        return "free models need training allowed under Settings > Hosted"
+        return ("free models need training allowed (Settings > This computer > Free models "
+                "only: Allow models that may train)")
     return None
 
 
@@ -213,6 +216,16 @@ def clear_cache() -> None:
     _cache.clear()
 
 
+async def _online_not_in_use() -> str | None:
+    """setup_state.online_not_in_use, read from the database for this call (D-REL-41)."""
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.services import setup_state
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    async with get_sessionmaker()() as s:
+        return await setup_state.online_not_in_use_now(s, await load_settings_with_db(s))
+
+
 async def fetch_models(
     name: str, backend: BackendConfig, *, refresh: bool = False
 ) -> list[prov.ModelInfo]:
@@ -226,8 +239,12 @@ async def fetch_models(
         raise ModelListError("Only this computer can list the online models.")
     if not (backend.api_key or prov.secret_present(backend.api_key_env)):
         raise ModelListError(
-            f"No key is saved for {name} ({backend.api_key_env}). Connect under Settings > Hosted."
+            f"No key is saved for {name} ({backend.api_key_env}). Connect under Settings > "
+            "This computer."
         )
+    why_not = await _online_not_in_use()
+    if why_not is not None:
+        raise ModelListError(why_not)
     if not refresh:
         hit = cached(name, backend)
         if hit is not None:
@@ -239,7 +256,7 @@ async def fetch_models(
         log.info("hosted_model_list_failed", backend=name, error=type(exc).__name__)
         raise ModelListError(
             f"The model list from {name} could not be fetched ({fixed_reason(exc)}). "
-            "Check the key and your connection under Settings > Hosted."
+            "Check the key and your connection under Settings > This computer."
         ) from exc
     prime(name, backend, models)
     return list(models)

@@ -2,6 +2,7 @@
    diagnostics and the danger zone. The id your-data is the anchor the Company page links to. #}
 {% import "partials/local_only.html" as lo with context %}
 {% import "partials/st_macros.html" as st with context %}
+{% import "partials/install_id.html" as iid with context %}
 <span id="your-data" class="st-anchor"></span>
 <section class="k-card st-card" id="st-backups" data-testid="st-backups">
   {{ st.head('Backups', 'dl') }}
@@ -9,6 +10,10 @@
     <div class="st-row__t"><b>Where your data lives</b>{% if is_local(request) %}<code class="st-path" data-testid="st-data-path" title="{{ data_dir }}">{{ data_dir }}</code>{% endif %}</div>
     {% if data_size %}<span class="st-use" data-testid="st-data-size">Uses {{ data_size }}</span>{% endif %}
     {% if can_open_folder %}<button{{ lo.dis(request) }} type="button" class="k-btn k-btn--sm" hx-post="/about/folder/open" hx-vals='{"which": "data"}' hx-target="#st-folder-res" hx-swap="innerHTML" data-testid="st-open-folder">{{ st.sic('folder', 'k-ic--sm') }}Open folder</button><span id="st-folder-res" class="st-dsm" role="status"></span>{% endif %}
+  </div>
+  <div class="st-row st-row--iid" data-testid="st-iid">
+    <div class="st-row__t"><b>Install ID</b><span class="st-dsm">For bug reports. It stays on this computer unless you copy it.</span></div>
+    {{ iid.value(install_id, request, 'st') }}
   </div>
   <div class="st-hact st-hact--rule">
     <button type="button" class="k-btn k-btn--sm k-btn--primary" id="st-backup" data-st-backup data-testid="st-backup"{{ lo.dis(request) }}>{{ st.sic('dl', 'k-ic--sm') }}Download a backup</button>

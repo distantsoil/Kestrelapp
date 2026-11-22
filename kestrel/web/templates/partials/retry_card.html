@@ -6,6 +6,7 @@
   {% if retry_error %}<div class="rt-banner is-warn" role="status" data-testid="retry-error">{{ retry_error }}</div>{% endif %}
   {% if outcome %}<div class="rt-banner {{ 'is-good' if outcome.ok else 'is-warn' }}" role="status" data-testid="retry-note">{{ outcome.text }}</div>{% endif %}
   {% if open_more %}<div class="rt-banner is-warn" data-testid="open-more">And {{ open_more }} more older failures not shown here.</div>{% endif %}
+  {% include "partials/retry_groups.html" %}
   <div class="rt-bar">
     <label class="rt-all"><input type="checkbox" id="rt-all" aria-label="Select all roles shown"><span id="rt-all-text">Select all</span></label>
     <div class="rt-chips" id="rt-chips" role="group" aria-label="Filter by step">

@@ -133,8 +133,13 @@ async def test_an_upgrade_never_adds_an_online_approval_the_request_did_not_carr
 async def test_an_upgrade_carries_the_approval_confirmed_in_this_request_and_no_other(sm):
     oid = await _stub(sm)
     tid = await _waiting(sm, oid, online_approval={"tier2": ["old-service|old-model"]})
+    from kestrel.learning.correction_lines import confirm_corrections
+
     async with sm() as s:
-        await enqueue_rescore(s, [oid], score_stubs=True, online_approval=_APPROVAL)
+        # The approval rides only with the person's confirmed lines (D-PRIV-674): none here.
+        confirmed = await confirm_corrections(s, [oid], "")
+        await enqueue_rescore(s, [oid], score_stubs=True, online_approval=_APPROVAL,
+                              corrections=confirmed)
         await s.commit()
     assert (await _payload(sm, tid))["online_approval"] == _APPROVAL
 

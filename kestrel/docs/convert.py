@@ -37,7 +37,8 @@ _SOFFICE_TIMEOUT_SECONDS = 120
 
 _PDF_WARNING = (
     "PDF text extraction loses structure (headings, columns, bullet nesting, tables). Review the "
-    "extracted text before proposing; bullets were detected from leading glyphs only."
+    "extracted text before proposing; bullets were detected from leading glyphs only. A bullet "
+    "that wrapped onto a second line in the PDF arrives as two lines; join them in review."
 )
 _DOC_HELP = (
     "Legacy .doc files need LibreOffice to convert. Save the file as .docx or .pdf and import "
@@ -160,6 +161,8 @@ def _docx_paragraph(p) -> list[str]:
     if not text.strip():
         return [""]
     style = (p.style.name if p.style is not None else "") or ""
+    if _docx_is_list(p, style):
+        text = _join_list_breaks(text)
     m = _HEADING_RE.match(style.strip())
     if m:
         level = max(1, min(6, int(m.group(1))))
@@ -169,6 +172,16 @@ def _docx_paragraph(p) -> list[str]:
     if _docx_is_list(p, style):
         return ["- " + text.strip()]
     return [text]
+
+
+def _join_list_breaks(text: str) -> str:
+    """A soft line break (Shift+Enter, `<w:br/>`) inside one Word LIST paragraph: the document
+    itself says this is one list item (one `<w:p>` with a list style or numbering), so its lines
+    are one bullet, joined with a space (issue #208). Decided by Word's structure only, never by
+    the words: outside a list paragraph every break is kept as written (D-SCORE-31, round 7).
+    Words are never changed, only the break."""
+    parts = [part.strip() for part in text.split("\n")]
+    return " ".join(part for part in parts if part)
 
 
 def _docx_is_list(p, style: str) -> bool:
@@ -343,22 +356,6 @@ def _drop_page_furniture(pages: list[str]) -> tuple[list[str], list[str]]:
     return out, removed
 
 
-def _rejoin_wrapped_bullets(lines: list[str]) -> list[str]:
-    """A bullet that wrapped in the PDF arrives as two lines. Rejoin only the unambiguous case: the
-    next line is non-blank, is not itself a bullet, and starts lowercase, so a heading or a new
-    paragraph after a bullet is never swallowed. The model can still map a missed wrap as one
-    bullet over two lines (resume_role/v1 lines)."""
-    out: list[str] = []
-    for line in lines:
-        s = line.strip()
-        if (out and out[-1].startswith("- ") and s and s[0].islower()
-                and not _BULLET_RE.match(line)):
-            out[-1] = f"{out[-1]} {s}"
-            continue
-        out.append(line)
-    return out
-
-
 def _join_hyphen_breaks(text: str, vocabulary: set[str]) -> tuple[str, bool]:
     """"manage-\nment" -> "management" ONLY when the joined word occurs elsewhere in the document
     unhyphenated (the vocabulary of every page), so a real hyphenated term split at a line end
@@ -387,7 +384,10 @@ def _clean_pdf_page(text: str, vocabulary: set[str] | None = None) -> tuple[str,
         if _BULLET_RE.match(line) and _BULLET_RE.sub("", line).strip():
             line = "- " + _BULLET_RE.sub("", line).strip()
         lines.append(line)
-    lines = _rejoin_wrapped_bullets(lines)
+    # Wrapped PDF lines are never joined (D-SCORE-31, round 7): neither the words nor the layout
+    # can prove a wrap, and a wrong join writes into the person's bullets (hard rule 2). A wrapped
+    # bullet arrives as two lines; the warning says so and the person joins them in review. The
+    # model can still map a missed wrap as one bullet over two lines (resume_role/v1 lines).
     return _squeeze_blank_lines("\n".join(lines)).strip(), kept
 
 
@@ -414,7 +414,7 @@ def _convert_doc(data: bytes, name: str) -> ConvertResult:
             "--convert-to", "docx", "--outdir", str(out_dir), str(src),
         ]
         try:
-            proc = subprocess.run(
+            proc = subprocess.run(  # noqa: S603  fixed argv list, no shell
                 cmd, capture_output=True, text=True, timeout=_SOFFICE_TIMEOUT_SECONDS, check=False,
                 **no_console_window(),
             )

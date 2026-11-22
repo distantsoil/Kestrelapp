@@ -13,6 +13,17 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Each test below that starts a nested pytest bounds it with this subprocess timeout, so a hung
+# nested run fails the test with TimeoutExpired instead of hanging it.
+NESTED_RUN_TIMEOUT_SECONDS = 120
+# The outer test's own pytest-timeout must sit above the nested bound. With the 60 s default below
+# 120 s, a nested run slowed by load (stress runs four workers) let the outer limit fire first; on
+# Windows that limit is the thread method, which ends the xdist worker, so the stress run stopped
+# with "worker 'gw3' crashed" and no traceback. The margin covers this test's own setup and the
+# kill of a timed-out nested run, so the subprocess timeout always fires first and fails cleanly.
+OUTER_TEST_TIMEOUT_SECONDS = NESTED_RUN_TIMEOUT_SECONDS + 30
+_bounded_by_the_nested_run = pytest.mark.timeout(OUTER_TEST_TIMEOUT_SECONDS)
+
 
 def _session(tmp_path: Path, body: str, *extra: str) -> subprocess.CompletedProcess[str]:
     (tmp_path / "test_broken.py").write_text(body, encoding="utf-8")
@@ -39,10 +50,16 @@ def _session(tmp_path: Path, body: str, *extra: str) -> subprocess.CompletedProc
         str(tmp_path / "test_broken.py"),
     ]
     return subprocess.run(
-        cmd, cwd=tmp_path, capture_output=True, text=True, check=False, timeout=120
+        cmd,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=NESTED_RUN_TIMEOUT_SECONDS,
     )
 
 
+@_bounded_by_the_nested_run
 def test_a_coroutine_that_is_never_awaited_fails_the_test(tmp_path):
     proc = _session(
         tmp_path,
@@ -58,6 +75,7 @@ def test_a_coroutine_that_is_never_awaited_fails_the_test(tmp_path):
     assert "never awaited" in proc.stdout
 
 
+@_bounded_by_the_nested_run
 def test_an_awaited_coroutine_passes(tmp_path):
     proc = _session(
         tmp_path,
@@ -71,6 +89,7 @@ def test_an_awaited_coroutine_passes(tmp_path):
     assert proc.returncode == 0, proc.stdout
 
 
+@_bounded_by_the_nested_run
 def test_other_runtime_warnings_are_not_promoted_to_errors(tmp_path):
     proc = _session(
         tmp_path,
@@ -84,6 +103,7 @@ def test_other_runtime_warnings_are_not_promoted_to_errors(tmp_path):
     assert proc.returncode == 0, proc.stdout
 
 
+@_bounded_by_the_nested_run
 def test_a_test_that_hangs_is_stopped_with_a_stack_dump(tmp_path):
     proc = _session(
         tmp_path, ("import time\ndef test_hangs():\n    time.sleep(30)\n"), "-o", "timeout=2"
@@ -92,6 +112,7 @@ def test_a_test_that_hangs_is_stopped_with_a_stack_dump(tmp_path):
     assert "Timeout" in proc.stdout and "test_hangs" in proc.stdout
 
 
+@_bounded_by_the_nested_run
 def test_a_timeout_under_xdist_fails_that_test_and_the_worker_lives_on(tmp_path):
     """A test past its limit must fail on its own. The thread method ends the whole worker process,
     so xdist reports a crashed node and the tests after it on that worker are lost."""
@@ -108,7 +129,12 @@ def test_a_timeout_under_xdist_fails_that_test_and_the_worker_lives_on(tmp_path)
         "-n", "1", "-o", "timeout=2", str(tmp_path / "test_slow.py"),
     ]
     proc = subprocess.run(
-        cmd, cwd=tmp_path, capture_output=True, text=True, check=False, timeout=120
+        cmd,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=NESTED_RUN_TIMEOUT_SECONDS,
     )
     out = proc.stdout + proc.stderr
     assert "1 failed, 1 passed" in out, out[-2000:]

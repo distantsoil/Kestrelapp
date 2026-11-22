@@ -34,6 +34,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import structlog
 from pydantic import BaseModel, ConfigDict
 
 from kestrel import paths
@@ -47,8 +48,11 @@ from kestrel.pipeline import scoring
 from kestrel.pipeline.context import build_tier2_values, render_user
 from kestrel.pipeline.profile import load_profile
 
-# The prompt id each track's gold set is benchmarked against (matches
-# kestrel.pipeline.tier2._VERSION).
+log = structlog.get_logger(__name__)
+
+# The prompt id each track's gold set is benchmarked against by default: the v3 baseline
+# (kestrel.pipeline.tier2._VERSION). The app scores with v4 by default (D-SCORE-32); a bench run
+# names another version with --prompt-version.
 DEFAULT_PROMPT_VERSION: dict[str, str] = {
     "employment": "evaluate/v3",
     "consulting": "evaluate_consulting/v3",
@@ -306,9 +310,10 @@ def _track_of_version(version: str) -> str:
         spec = load_prompt(version)
     except FileNotFoundError as exc:
         raise BenchArgError(f"unknown --prompt-version '{version}': no such prompt file.") from exc
-    if spec.model_cls is P2Eval:
+    cls = spec.model_cls
+    if isinstance(cls, type) and issubclass(cls, P2Eval):  # v4's P2EvalV4 too
         return "employment"
-    if spec.model_cls is P2CEval:
+    if isinstance(cls, type) and issubclass(cls, P2CEval):
         return "consulting"
     raise BenchArgError(
         f"--prompt-version '{version}' is not a tier-2 evaluation prompt (P2/P2C); bench only "
@@ -353,6 +358,16 @@ def build_variants(
 
 
 # ============================================================================= synthetic context
+def _location_shape(entry: GoldEntry) -> dict[str, Any]:
+    """Country, state and city from the gold item's location text, parsed the way ingestion
+    parses a posting (`ingest.location.parse_location`), so the location check can uphold or
+    reject on a v4 run."""
+    from kestrel.ingest.location import parse_location
+
+    country, state, city = parse_location(entry.location or "")
+    return {"country": country, "state": state, "city": city}
+
+
 def _synthetic_opportunity(entry: GoldEntry) -> SimpleNamespace:
     """A bench gold entry rendered into exactly the attributes build_tier2_values reads off a real
     Opportunity row (kestrel.pipeline.context). Never touches the database."""
@@ -369,6 +384,10 @@ def _synthetic_opportunity(entry: GoldEntry) -> SimpleNamespace:
         comp_min=entry.comp_min,
         comp_max=entry.comp_max,
         comp_currency="USD",
+        comp_currency_known=entry.comp_min is not None or entry.comp_max is not None,
+        comp_interval_known=entry.comp_min is not None or entry.comp_max is not None,
+        comp_source="structured",
+        **_location_shape(entry),
         comp_interval=_COMP_INTERVAL.get(entry.track, "year"),
         date_posted=None,
         event_date=None,
@@ -382,7 +401,7 @@ def _synthetic_opportunity(entry: GoldEntry) -> SimpleNamespace:
 
 
 def _build_messages(
-    spec: PromptSpec, entry: GoldEntry, profile: Any, settings: Settings
+    spec: PromptSpec, entry: GoldEntry, profile: Any, settings: Settings, digest: str = ""
 ) -> list[dict]:
     opp = _synthetic_opportunity(entry)
     values = build_tier2_values(
@@ -393,6 +412,8 @@ def _build_messages(
         max_jd_tokens=settings.pipeline.max_jd_tokens,
         few_shot="",  # no operator labels to draw few-shot examples from for a synthetic gold item
         comp_intel=None,  # no DB comp corpus; the harness never touches the app database
+        # The caller reads the operator's resume digest (D-SCORE-25); only v4 places it.
+        resume_digest=digest,
     )
     user = render_user(
         spec.user,
@@ -459,10 +480,16 @@ def _default_client_factory(settings: Settings) -> LLMClient:
 
 # ============================================================================= per-item run
 async def _run_item(
-    client: Any, spec: PromptSpec, entry: GoldEntry, profile: Any, *, index: int
+    client: Any, spec: PromptSpec, entry: GoldEntry, profile: Any, *, index: int,
+    digest: str = "", redaction: Any = None,
 ) -> ItemResult:
-    messages = _build_messages(spec, entry, profile, client.settings)
-    result = await run_prompt(client, spec, messages)  # never raises (hard rule 3)
+    messages = _build_messages(spec, entry, profile, client.settings, digest)
+    # Confidential mode, as Tier 2 applies it: the employer's names become codes for the send
+    # and come back in the reply (D-PRIV-1, D-SCORE-30).
+    from kestrel.pipeline._shared import encode_send
+
+    messages, book = encode_send(messages, redaction)
+    result = await run_prompt(client, spec, messages, reply_filter=book)  # never raises
 
     verdict = score = None
     verdict_match = abs_err = None
@@ -485,6 +512,12 @@ async def _run_item(
             work_auth_signal=work_auth,
             requires_sponsorship=requires_sponsorship,
             settings=client.settings,
+            opp=_synthetic_opportunity(entry),
+            profile=profile,
+            # The blocker and legitimacy checks belong to v4 runs; a v3 run post-processes as
+            # before #208.
+            check=spec.version.endswith("/v4"),
+            legitimacy=value.model_dump().get("legitimacy"),
         )
         verdict = post.verdict
         score = post.displayed_score
@@ -553,6 +586,9 @@ async def _run_variant(
     entries: list[GoldEntry],
     profile: Any,
     concurrency: int,
+    digest: str = "",
+    redaction: Any = None,
+    sm: Any = None,
 ) -> VariantReport:
     settings_v = base_settings.model_copy(deep=True)
     settings_v.llm.tiers["tier2"] = settings_v.llm.tiers["tier2"].model_copy(
@@ -560,11 +596,21 @@ async def _run_variant(
     )
     client = make_client(settings_v)
     spec = load_prompt(variant.prompt_version)
+    # What hides the current employer is decided from THIS client, the one that sends (issue
+    # #218, D-PRIV-800), never from a plan the caller made on other settings. A caller's own map
+    # (`redaction`) can only add hiding where the client's plan has none.
+    from kestrel.pipeline._shared import plan_client_send
+
+    plan = await plan_client_send(client, spec.tier, sm=sm)
+    if plan.refuse:
+        raise BenchArgError(f"{plan.refuse}. Nothing was sent.")
+    redaction = plan.mapping or redaction
     semaphore = asyncio.Semaphore(max(1, concurrency))
 
     async def _bounded(i: int, entry: GoldEntry) -> ItemResult:
         async with semaphore:
-            return await _run_item(client, spec, entry, profile, index=i)
+            return await _run_item(client, spec, entry, profile, index=i, digest=digest,
+                                   redaction=redaction)
 
     t0 = time.perf_counter()
     items = list(await asyncio.gather(*(_bounded(i, e) for i, e in enumerate(entries))))
@@ -581,11 +627,15 @@ async def run_bench(
     tracks: Sequence[str] = TRACKS,
     gold_dir: Path | str | None = None,
     make_client: ClientFactory = _default_client_factory,
+    resume_digests: dict[str, str] | None = None,
+    redaction: Any = None,
+    sm: Any = None,
 ) -> BenchReport:
     """Run every (model, gold entry) pair for every requested track and report per-variant metrics
     (SPEC.md 8.6). Raises BenchArgError for a bad --models/--prompt-version combination (a config
     problem, surfaced before any model is called); a missing gold set for one track is recorded in
     `BenchReport.skipped_tracks` and the run continues with whatever tracks DO have a gold set.
+    `resume_digests` (track to RESUME_DIGEST block, read by the caller) reaches v4 prompts only.
     """
     variants_by_track = build_variants(models, prompt_versions, tracks=tracks)
 
@@ -608,7 +658,8 @@ async def run_bench(
         concurrency = getattr(settings.concurrency, "tier2", 2)
         for variant in variants:
             reports.append(
-                await _run_variant(make_client, settings, variant, entries, profile, concurrency)
+                await _run_variant(make_client, settings, variant, entries, profile, concurrency,
+                                   (resume_digests or {}).get(track, ""), redaction, sm)
             )
     return BenchReport(variants=reports, skipped_tracks=skipped)
 
@@ -659,3 +710,51 @@ def render_table(reports: list[VariantReport]) -> str:
     for row in rows:
         lines.append("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)))
     return "\n".join(lines)
+
+
+# ============================================================================ online consent
+def online_bench_refusal(settings: Settings, *, allow: str | None, interactive: bool,
+                         confirm: Callable[[str], bool], show: Callable[[str], object],
+                         prompt_versions: Sequence[str] = ()) -> str | None:
+    """Why `kestrel bench` must not run, or None (D-SCORE-30). A local tier 2 needs nothing. An
+    online one is the app's rule in the terminal: the operator is shown exactly what goes to which
+    service and confirms this run; without a terminal to ask in, only `--allow-online <service>`
+    naming that same service lets it run, and the same disclosure is still shown (through `show`)
+    and logged before anything is sent (round 5). The answer is never remembered."""
+    from kestrel.llm.service_name import service_name
+    from kestrel.services.online_consent import tier_goes_online
+
+    if not tier_goes_online(settings, "tier2"):
+        return None
+    tcfg = settings.llm.tiers.get("tier2")
+    backend = settings.llm.backends.get(tcfg.backend) if tcfg is not None else None
+    service = service_name(getattr(backend, "base_url", None)) or "the online service"
+    # What this run sends, from the prompt versions it actually runs (never the app setting):
+    # a v4 run sends resume lines even while the app scores with v3 (D-SCORE-30, round 4).
+    from kestrel.config import sends_resume_lines
+
+    resume = any(sends_resume_lines(v) for v in prompt_versions)
+    hm = settings.llm.hosted_mode.model_copy(update={"resume_lines": resume})
+    sends = hm.disclosure_terms()["sends"]["tier2"]
+    what = (f"kestrel bench sends each gold posting, once per model and prompt version, to "
+            f"{service}, with {sends}.")
+    if allow is not None:
+        if allow.strip().lower() != service.lower():
+            return (f"--allow-online names {allow!r}, but tier 2 sends to {service}. "
+                    "Nothing was sent.")
+        # Named on the command line, so nobody is asked; the person still sees, and the log
+        # still records, exactly what goes where before the first send (round 5).
+        notice = f"Sending (--allow-online {service}): {what}"
+        show(notice)
+        log.info("bench_online_disclosure", service=service, resume_lines=resume,
+                 disclosure=notice)
+        return None
+    text = f"{what} Send it?"
+    if not interactive:
+        return (f"Tier 2 is online ({service}). Run kestrel bench in a terminal to confirm, or "
+                f"pass --allow-online {service}. Nothing was sent.")
+    if not confirm(text):
+        return "Not confirmed. Nothing was sent."
+    log.info("bench_online_disclosure", service=service, resume_lines=resume,
+             disclosure=text, confirmed=True)
+    return None

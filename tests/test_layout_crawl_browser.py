@@ -52,7 +52,10 @@ _CHECK_JS = """() => {
   };
   const style = el => getComputedStyle(el);
   const shown = el => {
-    for (let e = el; e && e.nodeType === 1; e = e.parentElement) {
+    let child = null;
+    for (let e = el; e && e.nodeType === 1; child = e, e = e.parentElement) {
+      // A closed <details> shows only its summary; the rest of its content is not on screen.
+      if (e.tagName === 'DETAILS' && !e.open && child && child.tagName !== 'SUMMARY') return false;
       const s = style(e);
       if (s.display === 'none' || s.visibility === 'hidden' || +s.opacity === 0) return false;
       if (e.hasAttribute('hidden') || e.getAttribute('aria-hidden') === 'true') return false;
@@ -115,7 +118,11 @@ _CHECK_JS = """() => {
 
   // 3. Overlapping text boxes: painted line boxes of two different elements that intersect by
   // more than 2px each way, where the top element at the middle of the overlap is one of them
-  // (text covered by a dialog or panel is not an overlap).
+  // (text covered by a dialog or panel is not an overlap). A modal dialog sits in the top layer
+  // over its backdrop, so a pair split between inside and outside a modal dialog is covered
+  // text, never an overlap; pairs inside the dialog, and a dialog shown inline in page flow
+  // (the showModal fallback), are still checked (#199).
+  const modal = e => e.closest('dialog:modal');
   const boxes = [];
   for (const n of texty) {
     const el = n.parentElement;
@@ -137,6 +144,7 @@ _CHECK_JS = """() => {
       const b = boxes[j];
       if (b.l >= a.r - 2) break;
       if (a.el === b.el || a.el.contains(b.el) || b.el.contains(a.el)) continue;
+      if (modal(a.el) !== modal(b.el)) continue;
       const w = Math.min(a.r, b.r) - Math.max(a.l, b.l);
       const h = Math.min(a.b, b.b) - Math.max(a.t, b.t);
       if (w <= 2 || h <= 2) continue;
@@ -157,16 +165,51 @@ _CHECK_JS = """() => {
 }"""
 
 
+def _open_update_dialog(page) -> None:
+    """#199: the release-notes dialog, open, with the direct download and Show details expanded."""
+    page.get_by_test_id("update-details-toggle").click()
+    page.get_by_test_id("update-whats-new").click()
+    page.wait_for_selector('[data-testid="update-dialog"][open]', timeout=15000)
+    page.wait_for_function("""() => { const d = document.querySelector(
+      '[data-testid="update-dialog"]'); return d.getAnimations().every(
+      a => a.playState === 'finished'); }""")
+    page.locator('[data-testid="update-file-details"] > summary').click()
+    page.wait_for_selector('[data-testid="update-file-info"]', state="visible")
+
+
+def _today_seed():
+    """Today's seed plus a newer version in the update state, so the banner and dialog show."""
+    from tests import today_seed
+    from tests.test_surfaces_browser import update_feed
+
+    ids = asyncio.run(today_seed.seed())
+
+    async def newer() -> None:
+        from kestrel.db.engine import forget_engine, get_sessionmaker, reset_engine
+        from kestrel.services import updater
+
+        await reset_engine()
+        async with get_sessionmaker()() as s:
+            await updater.save_state(s, updater.UpdateState(
+                disclosure_shown=True, latest_version="99.0.0",
+                download_page=updater.DOWNLOAD_PAGE, cached_feed=update_feed()))
+        forget_engine()
+
+    asyncio.run(newer())
+    return ids
+
+
 def _groups():
-    """(group name, seed callable, [(page label, path, wait selector or None)])."""
+    """(group name, seed callable, [(page label, path, wait selector or None[, opener])]). An
+    opener runs after the page is ready and opens a surface the crawl must also check."""
     from tests import (
         apps_seed,
         offers_seed,
         prep_seed,
         profile_seed,
+        retry_seed,
         role_seed,
         runs_seed,
-        today_seed,
     )
 
     def role_pages(ids):
@@ -180,8 +223,9 @@ def _groups():
         return [("Interview prep stories", "/stories", None)] + pages
 
     return [
-        ("today", lambda: asyncio.run(today_seed.seed()), lambda ids: [
+        ("today", _today_seed, lambda ids: [
             ("Today", "/", None), ("Calibrate", "/calibrate", None),
+            ("Update dialog", "/help", '[data-testid="update-banner"]', _open_update_dialog),
             ("Analytics", "/analytics", None), ("Sources", "/sources", None),
             ("Models", "/models", None), ("Help", "/help", None), ("About", "/about", None),
             *[(f"Settings {sec}", f"/settings#{sec}", f"#st-sec-{sec}:not([hidden])")
@@ -196,6 +240,8 @@ def _groups():
         ("prep", lambda: prep_seed.seed(with_pack=True), prep_pages),
         ("offers", lambda: offers_seed.seed(), lambda ids: [("Offers", "/offers", None)]),
         ("runs", lambda: runs_seed.seed(), lambda ids: [("Runs", "/runs", None)]),
+        ("needs-try", lambda: retry_seed.seed(), lambda ids: [
+            ("Needs another try", "/quarantine", '[data-testid="rt-row"]')]),
     ]
 
 
@@ -235,7 +281,7 @@ def test_layout_crawl(group):
                 page.on("console", lambda m, c=console: c.append(m.text)
                         if m.type == "error" else None)
                 page.on("pageerror", lambda e, c=console: c.append(f"pageerror: {e}"))
-                for label, path, wait in pages:
+                for label, path, wait, *opener in pages:
                     console.clear()
                     where = f"page={label} ({path}) width={width} theme={theme}"
                     try:
@@ -244,6 +290,9 @@ def test_layout_crawl(group):
                         if wait:
                             page.wait_for_selector(wait, timeout=15000)
                         wait_for_layout(page)
+                        if opener:
+                            opener[0](page)
+                            wait_for_layout(page)
                         found = page.evaluate(_CHECK_JS)
                     except Exception as exc:  # noqa: BLE001 (report, keep crawling)
                         failures.append(f"{where} rule=page-did-not-load: "

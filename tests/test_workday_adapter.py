@@ -97,6 +97,9 @@ async def test_workday_single_detail_failure_skips_only_that_job():
 
     assert len(postings) == 1
     assert postings[0].external_id == "JR456"
+    # the skipped role is said, so the run is partial (D-ERR-24 round 8)
+    assert postings.partial_error.startswith("Workday did not return the details of 1 of its ")
+    assert [n.kind for n in postings.notices] == ["body_unread"]
 
 
 def test_workday_validate_config_requires_tenant_dc_site():

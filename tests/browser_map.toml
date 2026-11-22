@@ -20,6 +20,7 @@ files = [
   "test_ui_browser.py",
   "test_surfaces_browser.py",
   "test_busy_idle_browser.py",
+  "test_csp_browser.py",
 ]
 
 [soak]
@@ -42,6 +43,13 @@ patterns = [
   "kestrel/web/static/css/shell.css",
   "kestrel/web/static/css/tokens.css",
   "kestrel/web/static/js/kestrel-ui.js",
+  "kestrel/web/csp.py",
+  "kestrel/web/static/css/csp.css",
+  "kestrel/web/static/css/scenes.css",
+  "kestrel/web/static/css/toast.css",
+  "kestrel/web/static/js/k-*.js",
+  "kestrel/web/static/js/partials/toast.js",
+  "kestrel/web/static/js/partials/quit-confirm.js",
   "kestrel/web/static/js/htmx.min.js",
   "kestrel/web/static/js/alpine.min.js",
   "kestrel/web/static/js/palette.js",
@@ -51,6 +59,11 @@ patterns = [
   "kestrel/web/static/icon*",
   "kestrel/web/static/manifest.webmanifest",
   "kestrel/web/static/splash.html",
+  "kestrel/web/static/css/splash.css",
+  "kestrel/web/static/js/splash.js",
+  "kestrel/desktop/splash_server.py",
+  "kestrel/desktop/channel.py",
+  "kestrel/web/routes_window.py",
   "kestrel/web/routes*.py",
   "kestrel/web/error_page.py",
   "kestrel/web/announcements.py",
@@ -90,6 +103,8 @@ patterns = [
   "kestrel/web/templates/partials/update_*.html",
   "kestrel/web/templates/partials/run_now_dialog.html",
   "kestrel/web/templates/partials/score_again_dialog.html",
+  "kestrel/web/static/js/partials/run-now-dialog.js",
+  "kestrel/web/static/js/partials/score-again-dialog.js",
   "kestrel/web/templates/run_now_page.html",
   "kestrel/web/pages/updates.py",
 ]
@@ -103,6 +118,22 @@ patterns = [
 ]
 files = ["test_consent_dialogs_browser.py", "test_consent_hint_browser.py"]
 
+# The correction lines an online scoring ask lists (issue #178): the shared block, its sheet, the
+# three smaller asks that show it and their routes.
+[[rule]]
+patterns = [
+  "kestrel/web/templates/partials/correction_lines.html",
+  "kestrel/web/static/css/pages/consent_lines.css",
+  "kestrel/web/templates/partials/profile_next_step.html",
+  "kestrel/web/templates/partials/retry_online.html",
+  "kestrel/web/templates/partials/role_online.html",
+  "kestrel/web/score_again_ask.py",
+  "kestrel/web/pages/needs_try.py",
+  "kestrel/web/pages/role.py",
+  "kestrel/web/pages/pipeline.py",
+]
+files = ["test_consent_lines_browser.py"]
+
 # ---- Today -----------------------------------------------------------------------------------
 [[rule]]
 patterns = [
@@ -110,12 +141,15 @@ patterns = [
   "kestrel/web/static/js/today.js",
   "kestrel/web/static/css/pages/today.css",
   "kestrel/web/templates/partials/td_*.html",
+  "kestrel/web/templates/partials/first_run_break.html",
+  "kestrel/web/static/js/first-run-art.js",
+  "kestrel/web/static/js/first-run-break.js",
   "kestrel/web/templates/partials/today_*.html",
   "kestrel/web/pages/today.py",
   "kestrel/web/today_view.py",
   "kestrel/web/pages/dashboard.py",
 ]
-files = ["test_today_browser.py"]
+files = ["test_today_browser.py", "test_model_codes_browser.py"]
 
 # ---- Analytics -------------------------------------------------------------------------------
 [[rule]]
@@ -141,7 +175,7 @@ patterns = [
   "kestrel/web/pages/pipeline.py",
   "kestrel/web/pipeline_view.py",
 ]
-files = ["test_pipeline_browser.py", "test_not_scored_browser.py"]
+files = ["test_pipeline_browser.py", "test_role_id_search_browser.py", "test_not_scored_browser.py", "test_unscored_browser.py"]
 
 # ---- Role page (one opportunity) ---------------------------------------------------------------
 [[rule]]
@@ -252,6 +286,7 @@ files = ["test_offers_browser.py"]
 patterns = [
   "kestrel/web/templates/partials/doc_*.html",
   "kestrel/web/templates/partials/documents_body.html",
+  "kestrel/web/static/js/partials/documents-body-*.js",
   "kestrel/web/templates/partials/import_*.html",
   "kestrel/web/templates/partials/variant_suggestions.html",
   "kestrel/web/pages/documents.py",
@@ -317,21 +352,48 @@ files = ["@shell"]
 # ---- Profile and settings ----------------------------------------------------------------------
 [[rule]]
 patterns = [
+  "kestrel/web/pages/phone.py",
+  "kestrel/web/static/js/phone.js",
+  "kestrel/web/static/css/pages/phone.css",
+  "kestrel/web/templates/partials/phone_field.html",
+  "kestrel/web/templates/partials/linkedin_field.html",
+]
+files = ["test_phone_browser.py", "test_profile_browser.py", "test_onboarding_browser.py"]
+
+[[rule]]
+patterns = [
   "kestrel/web/templates/profile.html",
   "kestrel/web/static/js/profile.js",
   "kestrel/web/static/css/pages/profile.css",
   "kestrel/web/templates/partials/profile_*.html",
   "kestrel/web/templates/partials/model_picker.html",
   "kestrel/web/pages/profile.py",
+  "kestrel/web/pages/proof_points.py",
+  "kestrel/web/templates/partials/proof_points_*.html",
 ]
-files = ["test_profile_browser.py", "test_review_backend_browser.py", "test_consent_hint_browser.py"]
+files = [
+  "test_profile_browser.py", "test_review_backend_browser.py", "test_consent_hint_browser.py",
+  "test_proof_points_browser.py",
+]
+
+[[rule]]
+# The browser extension's API (issue #186): its popup and badges are driven in Chromium.
+patterns = [
+  "kestrel/web/pages/extension_api.py",
+]
+files = ["test_extension_browser.py"]
 
 [[rule]]
 patterns = [
   "kestrel/web/templates/settings.html",
+  "kestrel/web/templates/settings_hosted.html",
+  "kestrel/web/templates/partials/ollama_env.html",
+  "kestrel/web/static/css/pages/ollama_env.css",
+  "kestrel/web/pages/ollama_env.py",
   "kestrel/web/templates/backup.html",
   "kestrel/web/static/js/settings.js",
   "kestrel/web/static/css/pages/settings.css",
+  "kestrel/web/static/css/pages/hosted.css",
   "kestrel/web/templates/partials/st_*.html",
   "kestrel/web/templates/partials/settings_*.html",
   "kestrel/web/templates/partials/diagnostics_saved.html",
@@ -346,8 +408,13 @@ patterns = [
 ]
 files = [
   "test_settings_browser.py", "test_profile_browser.py", "test_alert_sound_browser.py",
+  "test_install_id_browser.py", "test_applied_import_browser.py", "test_region_dates_browser.py",
+  "test_other_service_browser.py", "test_ollama_env_browser.py",
+  "test_settings_extension_browser.py",
   "test_applied_import_browser.py", "test_region_dates_browser.py",
   "test_other_service_browser.py",
+  "test_ollama_env_browser.py", "test_settings_extension_browser.py",
+  "test_hosted_browser.py",
 ]
 
 # ---- Models and bench --------------------------------------------------------------------------
@@ -362,6 +429,7 @@ patterns = [
   "kestrel/web/templates/partials/models_*.html",
   "kestrel/web/templates/partials/model_overrides.html",
   "kestrel/web/templates/partials/assess_model.html",
+  "kestrel/web/static/js/partials/assess-model.js",
   "kestrel/web/templates/partials/bench_*.html",
   "kestrel/web/templates/partials/hosted_*.html",
   "kestrel/web/pages/models*.py",
@@ -371,7 +439,8 @@ patterns = [
 ]
 files = [
   "test_models_browser.py", "test_other_service_browser.py", "test_consent_dialogs_browser.py",
-  "test_lan_browser.py",
+  "test_lan_browser.py", "test_error_codes_browser.py",
+  "test_model_codes_browser.py", "test_hosted_browser.py",
 ]
 
 # ---- Calibrate ---------------------------------------------------------------------------------
@@ -394,9 +463,18 @@ patterns = [
   "kestrel/web/static/js/quick_round.js",
   "kestrel/web/static/css/pages/quick_round.css",
   "kestrel/web/quick_view.py",
+  "kestrel/web/quick_text.py",
   "kestrel/web/routes_quick.py",
 ]
 files = ["test_quick_round_browser.py", "test_calibrate_browser.py", "test_today_browser.py"]
+
+# ---- Posting text renderer (issue #210): the Posting tab, quick round and calibration card ---
+[[rule]]
+patterns = [
+  "kestrel/web/posting_format.py",
+  "kestrel/web/templates/partials/posting_macros.html",
+]
+files = ["test_role_browser.py", "test_quick_round_browser.py", "test_calibrate_browser.py"]
 
 # ---- Runs ------------------------------------------------------------------------------------
 [[rule]]
@@ -408,8 +486,9 @@ patterns = [
   "kestrel/web/templates/partials/runs_*.html",
   "kestrel/web/templates/partials/run_*.html",
   "kestrel/web/pages/runs_*.py",
+  "kestrel/web/unscored.py",
 ]
-files = ["test_runs_browser.py"]
+files = ["test_runs_browser.py", "test_unscored_browser.py", "test_error_codes_browser.py"]
 
 # ---- Sources -----------------------------------------------------------------------------------
 [[rule]]
@@ -422,7 +501,7 @@ patterns = [
   "kestrel/web/source_view.py",
   "kestrel/web/retry_words.py",
 ]
-files = ["test_sources_browser.py", "test_consent_dialogs_browser.py"]
+files = ["test_sources_browser.py", "test_consent_dialogs_browser.py", "test_error_codes_browser.py"]
 
 # ---- Needs a try (quarantine and retry) ----------------------------------------------------------
 [[rule]]
@@ -433,8 +512,9 @@ patterns = [
   "kestrel/web/templates/partials/retry_*.html",
   "kestrel/web/pages/needs_try.py",
   "kestrel/web/retry_words.py",
+  "kestrel/web/retry_groups.py",
 ]
-files = ["test_needs_try_browser.py"]
+files = ["test_needs_try_browser.py", "test_retry_groups_browser.py"]
 
 # ---- Onboarding and setup ----------------------------------------------------------------------
 [[rule]]
@@ -447,7 +527,7 @@ patterns = [
   "kestrel/web/pages/onboarding.py",
   "kestrel/web/pages/setup.py",
 ]
-files = ["test_onboarding_browser.py", "test_busy_idle_browser.py"]
+files = ["test_onboarding_browser.py", "test_busy_idle_browser.py", "test_model_codes_browser.py"]
 
 # ---- Help and About ----------------------------------------------------------------------------
 [[rule]]
@@ -465,7 +545,7 @@ patterns = [
   "kestrel/web/help_articles.py",
 ]
 files = [
-  "test_help_about_browser.py", "test_applied_panel_browser.py",
+  "test_help_about_browser.py", "test_applied_panel_browser.py", "test_install_id_browser.py",
   "test_deferred_schemes_browser.py", "test_deferred_high_contrast_browser.py",
 ]
 
@@ -476,3 +556,12 @@ files = ["test_surfaces_browser.py", "test_deferred_schemes_browser.py"]
 
 # tests/test_layout_crawl_browser.py is a soak-tier file (D-TEST-8): it runs only with
 # KESTREL_LAYOUT_CRAWL=1 (nightly or on demand) and is deliberately not mapped into the gate.
+
+# ---- The install ID (D-INST-1): shared by About and Settings > Your data ------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/partials/install_id.html",
+  "kestrel/web/static/css/pages/install_id.css",
+  "kestrel/web/install_id_view.py",
+]
+files = ["test_install_id_browser.py", "test_help_about_browser.py", "test_settings_browser.py"]

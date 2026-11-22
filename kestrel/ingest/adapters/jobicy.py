@@ -17,7 +17,17 @@ import httpx
 import structlog
 
 from kestrel.errors import ROBOTS_SENTENCE
-from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
+from kestrel.ingest.base import (
+    AdapterError,
+    Notice,
+    PostingBatch,
+    Problem,
+    RawPosting,
+    SourceConfigError,
+    hedged_problem,
+    rate_limited_problem,
+    server_error_problem,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -104,13 +114,15 @@ def to_posting(job: dict) -> RawPosting | None:
 
 
 def _problem(status: int) -> str:
-    if status in (403, 429):
-        return "Jobicy asked Kestrel to slow down; the rest is fetched on the next check"
+    if status == 429:
+        return rate_limited_problem("Jobicy", status)
+    if status == 403:
+        return hedged_problem("Jobicy", status)
     if status >= 500:
-        return "Jobicy had a problem on their side; the rest is fetched on the next check"
+        return server_error_problem("Jobicy", status)
     if status in (400, 404):
-        return "Jobicy rejected the request; the job feed may have moved"
-    return f"Jobicy answered with an unexpected status ({status})"
+        return Problem("Jobicy rejected the request; the job feed may have moved", status)
+    return Problem(f"Jobicy answered with an unexpected status ({status})", status)
 
 
 class JobicyAdapter:
@@ -169,7 +181,7 @@ class JobicyAdapter:
             log.warning("jobicy_error", status=r.status_code)
             message = _problem(r.status_code)
             if r.status_code in (403, 429) or r.status_code >= 500:
-                batch.partial_error = message
+                batch.add(Notice.of(message))
                 return None
             raise AdapterError(message)
         try:

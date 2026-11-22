@@ -8,7 +8,7 @@
   {'label': 'Cancel', 'close': True},
   {'label': 'Start this run', 'kind': 'primary', 'close': True, 'attrs': start_attrs}
 ], static=True) %}
-  <form id="rn-choose" onsubmit="return false">
+  <form id="rn-choose" data-k-no-submit>
     <input type="hidden" name="online_approval" value='{{ approval_json }}'>
     <input type="hidden" name="both_online_approval" value='{{ both_approval_json }}'>
     <fieldset class="rn-pick">

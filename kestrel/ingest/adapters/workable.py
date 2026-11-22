@@ -30,11 +30,21 @@ from typing import Any
 import httpx
 import structlog
 
-from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError
+from kestrel.ingest.base import (
+    AdapterError,
+    PostingBatch,
+    RawPosting,
+    ShapeError,
+    SourceConfigError,
+    details_not_read,
+    rate_limited_problem,
+    robots_refused,
+)
 
 log = structlog.get_logger(__name__)
 
 _BASE = "https://apply.workable.com"
+_REFUSED = object()  # a detail robots.txt disallows
 _DEFAULT_MAX_RESULTS = 200
 _MAX_PAGES = 20
 _SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
@@ -64,12 +74,21 @@ class WorkableAdapter:
         max_results = config.get("max_results") or _DEFAULT_MAX_RESULTS
         rows = await self._fetch_list(slug, client)
 
-        postings: list[RawPosting] = []
+        postings = PostingBatch()
+        skipped = refused = 0  # details that failed, and details robots.txt refused
         for row in rows[:max_results]:
             detail = await self._fetch_detail(slug, row["shortcode"], client)
+            if detail is _REFUSED:
+                refused += 1
+                continue
             if detail is None:
-                continue  # a single failing DETAIL skips only this posting
+                skipped += 1  # a single failing DETAIL skips only this posting, and is said
+                continue
             postings.append(self._to_posting(row, detail, config))
+        if refused:
+            postings.add(robots_refused())
+        if skipped:
+            postings.add(details_not_read("Workable", skipped, slug))
         return postings
 
     async def _fetch_list(self, slug: str, client: Any) -> list[dict]:
@@ -84,7 +103,7 @@ class WorkableAdapter:
             data = await self._post_page(url, body, slug, client)
             results = data.get("results")
             if not isinstance(results, list):
-                raise AdapterError(f"Workable list for {slug} had an unexpected shape")
+                raise ShapeError(f"Workable list for {slug} had an unexpected shape")
             seen += len(results)
             total = data.get("total", total)
             for row in results:
@@ -108,10 +127,10 @@ class WorkableAdapter:
         except ValueError as exc:
             raise AdapterError(f"Workable list for {slug} was not valid JSON") from exc
         if not isinstance(data, dict):
-            raise AdapterError(f"Workable list for {slug} had an unexpected shape")
+            raise ShapeError(f"Workable list for {slug} had an unexpected shape")
         return data
 
-    async def _fetch_detail(self, slug: str, shortcode: str, client: Any) -> dict | None:
+    async def _fetch_detail(self, slug: str, shortcode: str, client: Any) -> Any:
         """The parsed detail, or None on a non-429 failure so the caller skips the posting."""
         url = f"{_BASE}/api/v2/accounts/{slug}/jobs/{shortcode}"
         try:
@@ -120,7 +139,9 @@ class WorkableAdapter:
             if _is_429(exc):
                 raise _failure("detail", slug, exc) from exc
             return None
-        except (PermissionError, ValueError):
+        except PermissionError:
+            return _REFUSED
+        except ValueError:
             return None
         return detail if isinstance(detail, dict) else {}
 
@@ -176,7 +197,7 @@ def _is_429(exc: Exception) -> bool:
 
 def _failure(part: str, slug: str, exc: Exception) -> AdapterError:
     if _is_429(exc):
-        return AdapterError(f"Workable rate limit reached while reading {part} for {slug}")
+        return AdapterError(rate_limited_problem("Workable", 429, where=slug))
     return AdapterError(f"Workable {part} fetch failed for {slug}: {exc}")
 
 

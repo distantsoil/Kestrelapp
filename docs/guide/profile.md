@@ -114,7 +114,7 @@ On **About you**, **Employment**, **Consulting**, and **Location**, editing a fi
 
 After a successful save, Kestrel confirms once, with a **Saved** message at the bottom of the window. It may also say that job searches were updated or that roles set aside by the rules will be checked again. That message offers **Undo**, which restores the previous saved version. Undo covers one save; saving again makes the earlier Undo unavailable.
 
-A refused save leaves your edits on screen and shows **Not saved** with the reason. If `profile.yml` cannot be read, the page says that nothing can be saved and disables **Save changes**. Fix the file or restore its backup through **Settings > LAN & backup**, then reload. See the [Settings guide](settings.md). If there is no profile yet, a notice explains that the filters use the shipped example's terms until you save, and that the personal fields start blank. Enter your own details and save.
+A refused save leaves your edits on screen and shows **Not saved** with the reason. If `profile.yml` cannot be read, the page says that nothing can be saved and disables **Save changes**. Fix the file or restore its backup through **Settings > Your data**, then reload. See the [Settings guide](settings.md). If there is no profile yet, a notice explains that the filters use the shipped example's terms until you save, and that the personal fields start blank. Enter your own details and save.
 
 Saving rewrites `profile.yml` from the fields on the current tab. If you edited the file by hand, its values are kept but its comments are not. Kestrel keeps the previous file as `profile.yml.bak`.
 

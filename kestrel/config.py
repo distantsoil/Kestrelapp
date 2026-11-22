@@ -240,6 +240,42 @@ HOSTED_TIER_SENDS: dict[str, str] = {
 }
 
 
+# The provider reads online models make on their own, stated in the disclosure the person ticks
+# (D-REL-41): the model list (held about a day) and, on OpenRouter, the balance (held five
+# minutes), each with the saved key only, and only while online models are in use.
+HOSTED_PROVIDER_READS = (
+    "Online models will periodically check the model list and your balance with your provider. "
+    "Nothing else is sent."
+)
+
+
+# The Tier 2 line when the evaluate/v4 prompt is active (scoring.evaluate_version, D-SCORE-29): it
+# also sends the resume digest (D-SCORE-25). The disclosure lists exactly what the active version
+# sends, so turning v4 on asks for Hosted mode again (D-SCORE-30 amendment).
+HOSTED_TIER2_SENDS_V4 = (
+    "the description slice (up to {t2} tokens in hosted mode), the organization context "
+    "Kestrel has gathered, your confirmed labels used as examples, your full profile, "
+    "lines from your current resume (your skills groups and up to 20 of your bullets, as "
+    "you wrote them), and the corrections you made to how Kestrel read a requirement, with "
+    "their notes; and, only when you click Assess on Profile > Documents or Suggest again on "
+    "Profile, your resume text"
+)
+
+
+def bind_disclosure(settings: Any) -> None:
+    """Point the Hosted disclosure at the active Tier 2 prompt version. Settings calls it on every
+    validation; a caller that changes `scoring.evaluate_version` on a live copy calls it again."""
+    hm = getattr(getattr(settings, "llm", None), "hosted_mode", None)
+    if hm is not None:
+        hm.resume_lines = sends_resume_lines(f"evaluate/{settings.scoring.evaluate_version}")
+
+
+def sends_resume_lines(prompt_version: str) -> bool:
+    """Whether a Tier 2 prompt version places the resume digest: the one rule the app's
+    disclosure and `kestrel bench` both use (D-SCORE-30)."""
+    return str(prompt_version).rsplit("/", 1)[-1] == "v4"
+
+
 class HostedMode(BaseModel):
     """Hosted mode (SPEC.md 6.4): the operator's explicit, informed opt-in to run ANY tier on a
     hosted model through their own key. Off by default. A tier that names an external backend is
@@ -248,6 +284,12 @@ class HostedMode(BaseModel):
     its own per-item confirmation and does not need this."""
 
     enabled: bool = False
+    # Whether the active Tier 2 prompt sends resume lines (evaluate/v4). A validated field, so it
+    # survives every model_dump/model_validate rebuild (the worker's _hosted_now); Settings always
+    # sets it from scoring.evaluate_version, and no file or setting row may set it (D-SCORE-30).
+    # The unbound default describes the default install (Scoring.evaluate_version "v4",
+    # D-SCORE-32), so a HostedMode() built outside Settings never under-states what is sent.
+    resume_lines: bool = True
     # ISO timestamp written when the operator accepts the disclosure on Settings > Hosted. Kept
     # separate from `enabled` so a bare `enabled: true` in YAML cannot skip the acknowledgement.
     acknowledged_at: str | None = None
@@ -272,15 +314,26 @@ class HostedMode(BaseModel):
     # void: `active` is False and the client refuses every hosted send until the operator
     # accepts the new disclosure (Privacy: what is sent is stated before the operator confirms).
     acknowledged_terms: dict[str, Any] | None = None
+    # The run card's stored rows (`setup.run_choice` and the stored `llm.mode`) as the setting
+    # table held them when these settings were loaded, so the one rule for online sends
+    # (setup_state.online_send_held, D-PRIV-798) can be asked of a Settings object alone. Not a
+    # setting: no YAML key or row can supply it (load_settings sets it from RUN_CARD_OVERRIDE,
+    # which only setting_overrides.overrides_from_rows writes). None means these settings were
+    # not built from the setting rows at all.
+    _run_card: dict[str, Any] | None = PrivateAttr(default=None)
 
     def disclosure_terms(self) -> dict[str, Any]:
         """The disclosure as it reads now, in comparable form."""
         t1 = min(HOSTED_TIER1_HEAD_TOKENS, self.max_jd_tokens)
         t2 = max(self.max_jd_tokens, self.jd_ceiling_tokens)
+        sends = dict(HOSTED_TIER_SENDS)
+        if self.resume_lines:
+            sends["tier2"] = HOSTED_TIER2_SENDS_V4
         return {
             "tier1_head_tokens": t1,
             "tier2_ceiling_tokens": t2,
-            "sends": {k: v.format(t1=t1, t2=t2) for k, v in HOSTED_TIER_SENDS.items()},
+            "sends": {k: v.format(t1=t1, t2=t2) for k, v in sends.items()},
+            "provider_reads": HOSTED_PROVIDER_READS,
         }
 
     @property
@@ -294,6 +347,10 @@ class HostedMode(BaseModel):
 
 
 RunMode = Literal["local", "hosted", "both"]
+# The rows the run card is read from (setup_state.CHOICE_KEY, MODE_KEY) and the reserved entry
+# the setting-table layer carries them under (HostedMode._run_card, D-PRIV-798).
+RUN_CARD_KEYS: tuple[str, ...] = ("setup.run_choice", "llm.mode")
+RUN_CARD_OVERRIDE = "__run_card__"
 MODES: tuple[str, ...] = ("local", "hosted")
 # What ONE run may be asked for (Runs "This run only", D-UI-103): "both" runs the quick screen on
 # this computer and sends only the full rating to the online model. It is never a stored mode.
@@ -400,6 +457,12 @@ class ScoringWeights(BaseModel):
 class Scoring(BaseModel):
     divergence_flag: float = 0.75
     weights: ScoringWeights = ScoringWeights()
+    # The Tier 2 and Tier 3 prompt version (issue #208, D-SCORE-29): v4 adds the plain floor and
+    # target wording, the resume digest and worth_checking. v4 is the default (owner, D-SCORE-32).
+    # INTERNAL setting, not a user choice: no page or route writes it. It exists for the bench
+    # (whose --prompt-version is separate) and for support, who may set it in the settings file;
+    # it stays local only (settings_io.LOCAL_ONLY_EXACT) because it decides what goes online.
+    evaluate_version: Literal["v3", "v4"] = "v4"
 
 
 class Thresholds(BaseModel):
@@ -687,6 +750,13 @@ class Settings(BaseSettings):
     confidential_mode: bool = False
     log_level: str = "INFO"
 
+    @model_validator(mode="after")
+    def _bind_disclosure_to_the_prompt_version(self) -> Settings:
+        """The Hosted disclosure lists what the active Tier 2 prompt sends (D-SCORE-30 amendment):
+        resume lines only while scoring.evaluate_version is v4."""
+        bind_disclosure(self)
+        return self
+
     @classmethod
     def settings_customise_sources(
         cls,
@@ -821,10 +891,35 @@ HOSTED_MAX_TOKENS: dict[str, int] = {
 }
 
 
+# The one place a person confirms what is sent to an online model (D-SCORE-60): the consent
+# form of the online model choice, on the setup walkthrough's Models step. Every message that
+# asks for that confirmation names it with these words.
+# Owner, round 2 of D-REL-41 (D-PRIV-796): the place is Settings > Online models
+# (/settings/hosted/review), linked from Settings > This computer, the Models page while online is
+# paused, and the provider-reads notice. Its controls carry these names.
+ONLINE_CONSENT_HOW = (
+    "under Settings > Online models (linked from Settings > This computer), read what is sent, "
+    "tick I understand what each hosted tier sends and press Turn on hosted mode, or Connect if "
+    "no provider is set up yet"
+)
+
 HOSTED_DISCLOSURE_CHANGED = (
     "the Hosted mode disclosure changed since you accepted it (what is sent, or how much of a "
-    "description); read it again and accept it under Settings > Hosted before any hosted send"
+    f"description); before any hosted send, {ONLINE_CONSENT_HOW}"
 )
+
+# The refusal the Models page and Model check show while that confirmation is missing.
+ONLINE_APPROVE_FIRST = (
+    f"Online models need your approval first: {ONLINE_CONSENT_HOW}. Then try again."
+)
+
+
+def disclosure_reaccept_needed(settings: Settings) -> bool:
+    """Online models are switched on but were accepted under an older disclosure, so online sends
+    are paused until the person ticks the text as it reads now (D-REL-41, D-PRIV-795). Read from
+    the stored rows the caller loaded (load_settings_with_db), never from the request."""
+    hm = settings.llm.hosted_mode
+    return hm.enabled and bool(hm.acknowledged_at) and not hm.acknowledgement_current
 
 
 def hosted_mode_problem(settings: Settings) -> str | None:
@@ -832,16 +927,16 @@ def hosted_mode_problem(settings: Settings) -> str | None:
     switch, the CLI flags, the run queue and load-time resolution, so they never disagree."""
     hm = settings.llm.hosted_mode
     if not hm.acknowledged_at:
-        return "the Hosted mode disclosure has not been acknowledged under Settings > Hosted"
+        return f"the Hosted mode disclosure has not been acknowledged: {ONLINE_CONSENT_HOW}"
     if not hm.acknowledgement_current:
         return HOSTED_DISCLOSURE_CHANGED
     if not hm.enabled:
-        return "Hosted mode is turned off under Settings > Hosted"
+        return "online models are turned off under Settings > This computer"
     missing = [t for t in HOSTED_REQUIRED_TIERS if t not in settings.llm.hosted_tiers]
     if missing:
         return (
             f"no hosted model is assigned for {' and '.join(missing)} "
-            "(Settings > Hosted > Hosted assignments)"
+            "(the Models page, Scoring steps)"
         )
     return None
 
@@ -945,8 +1040,11 @@ def load_settings(*, db_overrides: dict | None = None, mode: str | None = None) 
     entry = _parsed["entry"]
     if entry is not None and entry[0] == key:
         return apply_mode(entry[1].model_copy(deep=True), mode)
-    parsed = apply_other_service(Settings(**(db_overrides or {})))
-    parsed.concurrency._tier2_chosen = _tier2_chosen(parsed, db_overrides)
+    layer = dict(db_overrides or {})
+    card = layer.pop(RUN_CARD_OVERRIDE, None)
+    parsed = apply_other_service(Settings(**layer))
+    parsed.concurrency._tier2_chosen = _tier2_chosen(parsed, layer)
+    parsed.llm.hosted_mode._run_card = dict(card) if isinstance(card, dict) else None
     _parsed["entry"] = (key, parsed.model_copy(deep=True))
     return apply_mode(parsed, mode)
 

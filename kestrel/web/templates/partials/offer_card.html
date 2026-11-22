@@ -25,7 +25,7 @@
   </header>
   <div class="of-total"><b data-testid="of-total">{{ c.total.text }}</b><span>{{ c.total.note }}</span></div>
   {%- if c.total.parts %}
-  <div class="of-stack" role="img" aria-label="Where the first year comes from">{% for p in c.total.parts %}<i class="{{ p.cls }}" style="width:{{ p.pct }}%"></i>{% endfor %}</div>
+  <div class="of-stack" role="img" aria-label="Where the first year comes from">{% for p in c.total.parts %}<i class="{{ p.cls }}" data-k-style="width:{{ p.pct }}%"></i>{% endfor %}</div>
   <div class="of-leg">{% for p in c.total.parts %}<span><i class="{{ p.cls }}"></i>{{ p.label }}</span>{% endfor %}</div>
   {%- endif %}
   <details class="of-det">
@@ -45,10 +45,10 @@
   {%- set band = c.band %}
   {%- if band %}
   <div class="of-band{% if not band.similar %} is-nosim{% endif %}" data-testid="of-band">
-    {%- if band.similar %}<span class="of-band__sim" style="left:{{ band.similar.left }}%;width:{{ band.similar.width }}%"></span><span class="of-band__simt" style="left:{{ band.similar.mid }}%">{{ band.similar.label }}</span>{% endif %}
+    {%- if band.similar %}<span class="of-band__sim" data-k-style="left:{{ band.similar.left }}%;width:{{ band.similar.width }}%"></span><span class="of-band__simt" data-k-style="left:{{ band.similar.mid }}%">{{ band.similar.label }}</span>{% endif %}
     <div class="of-band__bar"></div>
-    {%- if band.marker is not none %}<span class="of-band__mk" style="left:{{ band.marker }}%" title="{{ band.marker_title }}"></span>{% endif %}
-    {%- for t in band.ticks %}<span class="of-band__tk{% if t.align %} is-{{ t.align }}{% endif %}" style="left:{{ t.at }}%">{{ t.label }}</span>{% endfor %}
+    {%- if band.marker is not none %}<span class="of-band__mk" data-k-style="left:{{ band.marker }}%" title="{{ band.marker_title }}"></span>{% endif %}
+    {%- for t in band.ticks %}<span class="of-band__tk{% if t.align %} is-{{ t.align }}{% endif %}" data-k-style="left:{{ t.at }}%">{{ t.label }}</span>{% endfor %}
   </div>
   {%- else %}
   <p class="of-foot">Set your floor and target in <a class="k-link" href="/profile">Profile</a> to see this beside your pay band.</p>

@@ -130,7 +130,7 @@ async def select_config(
     # confidential employer is redacted before it leaves the machine, and a missing redaction
     # map refuses the send and renders the defaults (flagged in the UI), never a silent skip.
     settings = getattr(client, "settings", None)
-    plan = (await plan_hosted_send(session, settings, _DOCSEL_TIER,
+    plan = (await plan_hosted_send(session, settings, _DOCSEL_TIER, sender=client,
                                    master_id=getattr(catalog.master, "id", None))
             if settings else None)
     if plan is not None and plan.refuse:

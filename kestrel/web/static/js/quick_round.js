@@ -38,6 +38,9 @@
       c.style.transform = ''; c.style.opacity = '';
       c.removeAttribute('aria-hidden');
       c.setAttribute('tabindex', '-1');
+      /* Only the front card can be reached; a card behind it is shown, not operable. */
+      c.inert = k !== S.idx;
+      if (k !== S.idx) setOpen(c, false);
       var s = c.querySelectorAll('.qr-stamp');
       for (var i = 0; i < s.length; i++) s[i].style.opacity = '';
       if (k < S.idx) { c.classList.add('is-gone'); c.setAttribute('aria-hidden', 'true'); }
@@ -49,6 +52,24 @@
     var front = S.cards[S.idx];
     if (front) front.setAttribute('tabindex', '0');
     drawPips();
+  }
+
+  /* The posting text (D-UI-331): More opens the whole description in a region that scrolls
+     inside the card; the card and the answer buttons keep their size. */
+  function setOpen(c, on) {
+    var full = c.querySelector('.qr-desc__full'), b = c.querySelector('.qr-more');
+    if (!full || !b) return;
+    c.classList.toggle('is-open', on);
+    if (!on) {
+      c.classList.add('is-collapsing');
+      setTimeout(function () { c.classList.remove('is-collapsing'); }, 260);
+    }
+    full.hidden = !on;
+    full.tabIndex = on ? 0 : -1;
+    if (on) full.scrollTop = 0;
+    /* The name is the visible word (More, Less: label in name); aria-expanded carries the state. */
+    b.setAttribute('aria-expanded', on ? 'true' : 'false');
+    b.firstElementChild.textContent = on ? 'Less' : 'More';
   }
 
   /* The pips and the count only: safe while a card is flying out. */
@@ -270,6 +291,20 @@
     var map = { 'qr-no': 'no', 'qr-yes': 'yes', 'qr-top': 'top', 'qr-unsure': 'unsure' };
     var b = t.closest('.qr-act');
     if (b && map[b.id]) { commit(map[b.id]); return; }
+    var m = t.closest('.qr-more');
+    if (m) {
+      var mc = m.closest('.qr-card');
+      if (mc) {
+        var opening = !mc.classList.contains('is-open');
+        setOpen(mc, opening);
+        /* Focus follows the text: the opened region on More (without scrolling the card), the
+           button again on Less, so Tab never skips the text that just opened. */
+        var region = mc.querySelector('.qr-desc__full');
+        if (opening && region) region.focus({ preventScroll: true });
+        else m.focus({ preventScroll: true });
+      }
+      return;
+    }
     if (t.closest('#qr-undo')) { undo(); return; }
     if (t.closest('#qr-finish')) { if (S && !S.busy) finish(); return; }
     if (t.closest('#qr-more')) { keepGoing(); }
@@ -279,6 +314,10 @@
     if (!S || e.defaultPrevented) return;
     var tag = e.target && e.target.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    /* Up and Down scroll the posting while focus is inside the open text (D-UI-332); every
+       other arrow, and focus anywhere else, keeps its round meaning. */
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && e.target.closest &&
+        e.target.closest('.qr-desc__full')) return;
     if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'z' || e.key === 'Z')) {
       if (roundOn()) { e.preventDefault(); undo(); }
       return;
@@ -294,7 +333,9 @@
   function onPointerDown(e) {
     if (!S || S.busy || reduced() || !roundOn() || (e.button !== undefined && e.button > 0)) return;
     var c = e.target.closest && e.target.closest('.qr-card.is-front');
-    if (!c || e.target.closest('a')) return;
+    if (!c || e.target.closest('a, .qr-more')) return;
+    /* Inside the open text the pointer scrolls and selects; it never swipes the card. */
+    if (e.target.closest('.qr-desc__full')) return;
     drag = { c: c, sx: e.clientX, sy: e.clientY, dx: 0, dy: 0, id: e.pointerId };
     try { c.setPointerCapture(e.pointerId); } catch (err) { /* a synthetic pointer */ }
     c.classList.add('is-drag');

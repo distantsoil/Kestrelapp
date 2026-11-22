@@ -40,7 +40,8 @@ from typing import Any
 
 import structlog
 
-from kestrel import __version__, paths
+from kestrel import __version__, error_codes, paths
+from kestrel.services import tray_notice
 
 log = structlog.get_logger()
 
@@ -144,7 +145,7 @@ def _acquire_lock_file() -> bool:
     """macOS/Linux: an exclusive, non-blocking flock. flock is per open file description, so even
     a second open() in the same process is refused, and the kernel drops it when the process dies
     (no stale-pid problem, no cleanup needed on a crash)."""
-    assert sys.platform != "win32"
+    assert sys.platform != "win32"  # noqa: S101  type narrowing, not input validation
     import fcntl
 
     global _lock_file
@@ -195,7 +196,7 @@ def release_single_instance() -> None:
             log.warning("mutex_release_failed", error=str(exc))
         _mutex_handle = None
     if _lock_file is not None:
-        assert sys.platform != "win32"  # the lock file is Unix-only; Windows uses the mutex above
+        assert sys.platform != "win32"  # lock file is Unix-only  # noqa: S101
         try:
             import fcntl
 
@@ -288,16 +289,21 @@ def on_closing():
         # Once per launch, not once ever (D-UI-16): a balloon is easy to miss, and the first
         # close of each session is when "where did it go?" is asked.
         _toast_shown = True
-        _notify(CLOSE_TO_TRAY_TITLE, CLOSE_TO_TRAY_BODY)
+        _notify(CLOSE_TO_TRAY_TITLE, CLOSE_TO_TRAY_BODY_MAC if IS_MACOS else CLOSE_TO_TRAY_BODY)
+        # Also keep it in the notifications list: the banner can fail to appear. Off this thread,
+        # because this is the window's closing handler.
+        threading.Thread(
+            target=_post, args=("/api/tray/closed",), name="tray-notice-row", daemon=True
+        ).start()
     hide_window()
     return False
 
 
 CLOSE_TO_TRAY_TITLE = "Kestrel is still running"
-CLOSE_TO_TRAY_BODY = (
-    "Kestrel keeps working in the background while the window is closed. Open it again from "
-    "this tray icon. To quit on close instead, go to Settings > This computer > Everyday options."
-)
+# The wording lives in services.tray_notice, which also records the same notice in the list.
+CLOSE_TO_TRAY_TITLE = tray_notice.TITLE
+CLOSE_TO_TRAY_BODY = tray_notice.BODY
+CLOSE_TO_TRAY_BODY_MAC = tray_notice.BODY_MAC
 
 
 def _on_tray_thread(fn: Callable[[], None]) -> None:
@@ -328,9 +334,28 @@ def _menu_action(fn: Callable[[], None]) -> Callable[[Any, Any], None]:
     return handler
 
 
+def _post_mac_notice(title: str, body: str) -> None:
+    from kestrel.services import mac_notify
+
+    try:
+        path = mac_notify.post(title, body)
+        log.info("tray_notified", title=title, path=path.value)
+    except (OSError, subprocess.SubprocessError) as exc:  # osascript exists and then fails
+        log.warning("tray_notify_failed", error=f"{type(exc).__name__}: {exc}")
+
+
 def _notify(title: str, body: str) -> None:
     if icon is not None:
         try:
+            if IS_MACOS:
+                # pystray's macOS notify splices the text into an AppleScript line and shows it
+                # as Script Editor. mac_notify posts as Kestrel (D-NOTIFY-630). It can wait on
+                # macOS (a settings read, the permission question), and this runs inside the
+                # window's closing handler, so it goes on a daemon thread and never holds it.
+                threading.Thread(
+                    target=_post_mac_notice, args=(title, body), name="mac-notice", daemon=True
+                ).start()
+                return
             icon.notify(body, title)
             log.info("tray_notified", title=title)
         except Exception as exc:  # notifications are best-effort; never break the flow
@@ -391,7 +416,7 @@ def _close_with_overlay() -> None:
     started = time.monotonic()
     if window is not None and _started and window_visible():
         with __import__("contextlib").suppress(Exception):
-            window.evaluate_js("window.KUI && KUI.frame.closing()")
+            _post_to_app("closing")
     if server_thread is not None:
         server_thread.join(timeout=QUIT_JOIN_S)
     rest = CLOSING_MIN_S - (time.monotonic() - started)
@@ -432,7 +457,8 @@ def _open_folder(p: Path) -> bool:
     request worked; a failure is logged here (type and code only) and reported to the caller."""
     try:
         if IS_WINDOWS:
-            os.startfile(str(p))  # noqa: S606
+            # Windows-only API: pyright checks on Linux, where os has no startfile.
+            os.startfile(str(p))  # noqa: S606  opens a file Kestrel just wrote  # pyright: ignore[reportAttributeAccessIssue]
             return True
         return _run_opener(["open" if sys.platform == "darwin" else "xdg-open", str(p)])
     except OSError as exc:
@@ -451,7 +477,7 @@ def _run_opener(argv: list[str]) -> bool:
     to the file manager and return, so waiting is brief; a non-zero exit, a timeout or a missing
     command is a failure to report, logged without the path."""
     try:
-        done = subprocess.run(  # noqa: S603
+        done = subprocess.run(  # noqa: S603  fixed argv list, no shell
             argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False
         )
     except subprocess.TimeoutExpired:
@@ -539,7 +565,8 @@ def reveal_file(p: Path) -> bool:
         except (OSError, AttributeError, ValueError, ctypes.ArgumentError) as exc:
             log.warning("reveal_file_select_failed", **_fault(exc))
         try:
-            os.startfile(str(p.parent))  # noqa: S606
+            # Windows-only API: pyright checks on Linux, where os has no startfile.
+            os.startfile(str(p.parent))  # noqa: S606  opens a Kestrel folder  # pyright: ignore[reportAttributeAccessIssue]
             return True
         except OSError as exc:
             log.warning("reveal_file_failed", **_fault(exc))
@@ -632,16 +659,25 @@ def _poll_update_status() -> None:
             _on_tray_thread(icon.update_menu)
 
 
-def _show_update_dialog() -> None:
-    """Bring the window forward and open the release-notes dialog the banner's button opens."""
+def _show_notifications() -> None:
+    """Bring the window forward and open the notifications panel (the bell's own button, so the
+    panel opens exactly as a click would)."""
     show_window()
     if window is not None:
         try:
             window.evaluate_js(
-                "htmx.ajax('GET','/updates/details',{target:'#update-modal',swap:'innerHTML'})"
+                "(function(){var b=document.querySelector('[data-testid=\"bell\"]');"
+                "if(b){b.click();}})()"
             )
-        except Exception as exc:  # the window may not have a page yet; Open still worked
-            log.debug("update_dialog_failed", error=str(exc))
+        except (RuntimeError, OSError, AttributeError) as exc:  # no page yet; Open still worked
+            log.debug("notifications_panel_failed", error=f"{type(exc).__name__}: {exc}")
+
+
+def _show_update_dialog() -> None:
+    """Bring the window forward and open the release-notes dialog the banner's button opens."""
+    show_window()
+    if window is not None:
+        _post_to_app("open_update")  # the page opens the dialog itself (no eval, D-SEC-61)
 
 
 def _tooltip_poller() -> None:
@@ -757,7 +793,7 @@ def _os_dark() -> bool:
                 return winreg.QueryValueEx(key, "AppsUseLightTheme")[0] == 0
         if IS_MACOS:
             out = subprocess.run(
-                ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                ["defaults", "read", "-g", "AppleInterfaceStyle"],  # noqa: S607  tool found on PATH on purpose
                 capture_output=True, text=True, timeout=2, check=False,
             )
             return out.stdout.strip().lower() == "dark"
@@ -933,7 +969,9 @@ def _build_tray(pystray: Any, *, with_window: bool) -> None:
             pystray.MenuItem("Resume worker", _menu_action(lambda: _post("/api/worker/resume"))),
             pystray.MenuItem("Run scan now", _menu_action(lambda: _post("/api/scan/now"))),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Recent notifications", _menu_action(lambda: show_window())),
+            pystray.MenuItem(
+                "Recent notifications", _menu_action(lambda: _show_notifications())
+            ),
             pystray.MenuItem(
                 "Open data folder", _menu_action(lambda: _open_folder_async(paths.data_dir()))
             ),
@@ -995,13 +1033,13 @@ def run_preflight() -> None:
 
 
 # ------------------------------------------------------------------------------------ main
-def abort_start(reason: str) -> int:
+def abort_start(reason: str, error_code: str = "") -> int:
     """Tear down a start that failed before the window existed, and return the exit code.
 
     Stops the server thread (which also runs the lifespan shutdown and releases leases), waits for
     it, and releases the single-instance mutex so the next launch is not turned away as a
     Returning without doing this left a headless, windowless process holding the lock."""
-    log.error("desktop_start_aborted", reason=reason)
+    log.error("desktop_start_aborted", reason=reason, error_code=error_code)
     _stop_previous_server()
     release_single_instance()
     with __import__("contextlib").suppress(OSError):
@@ -1069,6 +1107,38 @@ BUSY_NOTE = "Kestrel opens by itself in a moment. There is no need to click agai
 BUSY_WAIT_S = 60.0  # how long a relaunch waits for the closing copy before saying so
 
 
+# The registry code each startup card carries (SPEC-INTERFACES.md 2.7, D-ERR-15). The keys are
+# the StartupError codes plus the two cards that are not errors raised in a step.
+BUSY_CODE = "busy_closing"
+CANCELED_CODE = "start_canceled"
+STARTUP_ERROR_CODES: dict[str, str] = {
+    "server_still_closing": "STA-001",
+    "safe_mode_offer": "STA-002",
+    "newer_database": "STA-003",
+    "migrations_failed": "STA-004",
+    "no_port": "STA-005",
+    "health_never_up": "STA-006",
+    BUSY_CODE: "STA-007",
+    CANCELED_CODE: "STA-008",
+}
+
+
+def startup_error_code(code: str) -> str:
+    """The `STA-` registry code for a startup card's own code. An unregistered one raises
+    KeyError (a test failure; tests pin every code in this file)."""
+    return error_codes.get(STARTUP_ERROR_CODES[code]).code
+
+
+def _card_code(code: str) -> str:
+    """`startup_error_code`, but a gap never stops a card from showing: log it, show no code. The
+    test that pins every startup code to the registry is what catches the gap."""
+    try:
+        return startup_error_code(code)
+    except KeyError:
+        log.error("startup_code_unregistered", startup_code=code)
+        return ""
+
+
 class StartupError(Exception):
     """A start that cannot finish: `code` for the log, `reason` (one plain sentence) and `details`
     (the step and the cause, never a stack trace) for the loading window's problem card."""
@@ -1079,26 +1149,45 @@ class StartupError(Exception):
 
 
 class _Splash:
-    """Drives the loading page (static/splash.html) through window.KSplash. With no window (the
-    browser fallback) every call is a no-op. Never raises: a status line is not worth a crash."""
+    """Drives the loading page (static/splash.html) through its window.KSplash calls, sent as
+    events the page fetches from the shell's own server (splash_server.py; no eval, D-SEC-61).
+    With no channel (the browser fallback) every call is a no-op. Never raises: a status line is
+    not worth a crash, but an update the page did not take is a warning with its cause."""
 
-    def __init__(self, win: Any = None) -> None:
-        self.win = win
+    DELIVERY_WAIT_S = 10.0
+
+    def __init__(self, channel: Any = None) -> None:
+        self.channel = channel
 
     def _js(self, fn: str, *args: Any) -> None:
-        if self.win is None:
+        if self.channel is None:
+            if window is not None:
+                log.warning("splash_update_failed", fn=fn,
+                            cause="the loading page has no server to fetch its updates from")
             return
-        call = f"window.KSplash && window.KSplash.{fn}({', '.join(json.dumps(a) for a in args)})"
         try:
-            self.win.evaluate_js(call)
-        except Exception as exc:
-            log.debug("splash_update_failed", fn=fn, error=str(exc))
+            seq = self.channel.post(fn, *args)
+        except ValueError as exc:
+            log.warning("splash_update_failed", fn=fn, cause=str(exc))
+            return
+        posted = time.monotonic()
+        timer = threading.Timer(self.DELIVERY_WAIT_S, self._check_delivered, (fn, seq, posted))
+        timer.daemon = True
+        timer.start()
+
+    def _check_delivered(self, fn: str, seq: int, posted: float) -> None:
+        last = self.channel.last_fetch
+        if last is None or last < posted:
+            log.warning("splash_update_failed", fn=fn, seq=seq,
+                        cause=("the loading page never asked for its updates" if last is None
+                               else f"the loading page has not asked for its updates for "
+                                    f"{int(time.monotonic() - last)} s"))
 
     def say(self, text: str, pct: int | None, later: str = "", after_ms: int = 0) -> None:
         self._js("say", text, pct, later, after_ms)
 
-    def fail(self, reason: str, details: str, code: str = "") -> None:
-        self._js("fail", reason, details, code)
+    def fail(self, reason: str, details: str, code: str = "", error_code: str = "") -> None:
+        self._js("fail", reason, details, code, error_code)
 
     def ready(self) -> None:
         self._js("ready")
@@ -1109,22 +1198,15 @@ class _Splash:
         self._js("cancelBtn", show)
 
 
-def splash_html(theme: str = "auto") -> str:
-    """The loading page, self-contained: tokens.css and the mark are inlined, since no server
-    exists yet when it shows (D-UI-89). A saved light or dark theme is pinned on it, so its first
-    paint matches the app's."""
-    import base64
-
-    static = Path(paths.web_static_dir())
-    page = (static / "splash.html").read_text(encoding="utf-8")
-    tokens = (static / "css" / "tokens.css").read_text(encoding="utf-8")
-    mark = base64.b64encode((static / "icon.svg").read_bytes()).decode("ascii")
-    page = page.replace("/*K-TOKENS*/", tokens).replace(
-        "/*K-MARK*/", f"data:image/svg+xml;base64,{mark}"
-    )
-    if theme in ("light", "dark"):
-        page = page.replace('<html lang="en">', f'<html lang="en" data-theme="{theme}">', 1)
-    return page
+def _post_to_app(name: str, *args: Any) -> None:
+    """Tell the app page something (its window channel; kestrel-ui.js fetches it, D-SEC-61)."""
+    channel = _app_channel
+    if channel is None:
+        return
+    try:
+        channel.post(name, *args)
+    except ValueError as exc:
+        log.warning("window_event_failed", event=name, cause=str(exc))
 
 
 def _updating() -> bool:
@@ -1539,7 +1621,7 @@ def run_desktop() -> int:
         try:
             port = _start_backend(_Splash())
         except StartupError as exc:
-            return abort_start(exc.code)
+            return abort_start(exc.code, _card_code(exc.code))
         return _run_in_browser(f"http://127.0.0.1:{port}/")
     return _run_window(webview, busy=busy)
 
@@ -1547,6 +1629,8 @@ def run_desktop() -> int:
 _started = False  # the app replaced the loading page
 _boot_failed = False  # the last start attempt ended on the problem card
 _frame_api: Any = None
+_splash_server: Any = None  # the loading page's own server (splash_server.py)
+_app_channel: Any = None  # events for the app page (channel.py), fetched over /api/window/events
 _quiet = False  # started by the start-with-my-computer entry (`--tray`)
 
 
@@ -1611,8 +1695,7 @@ def _on_maximized(value: bool) -> None:
     if _frame_api is not None:
         _frame_api._set_maximized(value)
     if window is not None and _started:
-        with __import__("contextlib").suppress(Exception):
-            window.evaluate_js(f"window.KUI && KUI.frame.state({'true' if value else 'false'})")
+        _post_to_app("state", bool(value))
 
 
 def _on_minimized() -> None:
@@ -1644,10 +1727,16 @@ def _boot_held(busy: bool) -> None:
         _boot_guard.release()
 
 
-def _show_problem(splash: _Splash, reason: str, details: str, code: str = "") -> None:
+def _show_problem(
+    splash: _Splash, reason: str, details: str, code: str = "", error_code: str | None = None
+) -> None:
+    """Show the problem card. `error_code` is the registry code when the caller already worked it
+    out (so an unregistered code logs once); otherwise it is looked up from `code` here."""
     global _boot_failed
     _boot_failed = True
-    splash.fail(reason, details, code)
+    shown = _card_code(code) if error_code is None else error_code
+    log.error("startup_problem_shown", error_code=shown, startup_code=code)
+    splash.fail(reason, details, code, shown)
     if _quiet:
         show_window()  # a quiet start that fails must say so, never sit hidden with the lock
 
@@ -1655,7 +1744,7 @@ def _show_problem(splash: _Splash, reason: str, details: str, code: str = "") ->
 def _boot_steps(busy: bool) -> None:
     global _started, _boot_failed, _cancelling
     _cancelling = False  # a previous attempt's Cancel (or Try again) does not outlive this one
-    splash = _Splash(window)
+    splash = _Splash(_splash_server.channel if _splash_server is not None else None)
     _boot_failed = False
     if _quitting:
         return
@@ -1669,6 +1758,7 @@ def _boot_steps(busy: bool) -> None:
                 "The last Kestrel session is still closing. Wait a moment, then try again.",
                 f"Startup step: wait for the previous session to close\nWaited "
                 f"{int(BUSY_WAIT_S)} seconds.\nLog file: kestrel.log (in the logs folder)",
+                BUSY_CODE,
             )
             return
         _write_marker(starting=True)
@@ -1685,13 +1775,14 @@ def _boot_steps(busy: bool) -> None:
         # A Cancel, not a quit: the window stays and the card offers the next step (#148).
         log.info("startup_cancelled_by_operator")
         _write_marker(failed=True)  # the lock owner shows its problem card: a relaunch defers
-        _show_problem(splash, START_CANCELED, START_CANCELED_DETAILS)
+        _show_problem(splash, START_CANCELED, START_CANCELED_DETAILS, CANCELED_CODE)
         return
     except StartupError as exc:
-        log.error("desktop_start_aborted", reason=exc.code)
+        shown = _card_code(exc.code)
+        log.error("desktop_start_aborted", reason=exc.code, error_code=shown)
         _stop_server()
         _write_marker(failed=True)  # the lock owner shows its problem card: a relaunch defers
-        _show_problem(splash, exc.reason, exc.details, exc.code)
+        _show_problem(splash, exc.reason, exc.details, exc.code, shown)
         return
     from kestrel.web.desktop_bridge import (
         set_focus_handler,
@@ -1718,14 +1809,25 @@ def _boot_steps(busy: bool) -> None:
     if window is not None:
         # #k-intro asks the page for the one-time launch entrance (kestrel-ui.js).
         window.load_url(f"http://127.0.0.1:{port}/#k-intro")
+        # Do the page channels work under the policy? Logged once (D-SEC-61).
+        from kestrel.desktop import bridge_check
+
+        bridge_check.start(_splash_server.channel if _splash_server is not None else None)
         if _quiet and icon is None:
             show_window()  # a quiet start with no tray to open it from must still show
 
 
 def _run_window(webview: Any, *, busy: bool) -> int:
-    global window, _frame_api, _quiet, _started
+    global window, _frame_api, _quiet, _started, _splash_server, _app_channel
     from kestrel.desktop import frame
-    from kestrel.web.desktop_bridge import set_focus_handler, set_quit_handler, set_window_frame
+    from kestrel.desktop.channel import APP_EVENTS, Channel
+    from kestrel.desktop.splash_server import SplashServer
+    from kestrel.web.desktop_bridge import (
+        set_focus_handler,
+        set_quit_handler,
+        set_window_api,
+        set_window_frame,
+    )
 
     global _hidden, _minimized
     _started = False
@@ -1763,12 +1865,18 @@ def _run_window(webview: Any, *, busy: bool) -> int:
         (x, y, width, height), maximize_on_show = restored
         place = {"x": x, "y": y}
     theme, dark = _launch_theme()
+    # The page channels (D-SEC-61): the loading page fetches its updates from the shell's own
+    # server and posts its buttons there; app pages use /api/window/* on the app server. Neither
+    # uses pywebview's evaluate_js or js_api, which the app's policy refuses on WKWebView.
+    _splash_server = SplashServer(_frame_api, theme=theme).start()
+    _app_channel = Channel(APP_EVENTS)
+    set_window_api(_frame_api, _app_channel)
     # The window's own ground before any page paints: the loading page's top color in the theme
     # it will show, so a dark launch never flashes white (hardware check, 2026-10-26).
     background = _token("sky-top", dark) or ("#000000" if dark else "#FFFFFF")
     window = webview.create_window(
         f"Kestrel {__version__}",
-        html=splash_html(theme),
+        url=_splash_server.url,
         background_color=background,
         width=width,
         height=height,
@@ -1782,7 +1890,6 @@ def _run_window(webview: Any, *, busy: bool) -> int:
         # own traffic lights, see frame.show_traffic_lights).
         frameless=True,
         easy_drag=False,
-        js_api=_frame_api,
         hidden=_quiet,
     )
     window.events.closing += on_closing
@@ -1807,6 +1914,10 @@ def _run_window(webview: Any, *, busy: bool) -> int:
     log.info("webview_start")
     webview.start(_boot, (busy,))  # blocks until window.destroy()
     set_window_frame(False)
+    set_window_api(None, None)
+    if _splash_server is not None:
+        _splash_server.stop()
+    _splash_server = _app_channel = None
     _frame_api = None  # the window is gone: on_closing goes back to its plain rules
     if not _started:
         # The window closed before the app ever loaded (a failed start, or closed while

@@ -2,10 +2,11 @@
 manual check, the one-time "what changed" and disclosure cards.
 
 Two public promises bind this module. Kestrel asks and tells; it never downloads or installs
-anything, so "Get the update" is a plain link to the download page and the operator does the rest.
-And nothing about the user leaves the machine: the link carries no query string. Every fragment
-is rendered by Jinja with autoescape on; the only value marked safe is the output of
-updater.render_notes_html, which escapes its input first."""
+anything, so the download button is a plain link (this platform's installer on the GitHub release
+when the feed's entry passes updater.release_download, else the download page) and the operator
+does the rest. And nothing about the user leaves the machine: the link carries no query string.
+Every fragment is rendered by Jinja with autoescape on; the only value marked safe is the output
+of updater.render_notes_html, which escapes its input first."""
 
 from __future__ import annotations
 
@@ -67,9 +68,32 @@ def relative_last_checked(iso: str | None, *, now: datetime | None = None) -> st
     return "just now"  # unreachable; keeps the function total
 
 
+SITE_LABEL = "Get it from kestrelapp.co"
+
+
 def _download_page(state: updater.UpdateState) -> str:
     """Validated again at render time (defense in depth: old rows predate the check)."""
     return updater.safe_download_page(state.download_page) or updater.DOWNLOAD_PAGE
+
+
+def download_link(state: updater.UpdateState) -> dict:
+    """What every update surface links to (D-UPD-8, D-UPD-9): the rebuilt release-asset URL with
+    the label "Download Kestrel X.Y.Z" when the cached feed has a valid entry for this platform,
+    else the validated download page with the site label. One value, computed here, so the banner,
+    the dialog, the check results and the bell never disagree."""
+    page = _download_page(state)
+    found = updater.release_download(_feed(state))
+    if found is None:
+        return {"url": page, "label": SITE_LABEL, "direct": False, "page": page}
+    return {
+        "url": found.url,
+        "label": f"Download Kestrel {found.version}",
+        "direct": True,
+        "page": page,
+        "file": found.file,
+        "version": found.version,
+        "sha256": found.sha256,
+    }
 
 
 def _feed(state: updater.UpdateState) -> updater.LatestFeed | None:
@@ -87,7 +111,7 @@ def _notes(releases: list[updater.ReleaseNote]) -> list[dict]:
         {
             "version": r.version,
             "date": r.date,
-            "html": Markup(updater.render_notes_html(r.notes_md)),
+            "html": Markup(updater.render_notes_html(r.notes_md)),  # noqa: S704  escaped by render_notes_html first
         }
         for r in releases
     ]
@@ -127,7 +151,7 @@ async def banner(request: Request):
     ctx = {
         "version": version,
         "current": kestrel.__version__,
-        "download_page": _download_page(state),
+        "download": download_link(state),
     }
     return _fragment(request, "update_banner.html", ctx)
 
@@ -142,7 +166,7 @@ async def details(request: Request):
         "version": version or state.latest_version,
         "current": kestrel.__version__,
         "notes": _notes(releases),
-        "download_page": _download_page(state),
+        "download": download_link(state),
     }
     return _fragment(request, "update_details.html", ctx)
 
@@ -155,7 +179,7 @@ async def check(request: Request, surface: str = Form("")):
     current = kestrel.__version__
     outcome, version = "unreachable", None
     last_checked = "never"
-    download = updater.DOWNLOAD_PAGE
+    download = download_link(updater.UpdateState())
     try:
         async with sessionmaker()() as s:
             cfg = (await load_settings_with_db(s)).updates
@@ -163,7 +187,7 @@ async def check(request: Request, surface: str = Form("")):
         last_checked = (relative_last_checked if surface == "about" else format_last_checked)(
             state.last_checked_at
         )
-        download = _download_page(state)
+        download = download_link(state)
         if state.last_check_ok:
             latest = state.latest_version
             if latest and updater.is_newer(latest, current):
@@ -177,7 +201,7 @@ async def check(request: Request, surface: str = Form("")):
         "version": version,
         "current": current,
         "last_checked": last_checked,
-        "download_page": download,
+        "download": download,
     }
     name = "about_update_result.html" if surface == "about" else "update_check_result.html"
     return _fragment(request, name, ctx, trigger=True)
@@ -216,11 +240,15 @@ async def whats_new_card(request: Request):
             if updater.is_newer(r.version, prev) and not updater.is_newer(r.version, current)
         ]
         releases.sort(key=lambda r: updater.parse_version(r.version) or (0, 0, 0, ()), reverse=True)
+    notes_url = updater.release_notes_url(current, updater.published_version(state.cached_feed))
     ctx = {
         "current": current,
         "previous": prev,
         "notes": _notes(releases),
         "download_page": _download_page(state),
+        "release_notes_url": notes_url,
+        "release_notes_is_release": notes_url != updater.CHANGELOG_URL,
+        "changelog_url": updater.CHANGELOG_URL,
     }
     return _fragment(request, "update_whats_new.html", ctx)
 

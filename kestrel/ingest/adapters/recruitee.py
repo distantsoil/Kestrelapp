@@ -29,7 +29,15 @@ from typing import Any
 import httpx
 
 from kestrel.errors import ROBOTS_SENTENCE
-from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
+from kestrel.ingest import failure_code
+from kestrel.ingest.base import (
+    AdapterError,
+    PostingBatch,
+    RawPosting,
+    ShapeError,
+    SourceConfigError,
+    rate_limited,
+)
 
 _BASE = "https://{slug}.recruitee.com/api/offers/"
 _RATE = 1.0  # requests/second; one request per scan
@@ -61,13 +69,12 @@ class RecruiteeAdapter:
         except httpx.HTTPStatusError as exc:
             code = exc.response.status_code
             if code == 429:
-                batch.partial_error = (
-                    f"Recruitee is rate limiting requests for {slug}. Kestrel will try again "
-                    "next run."
-                )
+                batch.add(rate_limited("Recruitee", slug))
                 return batch
             if code == 404:
-                raise AdapterError(f"Recruitee board not found: {slug}") from exc
+                raise AdapterError(
+                    f"Recruitee board not found: {slug}", code=failure_code.NOT_FOUND
+                ) from exc
             raise AdapterError(f"Recruitee fetch failed for {slug}: {exc}") from exc
         except httpx.HTTPError as exc:
             raise AdapterError(f"Recruitee fetch failed for {slug}: {exc}") from exc
@@ -77,7 +84,7 @@ class RecruiteeAdapter:
             raise AdapterError(f"Recruitee reply for {slug} was not valid JSON") from exc
         offers = data.get("offers") if isinstance(data, dict) else None
         if not isinstance(offers, list):
-            raise AdapterError(f"Recruitee reply for {slug} had an unexpected shape")
+            raise ShapeError(f"Recruitee reply for {slug} had an unexpected shape")
         for offer in offers:
             if isinstance(offer, dict) and offer.get("status", "published") == "published":
                 posting = self._to_posting(offer, config)

@@ -199,6 +199,12 @@ In `kestrel/services/backup.py`:
   (`kestrel/research/contacts.py` `linkedin_url_verbatim`). Research fetches only stored or fixed
   hosts and takes indices, not addresses, from the model (D-SEC-12, issue 167;
   `tests/test_model_output_boundary.py`).
+- **Content-Security-Policy.** Every app response carries one fixed policy with no
+  `'unsafe-inline'` and no `'unsafe-eval'`: scripts and styles load only from the app itself,
+  connections and images go nowhere else (`data:` images aside), and no page can be framed. Markup
+  that slipped into a page could not run a script, apply a style attribute or send anything to
+  another site (`kestrel/web/csp.py`; D-INST-8, D-SEC-56 to D-SEC-61;
+  `tests/test_csp.py`, `tests/test_csp_browser.py`).
 - **Model replies.** Every reply is schema-validated, repaired once, then quarantined with the raw
   text kept. Prose is refused (`kestrel/llm/guard.py` `run_guarded`; CLAUDE.md hard rule 3).
 - **Letter promises.** Commitments such as start dates or sponsorship in a generated letter must

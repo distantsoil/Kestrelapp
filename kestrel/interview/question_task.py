@@ -37,6 +37,7 @@ from kestrel.db.models import (
 )
 from kestrel.errors import failure_record
 from kestrel.interview.questions import active_set
+from kestrel.llm.engine_cycle import engine_unreachable
 from kestrel.llm.schemas import (
     MAX_QUESTIONS,
     P14InterviewQuestions,
@@ -219,6 +220,8 @@ class GenerateOutcome:
     error: str | None = None
     # The online key is out of credit (D-LLM-8): the task is deferred, not failed.
     out_of_credit: bool = False
+    # The call could not reach the local engine: the task waits, its try given back.
+    engine_unreachable: bool = False
 
 
 async def generate_question_set(
@@ -272,7 +275,8 @@ async def generate_question_set(
     if not result.ok or result.value is None:
         await session.rollback()
         return GenerateOutcome(
-            "error", error=result.error or "no reply", out_of_credit=result.out_of_credit
+            "error", error=result.error or "no reply", out_of_credit=result.out_of_credit,
+            engine_unreachable=result.engine_unreachable,
         )
 
     from kestrel.llm.plain_repair import enforce
@@ -319,13 +323,18 @@ async def drain_interview_questions(
     reply is kept on the Quarantine page and retrying a model that cannot meet the schema would
     loop). Never raises into the caller's worker cycle."""
     from kestrel.interview.story_task import LEASE_S, _renew
+    from kestrel.pipeline.worker import engine_lost_for, local_engine_ready
     from kestrel.queue.queue import REASON_CREDIT, TaskQueue
     from kestrel.services.online_consent import held_at_run_time
 
+    if not await local_engine_ready(settings, TIER):
+        return 0  # Ollama is not answering or lacks the model: nothing leased, no try spent
     queue = TaskQueue(sm)
     wid = "pipeline-questions"
     done = 0
     while stop is None or not stop.is_set():
+        if engine_lost_for(settings, TIER):
+            break  # a call this cycle could not reach Ollama: lease nothing more (round 6)
         task = await queue.lease(wid, types=[TASK_TYPE], lease_seconds=LEASE_S)
         if task is None:
             break
@@ -350,7 +359,8 @@ async def drain_interview_questions(
             beat.cancel()
             log.warning("interview_questions_failed", task=task.id,
                         error=f"{type(exc).__name__}: {exc}")
-            await queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True)
+            await queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True,
+                             engine_wait=engine_unreachable(exc))
             continue
         finally:
             beat.cancel()
@@ -364,7 +374,8 @@ async def drain_interview_questions(
             )
             break
         if outcome.status == "error":
-            await queue.fail(task.id, outcome.error or "error", worker_id=wid, retry=True)
+            await queue.fail(task.id, outcome.error or "error", worker_id=wid, retry=True,
+                             engine_wait=outcome.engine_unreachable)
             continue
         await queue.complete(task.id, worker_id=wid)
         done += 1

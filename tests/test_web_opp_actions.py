@@ -487,3 +487,44 @@ def test_research_action_leaves_the_shared_service_to_the_worker(
         assert r.status_code == 200
         assert "Queued" in r.text
     assert seen == []
+
+
+def test_research_that_cannot_be_queued_shows_kestrels_sentence_not_the_errors_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kestrel.research import jobs
+
+    ids = asyncio.run(_seed())
+
+    async def _refuses(*args, **kwargs):
+        raise ValueError("1 validation error for Settings: value 'invented-stored-value'")
+
+    monkeypatch.setattr(jobs, "enqueue", _refuses)
+    with _client(monkeypatch) as c:
+        r = c.post(f"/opportunities/{ids['opp_id']}/research")
+    assert r.status_code == 200
+    assert "invented-stored-value" not in r.text and "validation error" not in r.text
+    assert jobs.ENQUEUE_FALLBACK in r.text
+
+
+def test_research_refused_for_a_missing_company_says_so_in_kestrels_words(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A role whose company record is gone (its link still set): the real queue refuses it, and
+    its own sentence reaches the page word for word."""
+    import sqlite3
+
+    ids = asyncio.run(_seed())
+    forget_engine()
+    con = sqlite3.connect(paths.db_path())
+    try:
+        con.execute("PRAGMA foreign_keys=OFF")
+        con.execute("DELETE FROM org WHERE id = (SELECT org_id FROM opportunity WHERE id = ?)",
+                    (ids["opp_id"],))
+        con.commit()
+    finally:
+        con.close()
+    with _client(monkeypatch) as c:
+        r = c.post(f"/opportunities/{ids['opp_id']}/research")
+    assert r.status_code == 200
+    assert "No company is linked to this role yet." in r.text

@@ -1,0 +1,26 @@
+{# The install ID (D-INST-1, D-INST-2), shared by About and Settings > Your data. `iid` is
+   {short, full} from web/install_id_view.for_request, {away} for a browser on another device (the
+   ID is then not in the page at all). Copy buttons carry data-copy-target; each page's script
+   copies the text and plays the short confirmation (css/pages/install_id.css). #}
+{% macro value(iid, request, prefix) -%}
+{%- if iid and iid.full -%}
+<div class="k-iid" data-testid="{{ prefix }}-install-id">
+  <span class="k-sr-only" id="{{ prefix }}-iid-l">Install ID</span>
+  <span class="k-sr-only" role="status" data-iid-said></span>
+  <div class="k-iid__row">
+    <code class="k-iid__v" id="{{ prefix }}-iid-short" data-testid="{{ prefix }}-iid-short">{{ iid.short }}</code>
+    <button type="button" class="k-btn k-btn--sm k-iid__copy" data-copy-target="{{ prefix }}-iid-short" aria-describedby="{{ prefix }}-iid-l" data-testid="{{ prefix }}-iid-copy">Copy</button>
+  </div>
+  <details class="k-iid__more" data-k-fold data-testid="{{ prefix }}-iid-details">
+    <summary>Show details</summary>
+    <p class="k-iid__note">This ID is random and says nothing about you or this computer. Kestrel never sends it. If you report a problem, paste it into your report.</p>
+    <div class="k-iid__row">
+      <code class="k-iid__full" id="{{ prefix }}-iid-full" data-testid="{{ prefix }}-iid-full">{{ iid.full }}</code>
+      <button type="button" class="k-btn k-btn--sm k-iid__copy" data-copy-target="{{ prefix }}-iid-full" data-testid="{{ prefix }}-iid-copy-full">Copy full ID</button>
+    </div>
+  </details>
+</div>
+{%- elif iid and iid.away -%}
+<span class="k-iid__away" data-testid="{{ prefix }}-iid-away">{{ iid.away }}</span>
+{%- endif -%}
+{%- endmacro %}

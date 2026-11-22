@@ -45,7 +45,8 @@ SECTIONS = ("about", "employment", "consulting", "location")
 # Personal fields on each track block (the "About you" tab). Lists are one item per line.
 # `first_name` is required and greets the operator; `last_name` may be empty; `full_name` is
 # derived from them on save (D-UI-117) and is what a resume header prints.
-ABOUT_TEXT = ("first_name", "last_name", "email", "phone", "location", "headline", "work_auth")
+ABOUT_TEXT = ("first_name", "last_name", "email", "phone", "linkedin_profile", "location",
+              "headline", "work_auth")
 ABOUT_LISTS = ("must_have", "must_avoid")
 # is_active is not offered: nothing in the pipeline reads it yet (reviewer finding 4).
 ABOUT_FLAGS = ("requires_sponsorship",)
@@ -409,15 +410,94 @@ def metros_text(block: dict) -> str:
     return "\n".join(out)
 
 
-def section_from_form(section: str, form: Any) -> dict:
+class PhoneState:
+    """What the server decided about a phone entry, from its own record and region (D-PHONE-5):
+    the fields to store, the pinned number to carry beside the field, and the country the text
+    was read under. The save and the page re-render use this one result, so they cannot differ."""
+
+    __slots__ = ("fields", "pin", "read_under")
+
+    def __init__(self, fields: dict[str, str], pin: str, read_under: str) -> None:
+        self.fields, self.pin, self.read_under = fields, pin, read_under
+
+
+def _entered_text(typed: str, entered: object, res: Any, read_under: str, cur: dict) -> str:
+    """The text "as entered" kept beside the number. It is metadata, never an input to a decision,
+    and it is never a client value stored as sent (D-PHONE-2, §8a item 7):
+    - the stored text unchanged: the server's own stored `phone_entered`; new text: the page's;
+    - either is kept only when it is short and reads as the same number under the server's
+      region (the spelling before the field was reformatted); anything else, whatever it holds
+      (a long value, markup, a different number), is replaced by the text itself."""
+    from kestrel import phone
+
+    if not typed:
+        return ""
+    unchanged = typed == str(cur.get("phone") or "").strip()
+    cand = str((cur.get("phone_entered") if unchanged else entered) or "").strip()
+    # hint_matches reads at most phone.MAX_LEN characters, so the bound is part of the check.
+    if res.readable and cand and phone.hint_matches(cand, res.e164, read_under):
+        return cand
+    return typed
+
+
+def phone_state(text: object, country: object, entered: object = None, hint: object = None,
+                current: dict | None = None) -> PhoneState:
+    """Decide the stored phone for what the person typed (D-PHONE-2). Never raises and never
+    drops text: an unreadable entry is kept as typed with no canonical form (D-PHONE-3).
+
+    The server decides from its own stored record and region, never from what the page sent:
+    1. the text is the stored text (`current`): the stored number, checked against that text under
+       the stored home country, and the selector only decides how it is shown;
+    2. otherwise the text is read afresh under the selector (no plus sign) or by its own plus
+       sign, and the page's E.164 is only a hint, used when it is the number the text reads as
+       under the selector (never under a country the hint chose)."""
+    from kestrel import phone
+
+    typed = str(text or "").strip()
+    cur = current or {}
+    selector = phone.clean_region(country)
+    if typed and typed == str(cur.get("phone") or "").strip():
+        # The server's own record, rebuilt and never adopted (D-SEC-20): its E.164 is used only
+        # when the stored text reads as that number under the home country it was saved with.
+        # Otherwise (a legacy number with none, or a hand-edited, imported or restored file whose
+        # E.164 disagrees with its text) the stored text is read once under that stored home.
+        read_under = phone.clean_region(cur.get("phone_country"))
+        legacy = phone.format_phone(typed, read_under, cur.get("phone_e164"))
+        pin = phone.source_of(legacy.e164, legacy.ext) if legacy.readable else ""
+        res = phone.format_phone(text, country, pin or None, read_as=read_under)
+    else:
+        read_under = selector
+        res = phone.format_phone(text, country, hint)
+        pin = phone.source_of(res.e164, res.ext) if res.readable else ""
+    return PhoneState({
+        "phone": res.display.strip() if res.readable else typed,
+        "phone_entered": _entered_text(typed, entered, res, read_under, cur),
+        "phone_e164": res.e164, "phone_ext": res.ext,
+        "phone_country": selector,  # home: never the number's own country
+    }, pin, read_under)
+
+
+def phone_fields(text: str, country: object, entered: object = None, hint: object = None,
+                 current: dict | None = None) -> dict[str, str]:
+    """The stored phone fields for what the person typed: see phone_state."""
+    return phone_state(text, country, entered, hint, current).fields
+
+
+def section_from_form(section: str, form: Any, current: dict | None = None) -> dict:
     """The fields of one section as they will sit in the track block. Raises ProfileEditError
-    on a value that cannot be stored."""
+    on a value that cannot be stored. `current` is the track's stored block: the About phone is
+    decided from it, never from what the page sent (D-PHONE-5)."""
     if section == "about":
         out: dict[str, Any] = {k: (str(form.get(k) or "").strip()) for k in ABOUT_TEXT}
         if not out["first_name"] and str(form.get("full_name") or "").strip():
             # An older form (or a script) that still sends one full name: split it the same way
             # the migration does (first space), so nothing is lost.
             out["first_name"], out["last_name"] = names.split_full_name(form.get("full_name"))
+        from kestrel import linkedin
+
+        out["linkedin_profile"] = linkedin.normalize(out["linkedin_profile"]).display
+        out.update(phone_fields(out["phone"], form.get("phone_country"), form.get("phone_entered"),
+                                form.get("phone_e164"), current))
         out["first_name"] = names.clean(out["first_name"])
         out["last_name"] = names.clean(out["last_name"])
         if not out["first_name"]:

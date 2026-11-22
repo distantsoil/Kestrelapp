@@ -189,3 +189,209 @@ def test_a_quoted_or_bracketed_relative_path_with_a_space_is_masked(line):
     shown = startup_health._plain(line, lambda s: s)
     assert "Acme" not in shown and "Corp" not in shown and "kestrel.db" not in shown
     assert shown.startswith(line.split(": ", 1)[0])
+
+
+# ------------------------------------------------------------------ the startup card's code
+def _module_constants(tree) -> dict[str, str]:
+    """Module-level `NAME = "text"` assignments of one parsed module."""
+    import ast
+
+    out: dict[str, str] = {}
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            out[node.targets[0].id] = node.value.value
+    return out
+
+
+def _startup_codes_in_source() -> set[str]:
+    """Every code a startup card can be shown with, found structurally: an ast walk over
+    kestrel/ for StartupError(...) calls and for _show_problem(...) calls, resolving a string
+    literal, a module-level constant, or `module.CONSTANT`. Anything it cannot resolve fails the
+    test, so a new unmapped or unreadable code can never slip through."""
+    import ast
+    from pathlib import Path
+
+    import kestrel
+
+    root = Path(kestrel.__file__).parent
+    trees = {
+        f: ast.parse(f.read_bytes().decode("utf-8")) for f in sorted(root.rglob("*.py"))
+    }
+    consts = {f: _module_constants(t) for f, t in trees.items()}
+    by_stem: dict[str, dict[str, str]] = {}
+    for f, c in consts.items():
+        by_stem.setdefault(f.stem, {}).update(c)
+
+    def resolve(arg, file) -> str:
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            return arg.value
+        if isinstance(arg, ast.Name) and arg.id in consts[file]:
+            return consts[file][arg.id]
+        if (
+            isinstance(arg, ast.Attribute)
+            and isinstance(arg.value, ast.Name)
+            and arg.attr in by_stem.get(arg.value.id, {})
+        ):
+            return by_stem[arg.value.id][arg.attr]
+        raise AssertionError(f"{file.name}:{arg.lineno}: cannot resolve a startup code")
+
+    found: set[str] = set()
+    for f, tree in trees.items():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if name == "StartupError":
+                assert node.args, f"{f.name}:{node.lineno}: StartupError with no code"
+                found.add(resolve(node.args[0], f))
+            elif name == "_show_problem":
+                keyword = {k.arg: k.value for k in node.keywords}
+                arg = node.args[3] if len(node.args) > 3 else keyword.get("code")
+                assert arg is not None, f"{f.name}:{node.lineno}: a card with no code"
+                if (  # `exc.code` passes on a code the StartupError(...) calls already supply
+                    isinstance(arg, ast.Attribute)
+                    and arg.attr == "code"
+                    and isinstance(arg.value, ast.Name)
+                    and arg.value.id == "exc"
+                ):
+                    continue
+                found.add(resolve(arg, f))
+    return found
+
+
+def test_every_startup_code_maps_to_a_registered_sta_code():
+    from kestrel import error_codes
+    from kestrel.desktop import shell
+
+    codes = _startup_codes_in_source()
+    assert codes, "the walk found no startup codes at all"
+    assert codes == set(shell.STARTUP_ERROR_CODES)  # none unmapped, none mapped but unused
+    for code in codes:
+        shown = shell.startup_error_code(code)
+        assert shown.startswith("STA-")
+        assert error_codes.get(shown).fix  # the registry has plain text for it
+    assert len(set(shell.STARTUP_ERROR_CODES.values())) == len(codes)  # one code per card
+
+
+def test_the_walk_fails_on_a_code_it_cannot_resolve(tmp_path, monkeypatch):
+    """The structural check must refuse what it cannot read, never skip it."""
+    import kestrel
+
+    pkg = tmp_path / "kestrel"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "m.py").write_text(
+        "def f(code):\n    raise StartupError(code, 'r', 'd')\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(kestrel, "__file__", str(pkg / "__init__.py"))
+    with pytest.raises(AssertionError, match="cannot resolve"):
+        _startup_codes_in_source()
+
+
+def test_an_unknown_startup_code_fails_loudly_never_a_blank():
+    from kestrel.desktop import shell
+
+    with pytest.raises(KeyError):
+        shell.startup_error_code("a_code_nobody_registered")
+
+
+def test_the_card_and_the_log_both_carry_the_code(monkeypatch):
+    from structlog.testing import capture_logs
+
+    from kestrel.desktop import shell
+
+    class Rec:
+        def __init__(self) -> None:
+            self.calls: list[tuple] = []
+
+        def fail(self, *args):
+            self.calls.append(args)
+
+    monkeypatch.setattr(shell, "_boot_failed", False)  # restored after the test
+    monkeypatch.setattr(shell, "_quiet", False)  # a quiet start would try to show a window
+    rec = Rec()
+    with capture_logs() as logged:
+        shell._show_problem(rec, "A reason.", "Startup step: x", "health_never_up")
+    assert rec.calls == [("A reason.", "Startup step: x", "health_never_up", "STA-006")]
+    assert any(
+        e.get("event") == "startup_problem_shown" and e.get("error_code") == "STA-006"
+        for e in logged
+    )
+    assert shell._boot_failed is True
+
+
+def test_an_unregistered_code_logs_once_and_the_card_still_shows(monkeypatch):
+    from structlog.testing import capture_logs
+
+    from kestrel.desktop import shell
+
+    class Rec:
+        def __init__(self) -> None:
+            self.calls: list[tuple] = []
+
+        def fail(self, *args):
+            self.calls.append(args)
+
+    monkeypatch.setattr(shell, "_boot_failed", False)
+    monkeypatch.setattr(shell, "_quiet", False)
+    monkeypatch.setattr(shell, "_stop_server", lambda: None)
+    monkeypatch.setattr(shell, "_write_marker", lambda **k: None)
+    monkeypatch.setattr(shell, "_quitting", False)
+    rec = Rec()
+    monkeypatch.setattr(shell, "_Splash", lambda win: rec)
+
+    def _boom(splash, stop=lambda: False):
+        raise shell.StartupError("a_code_nobody_registered", "A reason.", "d")
+
+    monkeypatch.setattr(shell, "_start_backend", _boom)
+    with capture_logs() as logged:
+        shell._boot_steps(busy=False)
+    assert rec.calls == [("A reason.", "d", "a_code_nobody_registered", "")]  # a card, no code
+    gaps = [e for e in logged if e.get("event") == "startup_code_unregistered"]
+    assert len(gaps) == 1  # computed once per error, so it logs once
+    aborted = [e for e in logged if e.get("event") == "desktop_start_aborted"]
+    assert aborted and aborted[0]["error_code"] == ""
+
+
+def test_the_log_carries_the_code_on_every_aborted_start(monkeypatch):
+    """Both paths log desktop_start_aborted with error_code: the window path and the
+    no-window fallback (abort_start)."""
+    from structlog.testing import capture_logs
+
+    from kestrel.desktop import shell
+
+    monkeypatch.setattr(shell, "_stop_previous_server", lambda: True)
+    monkeypatch.setattr(shell, "release_single_instance", lambda: None)
+    with capture_logs() as logged:
+        assert shell.abort_start("no_port", shell._card_code("no_port")) == 1
+    aborted = [e for e in logged if e.get("event") == "desktop_start_aborted"]
+    assert len(aborted) == 1
+    assert aborted[0]["reason"] == "no_port" and aborted[0]["error_code"] == "STA-005"
+
+
+def test_the_busy_and_canceled_card_codes_reach_the_log(monkeypatch):
+    from structlog.testing import capture_logs
+
+    from kestrel.desktop import shell
+
+    class Rec:
+        def fail(self, *args):
+            pass
+
+    monkeypatch.setattr(shell, "_boot_failed", False)
+    monkeypatch.setattr(shell, "_quiet", False)
+    with capture_logs() as logged:
+        shell._show_problem(Rec(), "r", "d", shell.BUSY_CODE)
+        shell._show_problem(Rec(), "r", "d", shell.CANCELED_CODE)
+    shown = {
+        e["startup_code"]: e["error_code"]
+        for e in logged
+        if e["event"] == "startup_problem_shown"
+    }
+    assert shown == {"busy_closing": "STA-007", "start_canceled": "STA-008"}

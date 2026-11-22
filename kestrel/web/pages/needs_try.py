@@ -32,12 +32,15 @@ from urllib.parse import quote
 import structlog
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse
+from sqlalchemy.exc import SQLAlchemyError
 
 from kestrel.db.models import Opportunity, Quarantine
 from kestrel.llm.providers import is_free_variant
+from kestrel.queue import row_retry
 from kestrel.queue.rescore import enqueue_rescore
 from kestrel.services import hosted_balance, retry_removal
 from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.web import retry_groups
 from kestrel.web.auth import LOCAL_ONLY, release_credit_hold
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
@@ -53,19 +56,12 @@ from kestrel.web.pages.rescore import (
 from kestrel.web.pages.runs_detail import _open_total, _quarantine_rows, _retry_quarantine
 from kestrel.web.retry_words import (
     FILTERS,
-    is_held,
-    place_for,
-    plain_reason,
-    refused_key,
-    step_for,
-    tries_words,
-    when_words,
 )
 
 log = structlog.get_logger()
 router = APIRouter()
 
-ROW_PREFIX = "rt-row-"
+ROW_PREFIX = retry_groups.ROW_PREFIX
 _STEP_KEYS = tuple(k for k, _ in FILTERS)
 # What an online try sends, as a rough size for the cost line: the posting text, a short profile
 # summary and the instructions in; the structured answer out. Four characters a token.
@@ -81,46 +77,11 @@ _LOCAL_WORDS = {
 
 
 # ------------------------------------------------------------------------------------ views
-def _view(r: dict) -> dict:
-    """One quarantine row as the page shows it: the step, the plain reason, when and the tries."""
-    q = r["q"]
-    key, label = step_for(q.tier)
-    error = r["error"] or q.error
-    return {
-        **r,
-        "id": q.id,
-        "dom_id": f"{ROW_PREFIX}{q.id}",
-        "step_key": key,
-        "step_label": label,
-        "reason": plain_reason(error),
-        "refused_key": refused_key(error),
-        "on_hold": is_held(error),
-        "when": when_words(q.created_at),
-        "attempts": max(int(q.attempts or 0), 1),
-        "tries": tries_words(q.attempts),
-        "can_act": r["opp"] is not None,
-        # A failure with no role (D-UI-224) runs again on its own page, never from here.
-        "place": place_for(q.tier) if r["opp"] is None else None,
-    }
-
-
-def _role_views(open_rows: list[dict]) -> list[dict]:
-    """One row per role, newest failure first. An older failure of the same role is not a second
-    row; its tries add to the first, so a role that failed again reads "5 tries", not twice."""
-    seen: dict[int, dict] = {}
-    out: list[dict] = []
-    for r in open_rows:
-        v = _view(r)
-        oid = v["opp"].id if v["opp"] is not None else None
-        if oid is not None and oid in seen:
-            seen[oid]["attempts"] += v["attempts"]
-            continue
-        out.append(v)
-        if oid is not None:
-            seen[oid] = v
-    for v in out:
-        v["tries"] = tries_words(v["attempts"])
-    return out
+# The row view, the one-row-per-role merge and the group lookup live in retry_groups, so Today
+# reads the same groups without importing a page.
+_view = retry_groups.view
+_role_views = retry_groups.role_views
+_groups_now = retry_groups.groups_now
 
 
 def _counts(views: list[dict]) -> dict[str, int]:
@@ -132,25 +93,44 @@ def _step(raw: str | None) -> str:
     return raw if raw in _STEP_KEYS else "all"
 
 
-async def _list_context(request: Request, step: str) -> dict:
+async def _list_context(request: Request, step: str, group: str = "") -> dict:
     """The whole list: open rows as one row per role, the resolved ones as history (D-UI-70), the
     counts for the filter chips, and how many older failures the cap left out."""
     async with sessionmaker()() as s:
         rows = await _quarantine_rows(s)
         open_total = await _open_total(s)
+        dismissed = await retry_groups.dismissed_counts(s)
     open_rows = [r for r in rows if not r["resolved"]]
     views = _role_views(open_rows)
+    groups = retry_groups.build_groups(views)
+    # `?group=` shows exactly one group's roles; an unknown or stale key shows the whole list.
+    picked = retry_groups.find(groups, group) if group else None
     shown = views if step == "all" else [v for v in views if v["step_key"] == step]
+    if picked is not None:
+        ids = {m["id"] for m in picked["members"]}
+        shown = [v for v in views if v["id"] in ids]
     return {
+        "groups": [_with_words(g) for g in retry_groups.visible(groups, dismissed)],
+        "group_picked": picked,
         "query": dict(request.query_params),
         "rows": shown,
         "counts": _counts(views),
         "filters": FILTERS,
-        "step": step,
+        "step": "all" if picked is not None else step,
         "waiting": len(views),
         "resolved_rows": [_view(r) for r in rows if r["resolved"]],
         "open_more": max(0, open_total - len(open_rows)),
         "outcome": None,
+    }
+
+
+def _with_words(g: dict) -> dict:
+    """A group with its model in the words the menu uses (a derived local model by its role)."""
+    tag = _version_tag(g["model"]) if g["model"] else ""
+    return {
+        **g,
+        "model_words": _LOCAL_WORDS.get(tag, (g["model"] or "one model",))[0],
+        "ids": retry_groups.shown_ids(g["members"]),
     }
 
 
@@ -220,10 +200,10 @@ def _role_name(view: dict | None) -> str:
 
 # ---------------------------------------------------------------------------------- the page
 @router.get("/quarantine", response_class=HTMLResponse)
-async def page(request: Request, step: str = "all"):
+async def page(request: Request, step: str = "all", group: str = ""):
     from kestrel.web.pages.rescore import outcome_for
 
-    ctx = await _list_context(request, _step(step))
+    ctx = await _list_context(request, _step(step), group[:80])
     ctx["title"] = "Needs another try"
     ctx["outcome"] = outcome_for(request.query_params)
     ctx["retry_error"] = None
@@ -266,6 +246,10 @@ async def row(request: Request, quarantine_id: int):
             f"Held, not sent: {_role_name(view)} waits for you to choose your current employer."
         )}
         return HTMLResponse(_row_html(request, view), headers=_events(events))
+    if view["not_sent"]:  # refused before sending: say why, not "try a different model"
+        events = {"rt-refresh": True, "k-toast": _toast(
+            f"Not sent: {_role_name(view)}. {view['reason']}.", tone="warn")}
+        return HTMLResponse(_row_html(request, view, flash=True), headers=_events(events))
     events = {"rt-refresh": True, "k-toast": _toast(
         f"Still couldn’t score {_role_name(view)}. Try a different model, or score it anyway.",
         tone="warn",
@@ -325,6 +309,17 @@ async def models_menu(request: Request, quarantine_id: int):
     async with sessionmaker()() as s:
         settings = await load_settings_with_db(s)
         q = await s.get(Quarantine, quarantine_id)
+    ctx = {
+        "quarantine_id": quarantine_id,
+        "dom_id": f"{ROW_PREFIX}{quarantine_id}",
+        "has_role": q is not None and q.opportunity_id is not None,
+        **await _menu_options(settings),
+    }
+    return templates().TemplateResponse(request, "partials/retry_menu.html", ctx)
+
+
+async def _menu_options(settings: Any) -> dict:
+    """What the model menu offers, for one role or a group: this computer first, then online."""
     local, local_note = await asyncio.to_thread(_local_models, settings)
     label, _name, _raw, picker, _reasons, hosted_note = await _hosted_models(settings)
     tcfg = settings.llm.tiers.get("tier2")
@@ -335,17 +330,13 @@ async def models_menu(request: Request, quarantine_id: int):
             continue  # Try again already uses it
         name, note = _LOCAL_WORDS.get(_version_tag(tag), (tag, "Runs on this computer. Free."))
         options.append({"tag": tag, "name": name, "note": note})
-    ctx = {
-        "quarantine_id": quarantine_id,
-        "dom_id": f"{ROW_PREFIX}{quarantine_id}",
-        "has_role": q is not None and q.opportunity_id is not None,
+    return {
         "local_options": options,
         "local_note": local_note,
         "hosted_label": label,
         "hosted_ready": bool(picker),
         "hosted_note": hosted_note,
     }
-    return templates().TemplateResponse(request, "partials/retry_menu.html", ctx)
 
 
 async def _offered_models(settings: Any, description: str | None) -> tuple[list[dict], dict]:
@@ -367,7 +358,7 @@ async def _employer_state(session, settings: Any) -> str:
     """What happens to the current employer in an online send, as the pipeline will decide it
     (`plan_hosted_send`): "hidden" (confidential mode, an employer is chosen), "held" (confidential
     mode and none chosen: the send is refused and the role waits) or "off"."""
-    if not settings.confidential_mode or not settings.llm.hosted_mode.redact_confidential:
+    if not settings.confidential_mode:  # the one condition the send itself reads (D-PRIV-805)
         return "off"
     from kestrel.docs.current_employer import load_employer_map
 
@@ -385,23 +376,46 @@ async def online_dialog(request: Request, quarantine_id: int):
     the operator acknowledged, not words written here. Nothing leaves this computer until the
     operator presses Send and try."""
     async with sessionmaker()() as s:
-        settings = await load_settings_with_db(s)
         q = await s.get(Quarantine, quarantine_id)
         opp = await s.get(Opportunity, q.opportunity_id) if q and q.opportunity_id else None
-        credit_row = await hosted_balance.rail_row(s, settings)
-        employer = await _employer_state(s, settings)
-    desc = opp.description_md if opp is not None else None
-    models, hosted = await _offered_models(settings, desc)
-    pages = max(1, round(len(desc) / _PAGE_CHARS)) if desc else None
-    sends = settings.llm.hosted_mode.disclosure_terms()["sends"]
+        ctx = await _online_ctx(s, [opp] if opp is not None else [])
+    ctx.update(quarantine_id=quarantine_id, dom_id=f"{ROW_PREFIX}{quarantine_id}")
+    return templates().TemplateResponse(request, "partials/retry_online.html", ctx)
+
+
+async def _online_ctx(s, opps: list[Opportunity]) -> dict:
+    """What the ask-first dialog shows for one role or a group: the provider, what is sent (the
+    disclosure text), the size of the postings, the cost per role and the credit left. The one
+    place the dialog's words are built, so a group's dialog can never say less than a role's."""
     import json
 
+    from kestrel.learning.correction_lines import dialog_digest, lines_for
     from kestrel.services.online_consent import approval_for, merge_approvals
-    ctx = {
-        "quarantine_id": quarantine_id,
-        "dom_id": f"{ROW_PREFIX}{quarantine_id}",
-        "role": (opp.title if opp is not None else None) or "this role",
-        "org": opp.org_name if opp is not None else None,
+
+    settings = await load_settings_with_db(s)
+    credit_row = await hosted_balance.rail_row(s, settings)
+    employer = await _employer_state(s, settings)
+    descs = [o.description_md for o in opps if o.description_md]
+    # The cost beside each model is for the longest posting, so a group's total is never above
+    # the count times it (a short first posting must not set the price of a long group).
+    models, hosted = await _offered_models(
+        settings, max(descs, key=len) if descs else None
+    )
+    pages = max(1, round(sum(len(d) for d in descs) / _PAGE_CHARS)) if descs else None
+    sends = settings.llm.hosted_mode.disclosure_terms()["sends"]
+    # The correction lines this score would send, and their digest, posted back by Send and try
+    # so a change while the dialog is open is refused (issue #178, D-PRIV-670). For a group they
+    # are the lines of exactly the roles the dialog shows.
+    role_ids = [o.id for o in opps]
+    correction_lines = await lines_for(s, role_ids)
+    corrections_digest = await dialog_digest(s, role_ids)
+    one = opps[0] if len(opps) == 1 else None
+    return {
+        "correction_lines": correction_lines,
+        "corrections_digest": corrections_digest,
+        "role": (one.title if one is not None else None) or "this role",
+        "org": one.org_name if one is not None else None,
+        "group_count": len(opps) if len(opps) > 1 else 0,
         "provider": hosted["label"] or "the online service",
         "models": models,
         "note": hosted["note"],
@@ -418,7 +432,6 @@ async def online_dialog(request: Request, quarantine_id: int):
             ), separators=(",", ":")
         ),
     }
-    return templates().TemplateResponse(request, "partials/retry_online.html", ctx)
 
 
 @router.post("/quarantine/{quarantine_id}/model", response_class=HTMLResponse,
@@ -429,27 +442,40 @@ async def try_model(request: Request, quarantine_id: int):
     checked here too: Hosted mode must be on and the model must be one the dialog lists."""
     form = await request.form()
     pick = str(form.get("model") or "").strip()[:240]
+    problem = await _pick_problem(form, pick)
+    if problem:
+        return await _row_response(request, quarantine_id, error=problem)
+    return await _queue(request, quarantine_id, pick=pick, anyway=False, form=form)
+
+
+async def _pick_problem(form: Any, pick: str) -> str | None:
+    """Why a model pick cannot go ahead, or None. The one check a single role and a group both
+    pass: a pick is required, and an online pick needs the dialog's `confirmed=1`, Hosted mode on
+    and a model the dialog lists. Nothing is queued while this returns text."""
     if not pick:
-        return await _row_response(request, quarantine_id, error="Pick a model first.")
+        return "Pick a model first."
     if pick.startswith(HOSTED_PREFIX):
         if str(form.get("confirmed") or "") != "1":
-            return await _row_response(
-                request, quarantine_id, error="Nothing was sent. Confirm in the dialog first."
-            )
+            return "Nothing was sent. Confirm in the dialog first."
         async with sessionmaker()() as s:
             settings = await load_settings_with_db(s)
-        if not settings.llm.hosted_mode.active:
-            return await _row_response(
-                request, quarantine_id,
-                error="Nothing was sent. Online models need Hosted mode, which is off.",
+        from kestrel.services.setup_state import online_send_held, send_refusal
+
+        why_not = online_send_held(settings)
+        if why_not is not None:
+            return send_refusal(
+                why_not, "Nothing was sent. Online models need Hosted mode, which is off."
             )
         offered, _ = await _offered_models(settings, None)
         if pick.removeprefix(HOSTED_PREFIX) not in {m["id"] for m in offered}:
-            return await _row_response(
-                request, quarantine_id,
-                error="Nothing was sent. That model is not on the online list.",
-            )
-    return await _queue(request, quarantine_id, pick=pick, anyway=False, form=form)
+            return "Nothing was sent. That model is not on the online list."
+    return None
+
+
+CORRECTIONS_CHANGED = (
+    "Nothing was sent. Your corrections changed since the dialog opened. Open Try a different "
+    "model again to see what would be sent."
+)
 
 
 # ------------------------------------------------------------------------ score it anyway
@@ -469,8 +495,53 @@ async def anyway_dialog(request: Request, quarantine_id: int):
 @router.post("/quarantine/{quarantine_id}/anyway", response_class=HTMLResponse)
 async def score_anyway(request: Request, quarantine_id: int):
     """Score it anyway (D-UI-74): the role is scored with the rules check skipped, and the
-    operator's choice is recorded by Tier 1 when it runs (kestrel.services.tier0_override)."""
-    return await _queue(request, quarantine_id, pick="same", anyway=True, form=await request.form())
+    operator's choice is recorded by Tier 1 when it runs (kestrel.services.tier0_override).
+
+    The dialog posts no online confirmation. When scoring goes online, the role is handed to the
+    Score again dialog instead, which lists what would be sent, including the correction lines,
+    and binds them to the send (issue #178, D-PRIV-671). Nothing is queued here then."""
+    form = await request.form()
+    async with sessionmaker()() as s:
+        q = await s.get(Quarantine, quarantine_id)
+        opp = await s.get(Opportunity, q.opportunity_id) if q and q.opportunity_id else None
+        set_aside = opp is not None and opp.stage == "t0_reject"
+    if "online_approval" not in form:
+        handoff = await _online_handoff(request, quarantine_id)
+        if handoff is not None:
+            return handoff
+    # A role a rule set aside: skip the rule (D-UI-791). Any other role has no rule to skip, so
+    # this runs the row's own step through the row's own plan (D-UI-790), with the same consent
+    # checks as Try with a different model.
+    return await _queue(request, quarantine_id, pick="same", anyway=set_aside, form=form)
+
+
+ANYWAY_ASK = (
+    "Nothing was sent. Scoring this role goes to an online model, so Score again shows what "
+    "would be sent first."
+)
+
+
+async def _online_handoff(request: Request, quarantine_id: int) -> Response | None:
+    """Score again for this failure's role when its scoring would go online, else None. The URL
+    is built here from row ids, never from the form."""
+    from urllib.parse import urlencode
+
+    from fastapi.responses import RedirectResponse
+
+    from kestrel.services.online_consent import approval_for
+
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+        q = await s.get(Quarantine, quarantine_id)
+    if q is None or q.opportunity_id is None or not approval_for(settings, ("tier1", "tier2")):
+        return None
+    url = "/rescore/choose?" + urlencode({
+        # No quarantine_id: skipping a rule is not a retry of the row, so it spends none (D-UI-791).
+        "opp_ids": str(int(q.opportunity_id)), "page": "1", "next": "/quarantine",
+    })
+    if request.headers.get("HX-Request"):
+        return HTMLResponse(f"<p>{ANYWAY_ASK}</p>", headers={"HX-Redirect": url})
+    return RedirectResponse(url, status_code=303)
 
 
 async def _queue(
@@ -486,40 +557,30 @@ async def _queue(
             if q is None or q.opportunity_id is None:
                 return await _row_response(request, quarantine_id,
                                            error="This failure has no role to score.")
+            task_type: str | None = None
+            if not anyway:
+                # What runs is the row's own step (D-UI-790), never the role's stage. A refusal
+                # queues nothing and spends no retry.
+                plan = row_retry.plan(q, await s.get(Opportunity, q.opportunity_id))
+                if plan.task is None:
+                    return await _row_response(
+                        request, quarantine_id, error=plan.why,
+                        events={"k-toast": _toast(plan.why or "Not queued.", tone="warn")},
+                    )
+                task_type = plan.task
             settings = await load_settings_with_db(s)
-            override = None
-            if pick != "same":
-                override, _label, why = await _override_for(settings, pick)
-                if override is None:
-                    return await _row_response(request, quarantine_id, error=f"Not queued: {why}",
-                                               events={"k-toast": _toast(f"Not queued: {why}",
-                                                                          tone="warn")})
-            from kestrel.services.online_consent import approval_problem
-            effective = settings
-            expected = None
-            if override is not None:
-                from kestrel.pipeline._shared import settings_with_override
-                try:
-                    effective = settings_with_override(settings, "tier2", override)
-                except ValueError:
-                    effective = settings
-                from kestrel.web.pages.rescore import _approval_for_override
-
-                expected = _approval_for_override(settings, override)
-            problem = await approval_problem(
-                s, effective, ("tier1", "tier2"), form or {}, expected=expected
+            result, problem, as_toast = await _enqueue(
+                s, settings, [q.opportunity_id], pick=pick, anyway=anyway, form=form,
+                task_type=task_type,
             )
-            if problem:
+            if result is None:
                 return await _row_response(
-                    request, quarantine_id,
-                    error="Nothing was sent. Confirm the online send first.",
+                    request, quarantine_id, error=problem,
+                    events={"k-toast": _toast(problem or "Not queued.", tone="warn")}
+                    if as_toast else None,
                 )
-            result = await enqueue_rescore(
-                s, [q.opportunity_id], model_override=override, tier0_anyway=anyway,
-                explain=rule_explainer(s, settings),
-                online_approval=(form or {}).get("online_approval"),
-            )
-            await _count_retry(s, str(quarantine_id), result.queued)
+            if not anyway:  # skipping a rule is not a retry of the row (D-UI-791)
+                await _count_retry(s, str(quarantine_id), result.queued)
             await s.commit()
             if not result.queued:
                 note = " ".join(result.messages()) or "Not queued. Open the role to see why."
@@ -529,6 +590,58 @@ async def _queue(
         note = f"Not queued: {plain_error(exc)}"
     events = {"k-toast": _toast(note, tone="warn")} if note else None
     return await _row_response(request, quarantine_id, error=note, events=events)
+
+
+async def _enqueue(
+    s, settings: Any, opp_ids: list[int], *, pick: str, anyway: bool, form: Any,
+    task_type: str | None = None,
+) -> tuple[Any, str | None, bool]:
+    """Queue `opp_ids` through `enqueue_rescore` with the pick's one-off model. The one path a
+    single role and a group share, so the consent rules cannot differ between them: an online
+    pick must pass `approval_problem` against the dialog's own approval before anything is
+    queued. Returns (the result, None, False), or (None, why it was not queued, whether to also
+    toast it). The caller commits."""
+    from kestrel.services.online_consent import approval_problem
+
+    override = None
+    if pick != "same":
+        override, _label, why = await _override_for(settings, pick)
+        if override is None:
+            return None, f"Not queued: {why}", True
+    effective = settings
+    expected = None
+    if override is not None:
+        from kestrel.pipeline._shared import settings_with_override
+        try:
+            effective = settings_with_override(settings, "tier2", override)
+        except ValueError:
+            effective = settings
+        from kestrel.web.pages.rescore import _approval_for_override
+
+        expected = _approval_for_override(settings, override)
+    problem = await approval_problem(
+        s, effective, ("tier1", "tier2"), form or {}, expected=expected
+    )
+    if problem:
+        return None, "Nothing was sent. Confirm the online send first.", False
+    # The correction lines the dialog listed, read again in the session that queues, bind the send
+    # (D-PRIV-674): an approval with no or a stale digest sends nothing. For a group the lines are
+    # those of exactly the roles being queued, the ones its dialog showed.
+    from kestrel.learning.correction_lines import confirm_corrections
+    from kestrel.services.online_consent import read_approval
+
+    approval = read_approval((form or {}).get("online_approval"))
+    confirmed = None
+    if approval:
+        confirmed = await confirm_corrections(s, opp_ids, (form or {}).get("corrections_digest"))
+        if confirmed is None:
+            return None, CORRECTIONS_CHANGED, False
+    result = await enqueue_rescore(
+        s, opp_ids, model_override=override, tier0_anyway=anyway,
+        explain=rule_explainer(s, settings),
+        online_approval=approval, corrections=confirmed, task_type=task_type,
+    )
+    return result, None, False
 
 
 # ------------------------------------------------------------------------ remove and undo
@@ -628,8 +741,172 @@ async def bulk(request: Request):
         msg = "Nothing to try again."
     else:
         queued = n - errors
-        msg = (f"Trying {queued} {'role' if queued == 1 else 'roles'} again. Scores appear here "
-               "as they finish." + (f" {errors} could not be queued." if errors else ""))
+        msg = ((f"Trying {queued} {'role' if queued == 1 else 'roles'} again. Scores appear here "
+                "as they finish." + (f" {errors} could not be queued." if errors else ""))
+               if queued else "Nothing was queued. Open a role to see why.")
     return HTMLResponse("".join(out), headers=_events({
         "k-toast": _toast(msg, tone="warn" if errors else None), "rt-refresh": True,
     }))
+
+
+# ------------------------------------------------------------------- roles that failed alike
+# The banner (D-UI-550 to D-UI-556). Every action takes the group's key, never a list of ids: the
+# members are worked out again from the rows as they are now, so a stale page cannot widen it,
+# and a group that has shrunk below the threshold is refused with nothing queued.
+async def _group_card(
+    request: Request, *, note: str | None = None, tone: str | None = None,
+    undo_url: str | None = None,
+) -> Response:
+    """The whole card, as it is now, with a toast. A group action changes many rows at once."""
+    ctx = await _list_context(request, "all")
+    ctx.update(title="Needs another try", retry_error=None)
+    headers = _events({"k-toast": _toast(note, undo_url=undo_url, tone=tone)}) if note else {}
+    return templates().TemplateResponse(request, "partials/retry_card.html", ctx, headers=headers)
+
+
+def _shown_members(g: dict | None, group_ids: str) -> list[dict]:
+    """The members of `g` the banner named: those whose id is in `group_ids`, or every member when
+    the request names none (a direct link). Never a role that is not in the group now."""
+    if g is None:
+        return []
+    shown = retry_groups.parse_shown_ids(group_ids)
+    return [m for m in g["members"] if not shown or m["opp"].id in shown]
+
+
+def _roles_phrase(n: int) -> str:
+    return f"{n} {'role' if n == 1 else 'roles'}"
+
+
+@router.get("/quarantine/group/{key}/models", response_class=HTMLResponse)
+async def group_models_menu(request: Request, key: str, group_ids: str = ""):
+    """The model menu for a group: the same options as one role's, posting to the group. The roles
+    it will act on are the ones the banner named (`group_ids`) that are still in the group."""
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+        g = retry_groups.find(await _groups_now(s), key)
+    members = _shown_members(g, group_ids)
+    ctx = {
+        "quarantine_id": 0, "dom_id": "rt-card", "has_role": bool(members),
+        "group_ids": retry_groups.shown_ids(members) if members else "",
+        "model_url": f"/quarantine/group/{quote(key, safe='')}/model",
+        "online_url": f"/quarantine/group/{quote(key, safe='')}/online",
+        "target": "#rt-card",
+        **await _menu_options(settings),
+    }
+    return templates().TemplateResponse(request, "partials/retry_menu.html", ctx)
+
+
+@router.get("/quarantine/group/{key}/online", response_class=HTMLResponse)
+async def group_online_dialog(request: Request, key: str, group_ids: str = ""):
+    """The ask-first dialog for a group: the same words as for one role, with the count. It shows
+    the roles the banner named that are still in the group, and carries exactly those ids. Nothing
+    leaves this computer until Send and try."""
+    async with sessionmaker()() as s:
+        g = retry_groups.find(await _groups_now(s), key)
+        members = _shown_members(g, group_ids)
+        if not members:
+            return HTMLResponse("")
+        ctx = await _online_ctx(s, [m["opp"] for m in members])
+    ctx.update(
+        group_ids=retry_groups.shown_ids(members),
+        quarantine_id=0, dom_id="rt-card", target="#rt-card",
+        model_url=f"/quarantine/group/{quote(key, safe='')}/model",
+    )
+    return templates().TemplateResponse(request, "partials/retry_online.html", ctx)
+
+
+@router.post("/quarantine/group/{key}/model", response_class=HTMLResponse,
+    dependencies=[LOCAL_ONLY])
+async def group_model(request: Request, key: str):
+    """Try the group with a different model, this run only. The model pick is checked as for one
+    role (`_pick_problem`) and the queueing goes through the same `_enqueue`, so an online pick
+    needs the dialog's confirmation and approval. Settings never change."""
+    form = await request.form()
+    pick = str(form.get("model") or "").strip()[:240]
+    if pick == "same":
+        pick = ""  # a group is only ever tried with a model the person chose
+    problem = await _pick_problem(form, pick)
+    if problem:
+        return await _group_card(request, note=problem, tone="warn")
+    release_credit_hold(request)
+    shown = retry_groups.parse_shown_ids(form.get("group_ids"))
+    note: str | None = None
+    ok = False
+    try:
+        async with sessionmaker()() as s:
+            g = retry_groups.find(await _groups_now(s), key)
+            if g is None:
+                return await _group_card(
+                    request, tone="warn",
+                    note="These roles changed since the page loaded. Nothing was queued.",
+                )
+            # Every pick, a free local one as much as an online one, acts on exactly the roles
+            # the banner named: a role that joined the group since is left out, one that left is
+            # skipped, and a request that shares no role with the banner queues nothing.
+            members = [m for m in g["members"] if m["opp"].id in shown]
+            if not members:
+                return await _group_card(
+                    request, tone="warn",
+                    note="Nothing was queued. The roles in this group changed after the page "
+                         "loaded. Look at them again.",
+                )
+            # Each member's task is its own row's step, read again here (D-UI-790). A group has
+            # one step, so the plans agree; a member whose row cannot run now is left out.
+            plans = {m["opp"].id: row_retry.plan(m["q"], m["opp"]).task for m in members}
+            members = [m for m in members if plans[m["opp"].id] is not None]
+            kinds = {plans[m["opp"].id] for m in members}
+            if len(kinds) != 1:
+                return await _group_card(
+                    request, tone="warn",
+                    note="Nothing was queued. The roles in this group changed after the page "
+                         "loaded. Look at them again.",
+                )
+            settings = await load_settings_with_db(s)
+            result, why, _toast_it = await _enqueue(
+                s, settings, [m["opp"].id for m in members],
+                pick=pick, anyway=False, form=form, task_type=kinds.pop(),
+            )
+            if result is None:
+                return await _group_card(request, note=why or "Not queued.", tone="warn")
+            for m in members:
+                await _count_retry(s, str(m["id"]), result.queued)
+            await s.commit()
+            n = len(result.queued)
+            ok = n > 0
+            note = (f"Trying {_roles_phrase(n)} again with the model you chose."
+                    if n else " ".join(result.messages()) or "Not queued. Open a role to see why.")
+    except (SQLAlchemyError, OSError, ValueError) as exc:  # a write path never turns into a 500
+        log.warning("quarantine_group_queue_failed", error_type=type(exc).__name__,
+                    error=str(exc))
+        note = f"Not queued: {plain_error(exc)}"
+    return await _group_card(request, note=note, tone=None if ok else "warn")
+
+
+@router.post("/quarantine/group/{key}/dismiss", response_class=HTMLResponse)
+async def group_dismiss(request: Request, key: str):
+    """Hide a group's banner until the group grows. Nothing else changes: every role stays in
+    the list. The toast's Undo brings the banner back."""
+    async with sessionmaker()() as s:
+        groups = await _groups_now(s)
+        g = retry_groups.find(groups, key)
+        if g is None:
+            return await _group_card(request)
+        stamp = await retry_groups.dismiss(s, key, g["count"])
+        # Markers of groups that are gone are cleaned up here, on a write, not on a page load.
+        await retry_groups.prune_dismissed(s, {x["key"] for x in groups})
+        await s.commit()
+    return await _group_card(
+        request, note="Hidden until more roles fail this way.",
+        undo_url=f"/quarantine/group/{quote(key, safe='')}/undismiss?at={quote(stamp)}",
+    )
+
+
+@router.post("/quarantine/group/{key}/undismiss", response_class=HTMLResponse)
+async def group_undismiss(request: Request, key: str, at: str = ""):
+    async with sessionmaker()() as s:
+        if not (at and await retry_groups.undo_dismiss(s, key, at=at)):
+            return HTMLResponse(
+                '<span data-undo-msg data-ok="0">This can no longer be undone.</span>'
+            )
+        await s.commit()
+    return Response(status_code=204, headers=_events({"rt-reload": True}))

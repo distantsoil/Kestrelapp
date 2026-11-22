@@ -9,6 +9,7 @@ from pathlib import Path
 
 from kestrel import paths
 from kestrel.desktop import frame
+from tests.page_source import inline_static
 
 
 class _Win:
@@ -60,9 +61,11 @@ def test_window_api_close_intent_is_tray_or_quit_and_never_raises():
 def test_window_api_exposes_only_its_own_methods_to_the_page():
     api, _ = _api(_Win())
     public = sorted(n for n in dir(api) if not n.startswith("_"))
-    assert public == ["splash_cancel", "splash_download", "splash_open_logs", "splash_quit",
-                      "splash_retry", "splash_safe_start", "window_close", "window_close_intent",
-                      "window_info",
+    # bridge_check: the page reports it reached the API (D-SEC-61, bridge_check.py); it only
+    # records that, so it adds nothing a page could use.
+    assert public == ["bridge_check", "splash_cancel", "splash_download", "splash_open_logs",
+                      "splash_quit", "splash_retry", "splash_safe_start", "window_close",
+                      "window_close_intent", "window_info",
                       "window_minimize",
                       "window_set_frame_color", "window_set_theme", "window_start_drag",
                       "window_start_resize", "window_toggle_maximize"]
@@ -104,14 +107,24 @@ def test_os_key():
     assert frame.os_key("linux") == "linux"
 
 
-def test_splash_page_is_built_self_contained():
-    """The loading page shows before any server exists, so its tokens and mark are inlined (its
+def test_the_loading_page_carries_no_inline_code_and_loads_only_its_own_files():
+    """The loading page comes from the shell's own server under the app's policy (D-SEC-61): no
+    inline script, style or handler, and every file it names is one that server serves (its
     behavior is covered in a real browser: test_shell_frame_browser.py)."""
-    from kestrel.desktop.shell import splash_html
+    import re
 
-    html = splash_html()
-    assert "/*K-TOKENS*/" not in html and "/*K-MARK*/" not in html
-    assert "/static/" not in html  # nothing it would have to fetch
+    from kestrel.desktop.splash_server import STATIC_FILES, SplashServer
+    from tests import _crawl_support as cs
+
+    srv = SplashServer(None)
+    try:
+        html = srv.page()
+    finally:
+        srv.stop()
+    assert cs.inline_markup_problems(html) == []
+    named = set(re.findall(r'(?:href|src)="static/([^"]+)"', html))
+    assert named == {"css/tokens.css", "css/splash.css", "js/splash.js", "icon.svg"}
+    assert named <= set(STATIC_FILES)
 
 
 def _client():
@@ -157,7 +170,7 @@ def test_window_controls_render_only_with_the_desktop_shell_and_start_hidden():
         assert f'data-wc="{wc}"' in side
     # The top row carries the power button (D-UI-197), after the avatar, with an in-window tip.
     assert 'data-testid="quit-app"' in app and 'data-k-tip="Quit Kestrel"' in app
-    assert "kestrelQuit.open(this)" in app
+    assert "data-k-quit-open" in app  # k-head.js opens kestrelQuit from it (D-INST-8)
     # The empty top of the row is the drag region.
     assert 'class="k-tools" data-k-drag' in app
 
@@ -204,7 +217,9 @@ def test_mark_all_as_read_clears_the_bell():
     with _client() as c:
         page = c.get("/help").text
     button = page.split('data-testid="notif-read-all"')[0].rsplit("<button", 1)[1]
-    assert 'hx-target="#k-np-body"' in button and "tab:" in button
+    # The tab is added by k-head.js (data-k-vals, no js: value, D-INST-8).
+    assert 'hx-target="#k-np-body"' in button and 'data-k-vals="np-tab"' in button
+    assert "p.tab = (np && np.dataset.tab) || 'all'" in inline_static(page)
     assert 'id="k-np-body"' in page
 
 
@@ -326,8 +341,15 @@ def test_the_first_frame_matches_the_saved_theme(monkeypatch):
     dark, light = shell._token("sky-top", True), shell._token("sky-top", False)
     css = Path(paths.web_static_dir(), "css", "tokens.css").read_text("utf-8")
     assert dark and light and dark != light and f"--sky-top:{dark}" in css
-    assert '<html lang="en" data-theme="dark">' in shell.splash_html("dark")
-    assert "data-theme" not in shell.splash_html("auto").split("<head>")[0]
+    from kestrel.desktop.splash_server import SplashServer
+
+    dark_srv, auto_srv = SplashServer(None, theme="dark"), SplashServer(None, theme="auto")
+    try:
+        assert '<html lang="en" data-theme="dark">' in dark_srv.page()
+        assert "data-theme" not in auto_srv.page().split("<head>")[0]
+    finally:
+        dark_srv.stop()
+        auto_srv.stop()
     shell._remember_theme("purple")  # never stored
     assert shell._saved_theme() == "dark"
     paths.window_state_json().unlink(missing_ok=True)

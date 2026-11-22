@@ -1,0 +1,29 @@
+{# Why roles have no score (Runs): every listed role without a score, grouped by the reason the
+   Pipeline row shows (kestrel.web.unscored.summary), with what moves each group forward and its
+   first few roles. Built with the page, not on the poll. Nothing here rejects or hides a role. #}
+{% import "ui/macros.html" as ui %}
+<section class="k-card rn-why" id="runs-unscored" data-testid="runs-unscored">
+  <h3 class="rn-nat__h"><span class="k-badge">{{ ui.icon('pipeline') }}</span>Why roles have no score</h3>
+  {% if unscored.reasons %}
+  <p class="k-muted rn-small" data-testid="rn-why-total">{{ unscored.total }} {{ 'role' if unscored.total == 1 else 'roles' }} in Pipeline {{ 'has' if unscored.total == 1 else 'have' }} no score yet. Each reason below says what moves it forward. None of them was rejected or hidden.</p>
+  <ul class="rn-why__list">
+    {% for g in unscored.reasons %}
+    <li class="rn-why__item" data-testid="rn-why" data-reason="{{ g.key }}">
+      <div class="rn-why__head"><span class="k-pill">{{ g.label }}</span><span class="rn-why__n" data-testid="rn-why-count">{{ g.count }} {{ 'role' if g.count == 1 else 'roles' }}</span>
+        {% if g.action %}<a class="k-btn k-btn--sm rn-why__act" href="{{ g.href }}" data-testid="rn-why-action">{{ g.action }}</a>{% endif %}</div>
+      <p class="rn-small rn-why__tip">{{ g.tip }}</p>
+      <ul class="rn-why__roles">
+        {% for r in g.roles %}<li><a class="k-link" href="/opportunities/{{ r.id }}" data-testid="rn-why-role">{{ r.title }}</a> {% set facts = [r.source, r.why]|select|join(' · ') %}{% if facts %}<span class="k-muted">{{ facts }}</span>{% endif %}</li>{% endfor %}
+      </ul>
+      {% if g.more %}<p class="k-muted rn-small">and {{ g.more }} more in <a class="k-link" href="/opportunities">Pipeline</a>.</p>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="k-muted rn-small" data-testid="rn-why-none">Every role in Pipeline has a score.</p>
+  {% endif %}
+  {% if unscored.no_vector %}{% set nv = unscored.no_vector %}<div data-testid="rn-why-vector"><p class="k-muted rn-small">{{ nv.count }} {{ 'role' if nv.count == 1 else 'roles' }} could not be prepared for sorting, so {{ 'its' if nv.count == 1 else 'their' }} place in your lists may be less accurate. Scoring goes ahead without it, and Kestrel tries again on its own.</p>
+  <ul class="rn-why__roles">{% for r in nv.roles %}<li><a class="k-link" href="/opportunities/{{ r.id }}" data-testid="rn-why-vector-role">{{ r.title }}</a> <span class="k-muted">{{ r.why }}</span></li>{% endfor %}</ul>
+  {% if nv.more %}<p class="k-muted rn-small">and {{ nv.more }} more.</p>{% endif %}</div>{% endif %}
+  {% for a in unscored.set_aside %}<p class="k-muted rn-small" data-testid="rn-why-aside">{{ a.label }}: {{ a.count }} {{ 'role' if a.count == 1 else 'roles' }}, under Not a fit in <a class="k-link" href="/opportunities">Pipeline</a>, each with Keep it anyway.</p>{% endfor %}
+</section>

@@ -22,7 +22,7 @@ from typing import Any
 import httpx
 
 from kestrel.config import BackendConfig, HostedModelCaps, JsonMode, Settings
-from kestrel.llm import credit
+from kestrel.llm import credit, engine_cycle
 from kestrel.llm.credit import OutOfCredit
 
 _THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
@@ -912,7 +912,8 @@ class ProviderError(RuntimeError):
                 f"{message}. In plain words: no provider serves this model under Kestrel's "
                 "privacy setting, which blocks providers that may train on your data and "
                 "overrides your OpenRouter account setting. Pick a paid model, or allow those "
-                "providers under Settings > Hosted (data collection: allowed)"
+                "providers under Settings > This computer > Free models only (Allow models "
+                "that may train)"
             )
         if status == 402 and "max_tokens" in message.lower():
             message = f"{credit.TOO_BIG_NOTE} {message}"
@@ -1041,7 +1042,7 @@ async def unload_loaded_models(
 
 
 _HTTP_HINTS = {
-    401: "API key rejected; add a working key in Settings > Hosted",
+    401: "API key rejected; add a working key in Settings > This computer",
     402: "insufficient credits or balance; top up at the provider",
     403: "quota exceeded or permission denied by the provider",
     404: "no endpoint serves this model with the parameters sent (structured output required)",
@@ -1305,11 +1306,22 @@ class LLMClient:
                     f"backend '{tcfg.backend}' for tier '{tier}' is external and "
                     f"{HOSTED_DISCLOSURE_CHANGED}; nothing was sent"
                 )
-            if not hm.active:
+            from kestrel.services.setup_state import online_send_held
+
+            why_not = online_send_held(self.settings)
+            if why_not is not None and hm.active:
+                # On this computer is chosen (D-PRIV-798): the switch is on and the tick is
+                # current, and still nothing goes, including work confirmed before the choice.
+                raise ExternalBackendError(
+                    f"backend '{tcfg.backend}' for tier '{tier}' is external and online models "
+                    "are not in use (On this computer is chosen under Settings > This "
+                    "computer); nothing was sent"
+                )
+            if why_not is not None:
                 raise ExternalBackendError(
                     f"backend '{tcfg.backend}' for tier '{tier}' is external; it may be reached "
                     "only through operator-confirmed Tier 3 escalation or after Hosted mode is "
-                    "turned on and acknowledged under Settings > Hosted, never automatically"
+                    "turned on with what it sends confirmed, never automatically"
                 )
             _announce_hosted(tcfg.backend, tcfg.model, tier)
         temp = temperature if temperature is not None else tcfg.temperature
@@ -1412,6 +1424,18 @@ class LLMClient:
                     )
                 raise OutOfCredit(backend.provider) from exc
 
+        if backend.external and not allow_external:
+            # Asked again of the stored state, immediately before the request: the check at the
+            # top read this client's settings, which a repair or a retry on the same client
+            # still carries after the person chose On this computer (D-PRIV-798 round 2).
+            from kestrel.services.setup_state import online_send_held_now
+
+            held = await online_send_held_now(self.settings)
+            if held is not None:
+                raise ExternalBackendError(
+                    f"backend '{tcfg.backend}' for tier '{tier}' is external and online models "
+                    f"are not in use now ({held}); nothing was sent"
+                )
         try:
             r = await client.post(url, json=body, headers=headers, timeout=timeout)
             if not backend.external and is_load_crash(r.status_code, r.text or ""):
@@ -1452,6 +1476,14 @@ class LLMClient:
                     ) from exc
                 raise
             data = r.json()
+        except (httpx.TransportError, ConnectionRefusedError) as exc:
+            # Ollama could not be reached, or dropped the connection: the same failure, marked
+            # EngineUnreachable, so the task waits instead of spending its try and the rest of
+            # the cycle leases nothing on Ollama (llm.engine_cycle, D-WORKER-6 round 11).
+            lost = engine_cycle.classify(self.settings, backend, exc)
+            if lost is None:
+                raise
+            raise lost from exc
         finally:
             leave_flight(tcfg.model)
             if shared is None:
@@ -1581,6 +1613,14 @@ class LLMClient:
             r = await client.post(url, json=body, headers=headers, timeout=timeout)
             r.raise_for_status()
             data = r.json()
+        except (httpx.TransportError, ConnectionRefusedError) as exc:
+            # Ollama could not be reached, or dropped the connection: the same failure, marked
+            # EngineUnreachable, so the task waits instead of spending its try and the rest of
+            # the cycle leases nothing on Ollama (llm.engine_cycle, D-WORKER-6 round 11).
+            lost = engine_cycle.classify(self.settings, backend, exc)
+            if lost is None:
+                raise
+            raise lost from exc
         finally:
             if shared is None:
                 await client.aclose()

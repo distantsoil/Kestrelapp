@@ -626,12 +626,15 @@ def test_runs_live_panel_shows_the_step_bars_and_events():
     # The newest row was written at seed time, so the words are "N seconds ago" for the time the
     # seed, app start and request took: "0 seconds ago" on a fast machine, "1 second ago"
     # (singular, correctly) on a slow Windows runner. Assert the exact words for whatever N is.
+    # D-TEST-825: machine load may age the row past a minute, so accept the unit the count has
+    # reached; the word must still be the plain relative one, singular exactly at one.
     activity = re.search(
         r'data-testid="run-activity">\s*<span class="k-dot[^>]*></span>Last activity (\d+) '
-        r'(seconds?) ago\s*<', panel)
+        r'(second|seconds|minute|minutes) ago\s*<', panel)
     assert activity is not None, panel
-    secs = int(activity.group(1))
-    assert secs < 60 and activity.group(2) == ("second" if secs == 1 else "seconds")
+    secs, unit = int(activity.group(1)), activity.group(2)
+    assert (secs == 1) == (not unit.endswith("s"))
+    assert secs < 60 if unit.startswith("second") else secs >= 1
     assert 'data-testid="run-stall"' not in panel
     with _client() as c:  # the poll that patches the card in place lives on the page
         assert 'hx-trigger="every 5s, run-refresh from:body"' in c.get("/runs").text
@@ -650,7 +653,10 @@ def test_runs_live_panel_warns_after_ten_minutes_without_activity():
         html = c.get("/runs").text
     panel = html.split('data-testid="run-live"')[1]
     warn = panel.split('data-testid="run-stall"')[1].split("</div>")[0]
-    assert "No activity for 31 minutes" in warn or "No activity for 30 minutes" in warn
+    # D-TEST-825: the seeded 30-minute stall ages under load; require at least 30 minutes.
+    stalled = re.search(r"No activity for (\d+) (minutes?)\b", warn)
+    assert stalled is not None and int(stalled.group(1)) >= 30, warn
+    assert stalled.group(2) == ("minute" if int(stalled.group(1)) == 1 else "minutes")
     assert 'href="/about#diagnostics"' in warn
 
 
@@ -751,7 +757,7 @@ def test_in_flight_line_says_retries_and_how_long_the_run_has_gone():
     assert rs.stage_line({**base, "retrying": 2}, elapsed=125) == (
         "Rating 3 of 12 · 1 failed · 2 retrying · 2 min so far")
     assert rs.stage_line({**base, "retrying": 0}, elapsed=20) == (
-        "Rating 3 of 12 · 1 failed · just started")
+        "Rating 3 of 12 · 1 failed · 20 sec so far")
     assert rs.stage_line({**base, "retrying": 1}, elapsed=3900).endswith("1 hr 5 min so far")
     # Paused or idle: no elapsed clock and no retry count.
     assert rs.stage_line({**base, "active": False, "paused": True, "stage": "paused"},
@@ -761,7 +767,81 @@ def test_in_flight_line_says_retries_and_how_long_the_run_has_gone():
     started = iso(clock_seed.ago(horizon=timedelta(0), minutes=7))
     v = rs.view({**base, "retrying": 1, "started_at": started})
     assert v["step"] == "Rating 3 of 12 · 1 failed"
-    assert v["step_detail"] == "Rating 3 of 12 · 1 failed · 1 retrying · 7 min so far"
+    # D-TEST-825: the seeded 7 minutes age under load; require at least 7.
+    clock = re.fullmatch(
+        r"Rating 3 of 12 · 1 failed · 1 retrying · (\d+) min so far", v["step_detail"])
+    assert clock is not None and int(clock.group(1)) >= 7, v["step_detail"]
+
+
+def test_runs_live_panel_draws_the_step_and_its_clock_as_two_spans():
+    """#177 (D-UI-691): the poll patches each span by its own key, so the clock alone redraws."""
+    asyncio.run(_seed(_active_rows()))
+    with _client() as c:
+        html = c.get("/runs", headers={"HX-Request": "true"}).text
+    step = html.split('data-testid="run-step"')[1].split("</div>")[0]
+    assert 'data-live="step-main"' in step and "Rating 3 of 4 · 1 failed" in step
+    clock = step.split('data-live="step-clock"')[1]
+    assert re.search(r"· \d+ (sec|min|hr)[^<]* so far</span>", clock), clock
+    assert "just started" not in html
+
+
+def test_elapsed_reads_the_real_time_from_the_first_second_on():
+    """#177 (D-UI-690): no "just started" while a run works; seconds until a minute, then the
+    minute and hour words as before."""
+    words = rs.elapsed_words
+    assert [words(n) for n in (0, 1, 59, 60, 119, 125, 3599, 3600, 3900)] == [
+        "0 sec so far", "1 sec so far", "59 sec so far", "1 min so far", "1 min so far",
+        "2 min so far", "59 min so far", "1 hr 0 min so far", "1 hr 5 min so far"]
+    assert words(None) == "" and words(-4) == "0 sec so far"
+
+
+def test_step_parts_split_the_text_from_the_clock():
+    """#177 (D-UI-691): the page draws the step text and the clock separately so the clock can
+    tick alone; joined they are exactly the line the rail and tooltips already print."""
+    base = {**rs._empty(), "active": True, "stage": "full_review", "rated": 2, "to_rate": 12,
+            "failed": 1, "retrying": 2}
+    assert rs.stage_parts(base, elapsed=45) == (
+        "Rating 3 of 12 · 1 failed · 2 retrying", "45 sec so far")
+    assert rs.stage_parts(base) == ("Rating 3 of 12 · 1 failed", "")  # no start known: no clock
+    assert rs.stage_parts({**base, "active": False, "paused": True, "stage": "paused"},
+                           elapsed=45) == ("Paused", "")
+    assert rs.stage_parts({**rs._empty(), "stage": "idle"}, elapsed=45) == ("", "")
+    # The clock moves with the injected clock: 20 s after the start, then 25 s.
+    start = datetime(2026, 11, 14, 12, 0, 0, tzinfo=UTC)
+    started = iso(start)
+    for plus, want in ((20, "20 sec so far"), (25, "25 sec so far"), (95, "1 min so far")):
+        v = rs.view({**base, "started_at": started}, now=start + timedelta(seconds=plus))
+        assert v["step_clock"] == want
+        assert v["step_main"] == "Rating 3 of 12 · 1 failed · 2 retrying"
+        assert v["step_detail"] == f"{v['step_main']} · {want}"
+
+
+def test_seconds_since_reads_the_modules_own_clock(monkeypatch):
+    """#177 (D-UI-690, D-TEST-2): with no `now=`, the elapsed time reads `run_summary._now`, so
+    a test freezes it instead of racing the real clock."""
+    start = datetime(2026, 11, 14, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(rs, "_now", lambda: start + timedelta(seconds=37))
+    assert rs.seconds_since(iso(start)) == 37
+    v = rs.view({**rs._empty(), "active": True, "stage": "full_review", "rated": 1,
+                 "to_rate": 4, "started_at": iso(start)})
+    assert v["step_clock"] == "37 sec so far"
+    monkeypatch.setattr(rs, "_now", lambda: start + timedelta(seconds=125))
+    assert rs.view({**rs._empty(), "active": True, "stage": "full_review", "rated": 1,
+                    "to_rate": 4, "started_at": iso(start)})["step_clock"] == "2 min so far"
+
+
+def test_a_start_in_the_future_shows_no_clock_instead_of_a_frozen_zero(monkeypatch):
+    """#177 (D-UI-693): a stored start after now (clock set back, copied database) has no honest
+    elapsed time; the clock is absent, then appears once the start is in the past."""
+    start = datetime(2026, 11, 14, 12, 0, 0, tzinfo=UTC)
+    base = {**rs._empty(), "active": True, "stage": "full_review", "rated": 1, "to_rate": 4,
+            "started_at": iso(start)}
+    for secs, want in ((-90, ""), (-1, ""), (0, "0 sec so far"), (3, "3 sec so far")):
+        monkeypatch.setattr(rs, "_now", lambda secs=secs: start + timedelta(seconds=secs))
+        v = rs.view(base)
+        assert v["step_clock"] == want, (secs, v["step_clock"])
+        assert v["step_detail"] == (f"{v['step_main']} · {want}" if want else v["step_main"])
+    assert rs.elapsed_since(None) is None and rs.elapsed_since("not a time") is None
 
 
 def test_run_summary_counts_the_tasks_on_another_try():

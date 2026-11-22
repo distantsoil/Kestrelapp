@@ -1180,6 +1180,37 @@ def test_remove_folds_the_card_away_and_undo_puts_it_back_in_place(live):
         ctx.close()
 
 
+def test_remove_holds_still_while_the_panel_opens(live):
+    """#229: the panel's clip box must not scroll. Bringing Remove into view while the panel is
+    still opening (as a click or a Tab does) once scrolled that box, so the button slid down with
+    the growing panel and a click that started on it ended on the form: Remove never ran."""
+    ctx, page, errors = _open(live, "corrections", "light", 1280)
+    try:
+        card = _card(page, corrections_seed.REQ_LEAN)
+        moves = card.evaluate("""c => new Promise(done => {
+          const panel = c.querySelector('.pf-cr__panel');
+          const clip = panel.firstElementChild;
+          const rm = c.querySelector('[data-pf-cr-remove]');
+          const seen = [];
+          let open = true;
+          const end = e => { if (e.target === panel) open = false; };
+          panel.addEventListener('transitionend', end);
+          panel.addEventListener('transitioncancel', end);
+          c.querySelector('[data-pf-cr-edit]').click();
+          rm.scrollIntoView({ block: 'nearest' });
+          (function frame() {
+            seen.push([Math.round(rm.getBoundingClientRect().top), clip.scrollTop]);
+            if (open) requestAnimationFrame(frame); else done(seen);
+          })();
+        })""")
+        assert len(moves) > 2, moves  # it was sampled while the panel opened
+        assert {top for top, _ in moves} == {moves[-1][0]}, moves
+        assert {scrolled for _, scrolled in moves} == {0}, moves
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
 def test_corrections_work_from_the_keyboard(live):
     ctx, page, errors = _open(live, "corrections", "light", 1280)
     try:

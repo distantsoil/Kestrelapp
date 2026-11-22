@@ -13,6 +13,67 @@ import pytest_asyncio  # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker  # noqa: E402
 
 
+def _host_configuration_vars() -> list[str]:
+    """The developer's own configuration in os.environ (D-TEST-572): every KESTREL_<setting>
+    variable (its first `__` part names a Settings field, so pydantic-settings would read it,
+    case-insensitively) and every OLLAMA_* variable. The harness's own switches
+    (KESTREL_LIVE_BROWSER, KESTREL_DATA_HOME, the stress clock) name no setting and are kept."""
+    from kestrel.config import Settings
+
+    settings_vars = {f"KESTREL_{field}".upper() for field in Settings.model_fields}
+    return [
+        name for name in os.environ
+        if name.upper().startswith("OLLAMA_") or name.upper().split("__", 1)[0] in settings_vars
+    ]
+
+
+def _isolate_the_process_from_the_host() -> None:
+    """D-TEST-574: before any test module is imported, the process gets a throwaway data home and
+    loses the host's configuration variables. Module imports (tests/test_route_crawl.py builds its
+    app at import), collection and module- or session-scoped fixtures all run before the per-test
+    `_isolate_data_home`; without this they read the developer's real data home and shell. Every
+    test still gets its own data home from that fixture."""
+    import atexit
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from tests import throwaway
+
+    for name in _host_configuration_vars():
+        os.environ.pop(name, None)
+    # D-TEST-792 (carried over from the consent outbound branch): uvicorn's "auto" loop is uvloop
+    # wherever it is installed (Linux, macOS). uvloop resolves names and connects in libuv, never
+    # through Python's socket module, so the served app in every browser test
+    # (web.serve.running_server) went around _no_outbound_network: on Linux a dialog reached
+    # openrouter.ai unseen, while Windows (no uvloop, the guarded Proactor loop) failed the same
+    # tests. With uvloop unimportable uvicorn falls back to asyncio, whose every lookup and connect
+    # the guard sees.
+    import sys
+
+    sys.modules["uvloop"] = None  # type: ignore[assignment]
+    home = Path(tempfile.mkdtemp(prefix="kestrel-collect-"))
+    throwaway.mark(home)
+    os.environ["KESTREL_DATA_HOME"] = str(home)
+    _COLLECT_HOME.append(home)
+    atexit.register(shutil.rmtree, home, ignore_errors=True)
+
+
+_COLLECT_HOME: list = []
+
+
+def pytest_unconfigure(config):
+    """Remove this process's collection-time data home (D-TEST-574). Runs in every xdist worker
+    as well as the controller; atexit stays as the fallback."""
+    import shutil
+
+    for home in _COLLECT_HOME:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+_isolate_the_process_from_the_host()
+
+
 @pytest.fixture(autouse=True)
 def _isolate_data_home(tmp_path_factory):
     """Point %LOCALAPPDATA%\\Kestrel at a throwaway dir so tests never touch real app data.
@@ -48,6 +109,24 @@ def _isolate_data_home(tmp_path_factory):
     forget_engine()  # drop the cached engine WITHOUT awaiting dispose (its owning loop may be gone)
 
 
+@pytest.fixture(autouse=True)
+def _downloads_in_tmp(request, tmp_path_factory, monkeypatch):
+    """No test writes into the real Downloads folder or the real home (D-TEST-800, issue #237).
+    paths.downloads_dir() is where the diagnostics save puts its zip, so every test gets its own
+    Downloads folder under pytest's temp root, and the Windows Known Folder call
+    (paths._windows_downloads) answers None. Yields the folder. A test that exercises
+    downloads_dir() itself carries @pytest.mark.real_downloads_dir and patches what the function
+    reads (sys.platform, Path.home, _windows_downloads) the way it always did."""
+    from kestrel import paths
+
+    folder = tmp_path_factory.mktemp("downloads") / "Downloads"
+    folder.mkdir()
+    if request.node.get_closest_marker("real_downloads_dir") is None:
+        monkeypatch.setattr(paths, "downloads_dir", lambda: folder)
+        monkeypatch.setattr(paths, "_windows_downloads", lambda: None)
+    yield folder
+
+
 @pytest.fixture
 def example_operator_profile():
     """Install the shipped fictional profile.example.yml as this test's operator profile.yml.
@@ -81,6 +160,51 @@ def _reset_status_caches():
     reset_status_caches()
     yield
     reset_status_caches()
+
+
+@pytest.fixture(autouse=True)
+def _reset_process_globals():
+    """Process-global state that a test, or the app code it drives, changes must never reach the
+    next test (D-TEST-25): the enabled-tracks cache and the count cache (filled by any app
+    startup or page render), and safe mode, which the app's own safe-start button writes to
+    os.environ where monkeypatch cannot see it. The stress run's random order found all three.
+    Also structlog's configuration (D-TEST-30): a test that runs the real serve() calls
+    configure_logging(), whose INFO filter then hid every later test's captured debug line.
+    Also the queue's first-claim stamp (D-TEST-32): queue._CLAIMS_SINCE is set once per process
+    by the first lease, so under the stress run's shifted or 10x clock an earlier test's later
+    stamp made a later test's own lease look like an earlier process's, and a clean quit then
+    kept its attempt (test_quit_grace)."""
+    import structlog
+
+    from kestrel import logging_setup, startup_health
+    from kestrel.queue import queue as queue_mod
+    from kestrel.services import count_cache, tracks
+
+    saved = os.environ.get(startup_health.SAFE_MODE_ENV)
+    saved_log = structlog.get_config()
+    saved_configured = logging_setup._configured
+
+    from kestrel.services import setup_state
+
+    def reset() -> None:
+        tracks._cache["value"] = None
+        count_cache.clear()
+        queue_mod._CLAIMS_SINCE.clear()
+
+    # D-TEST-576: the detected hardware is cached once per process. A test that fakes a machine
+    # (an RTX 4080, a weak laptop) and fills the cache must not leave that machine for the next
+    # test, so the cache is put back as it was.
+    saved_hw = setup_state._hw_cache["value"]
+    reset()
+    yield
+    reset()
+    setup_state._hw_cache["value"] = saved_hw
+    structlog.configure(**saved_log)
+    logging_setup._configured = saved_configured
+    if saved is None:
+        os.environ.pop(startup_health.SAFE_MODE_ENV, None)
+    else:
+        os.environ[startup_health.SAFE_MODE_ENV] = saved
 
 
 _LOOPBACK_NAMES = {"localhost", "localhost.localdomain", "testserver", "0.0.0.0", "::", ""}
@@ -124,6 +248,11 @@ def _this_machine() -> set[str]:
     return _THIS_MACHINE
 
 
+# Ollama's own default port, the one the shipped settings name (ollama_native_url).
+# tests/test_host_isolation.py fails if the shipped settings stop naming it.
+HOST_OLLAMA_PORT = 11434
+
+
 class OutboundNetworkInTest(RuntimeError):
     """A test tried to reach a host other than this machine (CLAUDE.md: never call a live job
     board, ATS or SEC endpoint from a test)."""
@@ -134,7 +263,9 @@ def _no_outbound_network(monkeypatch):
     """Refuse any DNS lookup or connection to a host other than this machine, so a test that runs
     the real worker (board lookups, update checks, notification pushes) fails loudly instead of
     calling a live service. Loopback stays open for the app under test, Ollama fakes and the
-    browser tests' local server. Unix sockets are not affected."""
+    browser tests' local server, except the host's own Ollama port (D-TEST-571). Unix sockets are
+    not affected."""
+    import errno
     import socket
 
     _this_machine()
@@ -147,20 +278,29 @@ def _no_outbound_network(monkeypatch):
             raise OutboundNetworkInTest(f"test tried to look up {host!r}")
         return real_getaddrinfo(host, *args, **kwargs)
 
-    def _check(sock, address):
+    def _check(sock, address) -> bool:
+        """True when the connect must be refused as the host's own Ollama (see below)."""
         # A UDP connect only sets the default peer and sends nothing (kestrel/web/auth.py uses
         # one to learn the LAN address), so only stream connections are checked.
         if (sock.family in (socket.AF_INET, socket.AF_INET6) and sock.type == socket.SOCK_STREAM
                 and isinstance(address, tuple)):
             if not _is_loopback(address[0]):
                 raise OutboundNetworkInTest(f"test tried to connect to {address[0]!r}")
+            # D-TEST-571 (#205): the machine's own Ollama is host state. A test that reached it
+            # passed in the cloud and failed on a computer with Ollama running. Its port is
+            # refused, exactly as on a machine without Ollama; a test that needs a model server
+            # fakes one (a mocked client, or a fake server on a port of its own).
+            return len(address) >= 2 and address[1] == HOST_OLLAMA_PORT
+        return False
 
     def guarded_connect(self, address):
-        _check(self, address)
+        if _check(self, address):
+            raise ConnectionRefusedError(errno.ECONNREFUSED, "test: the host's Ollama is closed")
         return real_connect(self, address)
 
     def guarded_connect_ex(self, address):
-        _check(self, address)
+        if _check(self, address):
+            return errno.ECONNREFUSED
         return real_connect_ex(self, address)
 
     # A proxy on this machine would turn every public request into a loopback connection, so
@@ -171,6 +311,21 @@ def _no_outbound_network(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", guarded_getaddrinfo)
     monkeypatch.setattr(socket.socket, "connect", guarded_connect)
     monkeypatch.setattr(socket.socket, "connect_ex", guarded_connect_ex)
+    # D-TEST-579: on Windows, asyncio's default Proactor loop connects through IOCP ConnectEx
+    # and never calls socket.connect, so every httpx.AsyncClient request went around the checks
+    # above. Its one entry point is guarded with the same rule (the Selector loop used elsewhere
+    # calls socket.connect and is already covered).
+    from asyncio import proactor_events
+
+    real_sock_connect = proactor_events.BaseProactorEventLoop.sock_connect
+
+    async def guarded_sock_connect(self, sock, address):
+        if _check(sock, address):
+            raise ConnectionRefusedError(errno.ECONNREFUSED, "test: the host's Ollama is closed")
+        return await real_sock_connect(self, sock, address)
+
+    monkeypatch.setattr(proactor_events.BaseProactorEventLoop, "sock_connect",
+                        guarded_sock_connect)
 
 
 @pytest.fixture(autouse=True)
@@ -199,6 +354,40 @@ def _no_credit_holds_between_tests():
     credit.clear()
     yield
     credit.clear()
+
+
+_REAL_ENGINE_PROBE: dict = {}
+
+
+@pytest.fixture
+def real_engine_probe(monkeypatch):
+    """Put the production worker.probe_engine back (setup_state.probe_ollama and its cache),
+    for a test that fakes only the network beneath it."""
+    from kestrel.pipeline import worker as worker_mod
+    from kestrel.services.setup_state import forget_ollama_probe
+
+    forget_ollama_probe()
+    monkeypatch.setattr(worker_mod, "probe_engine", _REAL_ENGINE_PROBE["probe_engine"])
+    yield
+    forget_ollama_probe()
+
+
+@pytest.fixture(autouse=True)
+def _no_engine_preflight(monkeypatch):
+    """The worker's preflight (D-WORKER-6) probes Ollama before each Tier 1 and Tier 2 drain and
+    waits while it is down. The suite has no Ollama, so by default the probe reports "not
+    probed" and drains run as before; the preflight's own tests set the probe explicitly. The
+    record of why scoring waits is process-global and is cleared for each test."""
+    from kestrel.pipeline import worker as worker_mod
+
+    _REAL_ENGINE_PROBE.setdefault("probe_engine", worker_mod.probe_engine)
+    monkeypatch.setattr(worker_mod, "probe_engine", lambda _settings, **_kw: None)
+    from kestrel.llm import engine_cycle
+
+    engine_cycle.stop()
+    worker_mod._ENGINE_WAIT.clear()
+    yield
+    worker_mod._ENGINE_WAIT.clear()
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -245,12 +434,100 @@ def _no_provider_keys_from_the_host(monkeypatch):
         "ADZUNA_APP_KEY",
     ):
         monkeypatch.delenv(name, raising=False)
+    # D-TEST-572 (#205): the host's own configuration never reaches a test either (doctor reads
+    # OLLAMA_HOST and OLLAMA_NUM_PARALLEL; pydantic-settings reads KESTREL_<setting>). Removed
+    # from the process at import (D-TEST-574), and again here, for good: one an earlier test
+    # left in os.environ directly (a .env load puts KESTREL_LOG_LEVEL there) is removed, not put
+    # back afterwards. A test that needs one sets it with monkeypatch.setenv.
+    for name in _host_configuration_vars():
+        os.environ.pop(name, None)
     _dotenv_state["owned"].clear()  # type: ignore[union-attr]
     _dotenv_state["secrets"].clear()  # type: ignore[union-attr]
     _dotenv_state["path"] = None
     # Tests hand keys over with monkeypatch.setenv, so they run with the opt-out that lets a
     # process-environment key count (D-BYOK-11). The isolation tests unset it themselves.
     monkeypatch.setenv("KESTREL_USE_SYSTEM_KEYS", "1")
+
+
+@pytest.fixture(autouse=True)
+def _no_setup_action_outlives_its_test(
+    monkeypatch, _reset_process_globals, _reset_status_caches, _isolate_data_home
+):
+    """D-TEST-578: a Setup action (pull, build, verify) runs on a daemon thread named "setup-<name>"
+    (kestrel.services.setup_state.start_action). One that outlived its test ran doctor against
+    the NEXT test's data home while that test deleted and re-created its database, and the next
+    test read "no such table: source" (stress run, 10x clock). A test that starts an action waits
+    for it itself (Action.join). Any such thread still running when the test returns fails that
+    test, naming the action (D-TEST-581): it is never waited for silently. It is still joined
+    first, so it cannot reach the next test, before this test's patches are undone and before
+    the process-global caches and the data home are reset: this fixture asks for those
+    fixtures, so it is set up after them and torn down first. Threads are compared as objects,
+    never by ident, which the OS reuses."""
+    import threading
+    import time
+
+    before = set(threading.enumerate())
+    yield
+    left = [t for t in threading.enumerate()
+            if t.name.startswith("setup-") and t not in before and t.is_alive()]
+    if not left:
+        return
+    # Well under pytest-timeout's 60 s for the whole test, so a stuck thread fails here with
+    # its own message instead of a timeout dump (or, on Windows, a lost worker).
+    deadline = time.monotonic() + 15.0
+    for t in left:
+        t.join(max(0.0, deadline - time.monotonic()))
+    still = [t.name for t in left if t.is_alive()]
+    pytest.fail(
+        f"the test returned while Setup action thread(s) {[t.name for t in left]} still ran; "
+        "wait for the action in the test (Action.join)"
+        + (f"; still running after 15 s: {still}" if still else ""),
+        pytrace=False,
+    )
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "real_hardware_detection: run kestrel.llm.profiles.detect_hardware itself (the test fakes "
+        "the subprocess and platform calls it makes); see _no_hardware_from_the_host",
+    )
+    config.addinivalue_line(
+        "markers",
+        "real_downloads_dir: run kestrel.paths.downloads_dir itself (the test patches what it "
+        "reads underneath); see _downloads_in_tmp (D-TEST-800)",
+    )
+
+
+# The machine every test runs on unless it says otherwise (D-TEST-580): the cloud runner's own
+# answer (Linux, no supported GPU, 16 GB), so a test's result does not depend on whether the
+# developer's computer has an NVIDIA card, Apple silicon or more memory.
+TEST_MACHINE_NOTES = ("nvidia-smi not found or reported no GPU",)
+
+
+@pytest.fixture(autouse=True)
+def _no_hardware_from_the_host(request, monkeypatch):
+    """D-TEST-580: hardware detection (kestrel.llm.profiles.detect_hardware) runs nvidia-smi,
+    sysctl and uname and reads /proc/meminfo on the host. Every caller goes through that one
+    module attribute, so it answers with a fixed Linux machine with no GPU. A test that wants
+    another machine patches it (or setup_state.detected_hardware) itself; a test of the detector
+    is marked real_hardware_detection and fakes the calls the detector makes."""
+    if request.node.get_closest_marker("real_hardware_detection"):
+        return
+    from kestrel.llm import profiles
+
+    machine = profiles.Hardware(os="linux", ram_gb=16.0, notes=TEST_MACHINE_NOTES)
+    monkeypatch.setattr(profiles, "detect_hardware", lambda: machine)
+
+
+@pytest.fixture(autouse=True)
+def _no_git_config_from_the_host(monkeypatch):
+    """D-TEST-577: the git a test runs reads no global or system config. A developer's
+    commit.gpgsign, core.hooksPath or init.templateDir made the temporary repositories of the
+    check, ship and export tests sign, run hooks or start from a template. Tests that commit set
+    their own user.name and user.email in their repository."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 
 @pytest.fixture(autouse=True)
@@ -471,6 +748,23 @@ def browser_fallback(monkeypatch):
     from tests.browser import use_browser_fallback
 
     return use_browser_fallback(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def _no_content_security_policy_violations(request):
+    """D-INST-8: a browser test fails on any Content-Security-Policy violation, console report
+    of one, or Alpine expression error on any page it visited (recorded by tests/browser.py's
+    watch on every context launch_sync makes). A test about the policy itself takes the record
+    with take_csp_violations() and asserts on it; nothing else may leave one behind."""
+    import sys
+
+    yield
+    browser_mod = sys.modules.get("tests.browser")
+    if browser_mod is None:
+        return
+    found = browser_mod.take_csp_violations()
+    if found:
+        pytest.fail(browser_mod.describe_csp_violations(found), pytrace=False)
 
 
 # pytest puts each running test's id in the PYTEST_CURRENT_TEST environment variable, and Windows

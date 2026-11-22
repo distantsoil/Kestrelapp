@@ -39,7 +39,20 @@ import httpx
 import structlog
 
 from kestrel.ingest import source_secrets
-from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
+from kestrel.ingest.base import (
+    AdapterError,
+    Notice,
+    PostingBatch,
+    Problem,
+    RawPosting,
+    SourceConfigError,
+    key_rejected_problem,
+    needs_key,
+    needs_key_sentence,
+    rate_limited_problem,
+    request_limit,
+    server_error_problem,
+)
 from kestrel.pipeline.profile import load_profile
 
 log = structlog.get_logger(__name__)
@@ -66,14 +79,8 @@ def _key_names(config: dict) -> tuple[str, str]:
         source_secrets.secret_name("adzuna", config, "app_key_env", KEY_ENV),
     )
 
-NEEDS_KEY = (
-    "Adzuna needs your app ID and app key. Add them on the Sources page under Sources that "
-    "need your own key"
-)
-KEY_REJECTED = (
-    "Adzuna did not accept your app ID and app key. Save them again on the Sources page "
-    "under Sources that need your own key"
-)
+NEEDS_KEY = needs_key_sentence("Adzuna", "app ID and app key")
+KEY_REJECTED = str(key_rejected_problem("Adzuna", "app ID and app key", 401))
 # Both sentences above hold this phrase; the Sources card reads it to say "Needs you".
 KEY_PROBLEM_PHRASE = "app ID and app key"
 SNIPPET_NOTE = (
@@ -176,6 +183,10 @@ def to_posting(job: dict) -> RawPosting | None:
         comp_min=pay_lo, comp_max=pay_hi,
         comp_currency="USD" if pay_lo is not None else None,
         comp_interval="year" if pay_lo is not None else None,
+        # Adzuna's salary fields carry neither a currency nor a period: USD follows from the
+        # fixed `us` search and a year is Kestrel's reading, so both are assumed (#208).
+        comp_currency_assumed=pay_lo is not None,
+        comp_interval_assumed=pay_lo is not None,
         date_posted=_text(job.get("created")),
         raw={
             "description_partial": True,
@@ -190,14 +201,14 @@ def to_posting(job: dict) -> RawPosting | None:
 def _problem(status: int) -> str:
     """Kestrel's own sentence for an error status; the provider's body is never read or shown."""
     if status in (401, 403):
-        return KEY_REJECTED
+        return key_rejected_problem("Adzuna", "app ID and app key", status)
     if status == 429:
-        return "Adzuna asked Kestrel to slow down; the rest is fetched on the next check"
+        return rate_limited_problem("Adzuna", status)
     if status in (400, 404, 413):
-        return "Adzuna rejected the search. Check the search words and the place"
+        return Problem("Adzuna rejected the search. Check the search words and the place", status)
     if status >= 500:
-        return "Adzuna had a problem on their side; the rest is fetched on the next check"
-    return f"Adzuna answered with an unexpected status ({status})"
+        return server_error_problem("Adzuna", status)
+    return Problem(f"Adzuna answered with an unexpected status ({status})", status)
 
 
 class AdzunaAdapter:
@@ -245,7 +256,7 @@ class AdzunaAdapter:
         app_id = get_secret(id_name)
         app_key = get_secret(key_name)
         if not app_id or not app_key:
-            batch.partial_error = NEEDS_KEY
+            batch.add(needs_key("Adzuna", "app ID and app key"))
             log.info("adzuna_needs_key", id_saved=bool(app_id), key_saved=bool(app_key))
             return batch
         keyword = (config.get("keyword") or "").strip()
@@ -258,10 +269,7 @@ class AdzunaAdapter:
             per_page = int(params["results_per_page"])
             for page in range(1, max_pages + 1):
                 if requests >= MAX_REQUESTS:
-                    batch.partial_error = batch.partial_error or (
-                        "Adzuna: stopped at the limit of requests per check; the rest is "
-                        "fetched on the next check"
-                    )
+                    batch.add(request_limit("Adzuna"))
                     return batch
                 requests += 1
                 query = {"app_id": app_id, "app_key": app_key, **params}
@@ -295,7 +303,7 @@ class AdzunaAdapter:
             log.warning("adzuna_error", status=r.status_code)
             message = _problem(r.status_code)
             if r.status_code == 429 or r.status_code >= 500:
-                batch.partial_error = message
+                batch.add(Notice.of(message))
                 return None
             raise AdapterError(message)
         try:

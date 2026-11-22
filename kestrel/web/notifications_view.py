@@ -31,9 +31,15 @@ def human_severity(severity: str | None) -> tuple[str, str, bool]:
 
 def context_action(
     kind: str, opportunity_id: int | None, *, follow_up: bool = False,
+    download: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """One action by kind: {"label", "href", "external"} or None. A due follow-up opens
-    Applications with its draft dialog when the opportunity still has a due follow-up."""
+    Applications with its draft dialog when the opportunity still has a due follow-up. An update
+    opens the same link as the banner and the dialog (`download`, from pages.updates.download_link,
+    D-UPD-9): the installer on the GitHub release when the feed's entry passes the allowlist, else
+    the download page. Without one, the download page."""
+    get = (download or {}).get("label", "Get it from kestrelapp.co")
+    get_url = (download or {}).get("url", DOWNLOAD_PAGE)
     role = f"/opportunities/{opportunity_id}" if opportunity_id else "/opportunities"
     # Several new roles worth a look: the Pipeline's New today filter (a lone one opens the role).
     worth = (("Go to job detail", role, False) if opportunity_id
@@ -59,7 +65,7 @@ def context_action(
         "credit_low": ("Open Models", "/models", False),
         "model_check": ("Open Models", "/models", False),
         "stories_built": ("Review drafts", "/stories", False),
-        "update": ("Get it from kestrelapp.co", DOWNLOAD_PAGE, True),
+        "update": (get, get_url, True),
     }
     found = table.get(kind)
     if found is None:

@@ -70,8 +70,15 @@ def _state():
 
 
 # ------------------------------------------------------------------------- parsing and filter
-def test_fixture_list_parses_to_schema_capable_chat_models_and_free_is_suffix_or_zero_price():
+def test_fixture_list_parses_to_schema_capable_chat_models_and_free_is_suffix_or_zero_price(
+    monkeypatch,
+):
     backend = load_settings().llm.backends["frontier"]
+
+    async def in_use():  # this test is about parsing; online is in use (D-REL-41)
+        return None
+
+    monkeypatch.setattr(hm, "_online_not_in_use", in_use)
 
     async def _go():
         with respx.mock as router:

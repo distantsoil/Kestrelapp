@@ -40,7 +40,19 @@ from xml.etree import ElementTree
 import httpx
 
 from kestrel.errors import ROBOTS_SENTENCE
-from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
+from kestrel.ingest import failure_code
+from kestrel.ingest.base import (
+    AdapterError,
+    NoticeKind,
+    PostingBatch,
+    RawPosting,
+    ShapeError,
+    SourceConfigError,
+    Unread,
+    capped,
+    failure_kind,
+    rate_limited,
+)
 from kestrel.ingest.country_names import country_name
 
 _RATE = 0.5  # requests/second: Personio rate-limits hard
@@ -85,11 +97,13 @@ class PersonioAdapter:
         except httpx.HTTPStatusError as exc:
             code = exc.response.status_code
             if code == 429:
-                batch.partial_error = _rate_limited(slug)
+                batch.add(rate_limited("Personio", slug))
                 return batch
             if code == 404:
                 raise AdapterError(
-                    f"Personio board not found: {slug} (is the name right, and is the XML feed on?)"
+                    f"Personio board not found: {slug} "
+                    "(is the name right, and is the XML feed on?)",
+                    code=failure_code.NOT_FOUND,
                 ) from exc
             raise AdapterError(f"Personio fetch failed for {slug}: {exc}") from exc
         except httpx.HTTPError as exc:
@@ -99,41 +113,35 @@ class PersonioAdapter:
         positions = _positions(text, slug)
 
         pages_read = 0
-        without_body = 0
-        rate_limited = False
+        over_cap = 0  # roles beyond the job pages Kestrel reads in one run
+        slowed = False
+        unread = Unread()  # job pages that failed, by the kind each failed with
         for position in positions:
             posting = _to_posting(position, config, base)
             if posting is None:
                 continue
             if posting.description_html is None:
-                if rate_limited or pages_read >= max_results:
-                    without_body += 1
+                if pages_read >= max_results:
+                    over_cap += 1
+                elif slowed:  # a page it would have read, held back by the 429
+                    pages_read += 1
+                    unread.add(NoticeKind.RATE_LIMITED)
                 else:
                     pages_read += 1
                     page = await _read_page(base, posting.external_id or "", client)
-                    if page is _RATE_LIMITED:
-                        rate_limited = True
-                        without_body += 1
+                    if isinstance(page, NoticeKind):
+                        unread.add(page)
+                        slowed = page is NoticeKind.RATE_LIMITED
                     elif isinstance(page, dict):
                         _apply_page(posting, page)
             batch.append(posting)
-        if rate_limited:
-            batch.partial_error = _rate_limited(slug, kept=without_body)
-        elif without_body:
-            batch.partial_error = (
-                f"Personio gave no description for {without_body} roles at {slug} beyond the "
-                f"{max_results} job pages Kestrel reads in one run. They were added without one. "
-                "Raise max_results on the source to read more."
-            )
+        for notice in unread.notices("Personio", slug, kept=True):
+            batch.add(notice)
+        if over_cap:
+            batch.add(capped("Personio", slug, over_cap, max_results))
         return batch
 
 
-_RATE_LIMITED = object()
-
-
-def _rate_limited(slug: str, kept: int = 0) -> str:
-    tail = f" {kept} roles were added without a description." if kept else ""
-    return f"Personio is rate limiting requests for {slug}.{tail} Kestrel will try again next run."
 
 
 def _positions(text: str, slug: str) -> list[ElementTree.Element]:
@@ -141,23 +149,21 @@ def _positions(text: str, slug: str) -> list[ElementTree.Element]:
     if "<!DOCTYPE" in upper or "<!ENTITY" in upper:
         raise AdapterError(f"Personio feed for {slug} was refused (it declares entities)")
     try:
-        root = ElementTree.fromstring(text)
+        root = ElementTree.fromstring(text)  # noqa: S314  stdlib XML on fetched data; expat caps entity expansion; a hardened parser is under review
     except ElementTree.ParseError as exc:
         raise AdapterError(f"Personio feed for {slug} was unreadable") from exc
     if root.tag != "workzag-jobs":
-        raise AdapterError(f"Personio feed for {slug} had an unexpected shape")
+        raise ShapeError(f"Personio feed for {slug} had an unexpected shape")
     return root.findall("position")
 
 
-async def _read_page(base: str, job_id: str, client: Any) -> Any:
-    """The job page's JobPosting dict ({} when the page has none), _RATE_LIMITED on a 429, or None
-    on any other failure (the role keeps what the feed gave)."""
+async def _read_page(base: str, job_id: str, client: Any) -> dict | NoticeKind:
+    """The job page's JobPosting dict ({} when the page has none), or the kind of failure when
+    it could not be read (a 429, robots.txt, anything else; the role keeps what the feed gave)."""
     try:
         html = await client.get_text(f"{base}/job/{job_id}", rate_per_sec=_RATE, check_robots=True)
-    except httpx.HTTPStatusError as exc:
-        return _RATE_LIMITED if exc.response.status_code == 429 else None
-    except (httpx.HTTPError, PermissionError):
-        return None
+    except (httpx.HTTPError, PermissionError) as exc:
+        return failure_kind(exc)
     for block in _LD_JSON.findall(html):
         try:
             ld = json.loads(block)

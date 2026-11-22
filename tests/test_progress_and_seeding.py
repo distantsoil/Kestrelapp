@@ -18,10 +18,11 @@ from kestrel.analytics.summary import honest_summary
 from kestrel.db import migrate
 from kestrel.db.engine import forget_engine, get_sessionmaker, reset_engine
 from kestrel.db.models import Source
+from tests.page_source import as_written
 
 _TEMPLATES = Path(paths.web_templates_dir())
 _CSS = (Path(paths.web_static_dir()) / "css" / "kestrel.css").read_text(encoding="utf-8")
-_BASE = (_TEMPLATES / "base.html").read_text(encoding="utf-8")
+_BASE = as_written((_TEMPLATES / "base.html").read_text(encoding="utf-8"))
 
 
 class _Explode:
@@ -421,7 +422,7 @@ def test_shipped_layouts_are_seeded_at_startup_and_the_preview_is_a_frame():
 
     keys = asyncio.run(_run())
     assert "executive" in keys and len(keys) == len(set(keys)) >= 5
-    body = (_TEMPLATES / "partials" / "documents_body.html").read_text(encoding="utf-8")
+    body = as_written((_TEMPLATES / "partials" / "documents_body.html").read_text(encoding="utf-8"))
     # The preview and the test render both carry the layout, font, alignment (D-DOC-1) and the
     # accent color (D-DOC-4).
     assert 'hx-include="#layout, #font, #header_align, #accent, #accent_custom"' in body

@@ -22,7 +22,18 @@ import httpx
 import structlog
 
 from kestrel.errors import ROBOTS_SENTENCE
-from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
+from kestrel.ingest.base import (
+    AdapterError,
+    Notice,
+    NoticeKind,
+    PostingBatch,
+    Problem,
+    RawPosting,
+    SourceConfigError,
+    hedged_problem,
+    rate_limited_problem,
+    server_error_problem,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -143,13 +154,15 @@ def to_posting(job: dict, now: float | None = None) -> RawPosting | None:
 
 
 def _problem(status: int) -> str:
-    if status in (403, 429):
-        return "4 Day Week asked Kestrel to slow down; the rest is fetched on the next check"
+    if status == 429:
+        return rate_limited_problem("4 Day Week", status)
+    if status == 403:
+        return hedged_problem("4 Day Week", status)
     if status >= 500:
-        return "4 Day Week had a problem on their side; the rest is fetched on the next check"
+        return server_error_problem("4 Day Week", status)
     if status in (400, 404):
-        return "4 Day Week rejected the request; the job feed may have moved"
-    return f"4 Day Week answered with an unexpected status ({status})"
+        return Problem("4 Day Week rejected the request; the job feed may have moved", status)
+    return Problem(f"4 Day Week answered with an unexpected status ({status})", status)
 
 
 class FourDayWeekAdapter:
@@ -224,18 +237,18 @@ class FourDayWeekAdapter:
         except httpx.HTTPError as exc:
             log.warning("fourdayweek_unreachable", error=type(exc).__name__)
             if batch:  # a later page: keep what the earlier pages gave
-                batch.partial_error = (
-                    "Could not reach 4 Day Week; the rest is fetched on the next check")
+                batch.note(NoticeKind.STOPPED,
+                           "Could not reach 4 Day Week; the rest is fetched on the next check")
                 return None
             raise AdapterError("Could not reach 4 Day Week; try again later") from exc
         if r.status_code != 200:
             log.warning("fourdayweek_error", status=r.status_code)
             message = _problem(r.status_code)
             if r.status_code in (403, 429) or r.status_code >= 500:
-                batch.partial_error = message
+                batch.add(Notice.of(message))
                 return None
             if batch:  # a later page: keep what the earlier pages gave
-                batch.partial_error = message
+                batch.add(Notice.of(message))
                 return None
             raise AdapterError(message)
         try:
@@ -246,7 +259,7 @@ class FourDayWeekAdapter:
             unreadable = (
                 "4 Day Week sent a reply Kestrel could not read; the format may have changed")
             if batch:
-                batch.partial_error = unreadable
+                batch.note(NoticeKind.STOPPED, unreadable)
                 return None
             raise AdapterError(unreadable) from exc
         return data

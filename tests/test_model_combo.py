@@ -9,6 +9,7 @@ from pathlib import Path
 from kestrel import paths
 from kestrel.web.deps import templates
 from kestrel.web.fit import forced_words
+from tests.page_source import inline_static
 
 
 @dataclass
@@ -121,7 +122,7 @@ def test_existing_callers_render_the_combobox():
 def test_forced_words_known_ids():
     assert forced_words(None) == "" and forced_words("") == ""
     assert forced_words("blocker:clearance, clearance; legitimacy_suspect_cap") == (
-        "Capped by your rules: needs a security clearance. Also capped because the posting "
+        "The model flagged: needs a security clearance. Also capped because the posting "
         "looks suspect."
     )
     assert forced_words("legitimacy_reject") == (
@@ -134,7 +135,7 @@ def test_forced_words_known_ids():
 
 def test_forced_words_consulting_kinds_and_legitimacy_wording():
     out = forced_words("blocker:rate, conflict_of_interest, capacity; legitimacy_suspect_cap")
-    assert out.startswith("Capped by your rules: the rate is below")
+    assert out.startswith("The model flagged: the rate is below")
     assert "conflict with your other work" in out and "capacity" in out
     assert out.endswith("Also capped because the posting looks suspect.")
     assert "rules" not in forced_words("legitimacy_suspect_cap")
@@ -146,7 +147,7 @@ def test_forced_words_consulting_kinds_and_legitimacy_wording():
 
 def test_forced_words_unknown_ids_are_humanized_never_raw():
     out = forced_words("blocker:visa_type; blocker:visa_type; mystery_rule")
-    assert out == "Capped by your rules: visa type; mystery rule."
+    assert out == "The model flagged: visa type; mystery rule."
     assert "blocker" not in out and "_" not in out
     only = forced_words("mystery_rule")
     assert only == "Adjusted by a rule: mystery rule."
@@ -169,6 +170,7 @@ def test_assess_popup_uses_the_combobox():
     html = templates().get_template("partials/assess_model.html").render(
         master_id=1, doc_word="resume", current_label="cur", hosted_models=[_P(1)],
         hosted_reasons={}, local_models=[], hosted_label="Test", hosted_prefix="")
+    html = inline_static(html)
     assert html.count('data-current-label="cur"') == 2
     assert "dlg.querySelector('select');" not in html.replace(
         "|| dlg.querySelector('select');", "")  # the select is only the fallback

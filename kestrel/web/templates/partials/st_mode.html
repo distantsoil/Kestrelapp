@@ -21,6 +21,7 @@
     {% endfor %}
   </div>
   {% if mode_message %}<p class="st-note st-note--{{ 'good' if mode_ok else 'bad' }}" role="status">{{ mode_message }}</p>{% endif %}
+  <p class="st-note u-mt-06" data-testid="st-online-models-note">What online models send, and the disclosure you accept to use them: <a class="k-link" href="/settings/hosted/review" data-testid="st-online-models">Settings &gt; Online models</a>.</p>
 
   <div class="st-fold{% if choice != 'local' %} is-on{% endif %}" id="st-online"{% if choice == 'local' %} inert aria-hidden="true"{% endif %}>
     <div class="st-pan">
@@ -61,7 +62,7 @@
         </form>
         <p class="st-note{% if free_message %} st-note--{{ 'good' if free_ok else 'bad' }}{% endif %}" id="st-free-res" role="status" aria-live="polite" data-testid="st-free-result">{{ free_message }}</p>
       </div>
-      <p class="st-note">Service addresses and keys stay on this computer and are never in backups. Choose models and approve what is sent on <a class="k-link" href="/models">Models</a>.</p>
+      <p class="st-note">Service addresses and keys stay on this computer and are never in backups. Choose models on <a class="k-link" href="/models">Models</a>.</p>
       <p class="st-dsm" data-testid="speed-note">Free models, online or on your own computer, are often much slower than paid ones. A first scan can take an hour or more; Today shows the progress.</p>
       <details class="st-det"><summary>Show details</summary><pre>Other uses the OpenAI chat completions format. The service address and key live only in .env.
 Saved keys: {{ provider_names|join(', ') or 'none yet' }}</pre></details>
@@ -75,7 +76,7 @@ Saved keys: {{ provider_names|join(', ') or 'none yet' }}</pre></details>
         </div>
         {% endfor %}
       </div>
-      <p class="st-note" id="st-online-note" data-testid="st-online-note">{% if online_problem %}Online starts once this is done: {{ online_problem }}. Add a key above, then approve what is sent on Models.{% endif %}</p>
+      <p class="st-note" id="st-online-note" data-testid="st-online-note">{% if online_problem %}Online starts once this is done: {{ online_problem }}. Add a key above.{% endif %}</p>
     </div>
   </div>
   {% endcall %}
