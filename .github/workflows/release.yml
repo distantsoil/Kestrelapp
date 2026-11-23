@@ -94,12 +94,14 @@ jobs:
           esac
           VERSION="${GITHUB_REF_NAME#v}"
           git fetch --force --no-tags origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
-          STAMP="$(git for-each-ref --format='%(taggerdate:iso-strict)' "refs/tags/${GITHUB_REF_NAME}")"
+          STAMP="$(git for-each-ref --format='%(taggerdate:unix)' "refs/tags/${GITHUB_REF_NAME}")"
           if [ -z "$STAMP" ]; then
             echo "::error::Tag $GITHUB_REF_NAME is not an annotated tag, so it has no tagger date to date the release by. Delete it and create it with: git tag -a $GITHUB_REF_NAME -m \"Kestrel $VERSION\""
             exit 1
           fi
-          RELEASED_AT="$(date -u -d "$STAMP" +%Y-%m-%dT%H:%M:%SZ)"
+          # STAMP is epoch seconds, so no offset needs parsing. GNU date reads it with -d "@N" and
+          # BSD date (macOS, where a test runs this step) with -r N; neither reads the clock (D-CI-600).
+          RELEASED_AT="$(date -u -d "@$STAMP" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$STAMP" +%Y-%m-%dT%H:%M:%SZ)"
           echo "released_at=$RELEASED_AT" >> "$GITHUB_OUTPUT"
           if ! python3 scripts/changelog_section.py "$VERSION" --check-date "$RELEASED_AT"; then
             echo "::error::The CHANGELOG heading for $VERSION must carry the tag's UTC date (${RELEASED_AT%%T*}). Fix the date in CHANGELOG.md and tag again."
