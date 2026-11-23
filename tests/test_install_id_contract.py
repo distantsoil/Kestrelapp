@@ -785,9 +785,10 @@ def test_a_loopback_peer_that_came_through_a_tunnel_never_gets_the_id(
 
 
 # ---------------------------------------------------- the guards' own edges (AGENT-RULES 8a.6)
-def test_the_socket_guard_records_the_network_and_lets_a_local_unix_socket_through(
-        recorder, tmp_path):
+def test_the_socket_guard_records_the_network_and_lets_a_local_unix_socket_through(recorder):
+    import shutil
     import socket
+    import tempfile
 
     if not hasattr(socket, "AF_UNIX"):
         pytest.skip("this platform has no Unix sockets (Windows)")
@@ -798,12 +799,18 @@ def test_the_socket_guard_records_the_network_and_lets_a_local_unix_socket_throu
     finally:
         s.close()
     assert recorder.sockets == ["('198.51.100.7', 443)"]
-    u = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)  # a local socket: not the network
+    # A Unix socket path is capped near 104 bytes on macOS, and pytest's tmp_path there is longer
+    # (/private/var/folders/...), so the missing socket lives in a short directory (D-CI-600).
+    short = tempfile.mkdtemp(prefix="ks", dir="/tmp")
     try:
-        with pytest.raises((FileNotFoundError, ConnectionRefusedError)):
-            u.connect(str(tmp_path / "no-such.sock"))
+        u = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)  # a local socket: not the network
+        try:
+            with pytest.raises((FileNotFoundError, ConnectionRefusedError)):
+                u.connect(short + "/no-such.sock")
+        finally:
+            u.close()
     finally:
-        u.close()
+        shutil.rmtree(short, ignore_errors=True)
     assert recorder.sockets == ["('198.51.100.7', 443)"]
 
 

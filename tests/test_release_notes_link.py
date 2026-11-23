@@ -388,7 +388,12 @@ def test_the_date_step_never_reads_the_run_clock():
         s for s in _workflow()["jobs"]["preflight"]["steps"]
         if s.get("name") == "Changelog date matches the tag date"
     )["run"]
-    assert not re.search(r"date -u \+", run), "only `date -u -d <tag stamp>` may be used"
+    assert not re.search(r"date -u \+", run), "date may only convert the tag stamp, never read now"
+    # GNU date (the runner) takes -d "@N"; BSD date (macOS, where this test also runs the step)
+    # has no -d, so the -r form must stay as the fallback (D-CI-600).
+    assert 'date -u -d "@$STAMP"' in run
+    assert 'date -u -r "$STAMP"' in run, "BSD date needs the -r fallback"
+    assert 'date -u -d "$STAMP"' not in run, "a GNU-only parse of the tag's offset form"
     assert 'git fetch --force --no-tags origin "refs/tags/${GITHUB_REF_NAME}' in run
     assert "${{" not in run, "no expression interpolation in run:"
 
