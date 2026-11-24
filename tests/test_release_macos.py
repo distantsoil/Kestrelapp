@@ -1172,7 +1172,12 @@ def test_the_notary_key_file_is_removed_and_never_printed(tmp_path, submit_rc):
     shutil.copy(SIGN_DMG, packaging / "sign_dmg.sh")
     step = _step(_jobs()["macos-sign"], "Notarize and staple")
     env = _env(tmp_path, NOTARY_KEY_P8=SECRET_KEY, NOTARY_KEY_ID="KEY1234567", NOTARY_ISSUER="iss")
-    done = _run_step(step["run"], env, cwd=tmp_path)
+    # the step is run through bash so the test does not depend on the file's executable bit
+    script = step["run"].replace(
+        "packaging/macos/sign_dmg.sh ", "bash packaging/macos/sign_dmg.sh "
+    )
+    assert script != step["run"]
+    done = _run_step(script, env, cwd=tmp_path)
     assert (done.returncode == 0) is (submit_rc == 0), done.stdout + done.stderr
     assert not (tmp_path / "runner" / "notary").exists()
     assert "invented-notary-key-line" not in done.stdout + done.stderr

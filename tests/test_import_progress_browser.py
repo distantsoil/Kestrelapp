@@ -150,21 +150,32 @@ def test_try_again_sends_the_same_import_once_more(live, path):
 
 @pytest.mark.parametrize("path", ["local", "online"])
 def test_a_hang_shows_the_long_wait_line_then_ends_with_a_message(live, path):
-    ctx, page, errors = _page(live, path, timeout_ms=7000, clock=True)
+    ctx, page, errors = _page(live, path, timeout_ms=20000, clock=True)
     try:
+        # D-TEST-834: freeze the page clock before the import starts, so only run_for moves it.
+        page.clock.pause_at("2030-01-01T00:00:00Z")
         page.route(_PROPOSE, lambda route: None)  # never answered
         _start(page, path)
+        # htmx 2 processes swapped-in content in a settle pass that runs on a 20 ms timer, and
+        # a frozen page clock never fires it. On the local path the read answer's processing
+        # form (it sends on load) is therefore inserted but never sends. The form itself is
+        # inserted at swap time, so it can be waited for without the clock; one small run_for
+        # then runs the settle pass and the send starts. The online path needs no help: the
+        # consent dialog is processed by its own mount (the modal layer), so the Send click
+        # starts the import at once.
+        if path == "local":
+            page.wait_for_selector('[data-testid="import-processing"]', state="attached")
+            page.clock.run_for(50)  # the 20 ms settle pass; the counter starts inside this window
         page.wait_for_selector('[data-testid="import-working"]', timeout=5000)
         assert not page.is_visible('[data-testid="import-long"]')
         page.clock.run_for(61_000)  # a minute of the page's own time
         assert page.is_visible('[data-testid="import-long"]')
         assert "taking longer" in page.inner_text('[data-testid="import-long"]')
-        # D-TEST-824: clock.install() leaves the page clock running in real time as well, so a
-        # loaded machine adds seconds ("62 s" was seen). The page has had a fake minute at least:
-        # that lower bound is what the line promises; an upper bound would be a real-time limit.
+        # D-TEST-834: the clock was frozen with pause_at before the import started, so only
+        # run_for moves it: 61 s of run_for fires the 1 s interval 61 times and the line is exact.
         shown = page.inner_text('[data-testid="import-elapsed"]').strip()
-        assert shown.endswith(" s") and int(shown[:-2]) >= 60, shown
-        page.wait_for_selector('[data-testid="import-error"]', timeout=15000)  # the client gave up
+        assert shown == "61 s", shown
+        page.wait_for_selector('[data-testid="import-error"]', timeout=40000)  # the client gave up
         assert "too long" in page.inner_text('[data-testid="import-error"]')
         assert page.query_selector('[data-testid="import-working"]') is None
         assert not errors, errors

@@ -123,6 +123,10 @@ def test_a_quit_while_loading_starts_no_server_and_leaves_nothing_running(shell,
         t.start()
         assert in_migrations.wait(5)
         assert shell.on_closing() is True  # the window's close during loading is a quit
+        # The loading page fetched its update before the close; the delivery timer then has
+        # nothing to warn about (D-CI-601).
+        channel = shell._splash_server.channel
+        channel.after(channel.seq, 0)
         go_on.set()  # the window is gone; the start thread carries on behind it
 
     monkeypatch.setattr("kestrel.db.migrate.run_migrations", _migrate)
@@ -167,11 +171,15 @@ def test_try_again_after_a_failed_wait_waits_for_the_lock_again(shell, monkeypat
 
     from kestrel.desktop.channel import SPLASH_EVENTS, Channel
 
-    monkeypatch.setattr(shell, "_splash_server", SimpleNamespace(channel=Channel(SPLASH_EVENTS)))
+    channel = Channel(SPLASH_EVENTS)
+    monkeypatch.setattr(shell, "_splash_server", SimpleNamespace(channel=channel))
     said = channel_spy.spy(monkeypatch)
     assert shell._retry_start() is True
     assert shell._boot_guard.acquire(timeout=5)
     shell._boot_guard.release()
+    # The fake window's page has fetched: without this the 10 s delivery timers would warn about
+    # updates no page took (D-CI-601).
+    channel.after(channel.seq, 0)
     assert waited == [1] and shell._boot_failed is True
     assert any("KSplash.fail(" in js for js in said)
 
@@ -184,7 +192,15 @@ def test_a_quiet_start_that_fails_shows_its_window(shell, monkeypatch):
     monkeypatch.setattr(shell, "HEALTH_WAIT_S", 0.2)
     monkeypatch.setattr("kestrel.db.migrate.run_migrations", lambda *a, **k: None)
     monkeypatch.setattr("kestrel.web.serve.wait_for_health", lambda port, timeout=30.0: False)
-    monkeypatch.setitem(sys.modules, "webview", _webview(win, lambda f, a: f(*a)))
+
+    def start_and_fetch(func, args):
+        func(*args)
+        # The loading page fetched what the shell posted before the window is torn down, so the
+        # delivery timer has nothing to warn about (D-CI-601).
+        channel = shell._splash_server.channel
+        channel.after(channel.seq, 0)
+
+    monkeypatch.setitem(sys.modules, "webview", _webview(win, start_and_fetch))
     said = channel_spy.spy(monkeypatch)
     assert shell.run_desktop() == 1
     assert win.shown >= 1, "a hidden window holding the lock with a failed start"

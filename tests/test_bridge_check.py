@@ -137,6 +137,7 @@ def test_without_the_desktop_window_the_routes_are_not_there():
         assert client.get("/api/window/events?after=0").status_code == 404
 
 
+@pytest.mark.splash_update_failed_is_the_point("the warning and its cause are this test's claim")
 def test_a_splash_update_the_page_never_takes_is_a_warning_with_its_cause(monkeypatch):
     """#212 round 4, item 3: the old path logged a refused update at debug and the window sat on
     "Opening your data". An update the loading page does not fetch is a warning naming why."""
@@ -169,6 +170,7 @@ def test_a_splash_update_the_page_never_takes_is_a_warning_with_its_cause(monkey
     assert not [e for e in logs if e["event"] == "splash_update_failed"]
 
 
+@pytest.mark.splash_update_failed_is_the_point("the immediate warning is this test's claim")
 def test_a_window_with_no_loading_page_server_warns_instead_of_staying_silent(monkeypatch):
     from structlog.testing import capture_logs
 

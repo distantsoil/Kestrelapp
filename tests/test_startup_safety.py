@@ -112,9 +112,16 @@ def test_start_again_on_the_mcp_card_retries_and_shows_the_new_state(monkeypatch
 
 # ------------------------------------------------------------------ 1b counter and offer
 def _splash():
+    """This file tests the failure counters, not the loading page. A real _Splash would post
+    updates no test page fetches and warn 10 s later (D-CI-601): the same class with its page
+    calls made no-ops keeps the startup path intact without a window."""
     from kestrel.desktop import shell
 
-    return shell._Splash()
+    class _QuietSplash(shell._Splash):
+        def _js(self, *_args, **_kwargs) -> None:
+            pass
+
+    return _QuietSplash()
 
 
 def _fail_migrations(monkeypatch):

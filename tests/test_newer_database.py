@@ -12,6 +12,19 @@ import pytest
 from alembic.util.exc import CommandError
 
 
+def _splash():
+    """These tests are about the startup error, not the loading page. A real _Splash would post
+    updates no test page fetches and warn 10 s later (D-CI-601): the same class with its page
+    calls made no-ops keeps the startup path intact without a window."""
+    from kestrel.desktop import shell
+
+    class _QuietSplash(shell._Splash):
+        def _js(self, *_args, **_kwargs) -> None:
+            pass
+
+    return _QuietSplash()
+
+
 def test_newer_database_error_detected(monkeypatch):
     """A 'Can't locate revision' error is detected and mapped to 'newer_database'."""
     import kestrel.db.migrate as migrate
@@ -25,7 +38,7 @@ def test_newer_database_error_detected(monkeypatch):
 
     # Call _start_backend and verify the StartupError has the right code
     with pytest.raises(shell.StartupError) as exc_info:
-        shell._start_backend(shell._Splash())
+        shell._start_backend(_splash())
 
     assert exc_info.value.code == "newer_database"
     assert "newer Kestrel" in exc_info.value.reason
@@ -43,7 +56,7 @@ def test_generic_migration_error_not_newer_database(monkeypatch):
     monkeypatch.setattr(migrate, "run_migrations", fake_migrations)
 
     with pytest.raises(shell.StartupError) as exc_info:
-        shell._start_backend(shell._Splash())
+        shell._start_backend(_splash())
 
     assert exc_info.value.code == "migrations_failed"
     assert "newer Kestrel" not in exc_info.value.reason
@@ -77,7 +90,7 @@ def _startup_error():
     import kestrel.desktop.shell as shell
 
     with pytest.raises(shell.StartupError) as exc_info:
-        shell._start_backend(shell._Splash())
+        shell._start_backend(_splash())
     return exc_info.value
 
 
