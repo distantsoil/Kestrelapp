@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 
 # One math thread per process, set before numpy or sklearn load. With several suites running at
 # once on a small machine, BLAS's default thread pools oversubscribe the cores and the reranker
@@ -486,7 +487,158 @@ def _no_setup_action_outlives_its_test(
     )
 
 
+class _SplashWarningTap:
+    """Forward structlog calls, keeping splash_update_failed events for the guard (D-CI-601)."""
+
+    def __init__(self, inner, events: list[dict]) -> None:
+        self._inner = inner
+        self._events = events
+
+    def warning(self, event: str, *args, **kwargs):
+        if event == "splash_update_failed":
+            self._events.append(dict(kwargs, event=event, _thread=threading.current_thread()))
+        return self._inner.warning(event, *args, **kwargs)
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+
+class _SplashTimers:
+    """A `threading.Timer` stand-in that remembers the splash delivery timers of one test.
+
+    shell.py starts a `threading.Timer` per splash update and for its window geometry. Only the
+    delivery timers are kept, with the callback and arguments, so teardown knows exactly which
+    timers this test started and whether the callback ran. It is installed on the threading
+    module itself, so a shell module reloaded during the test still gets it."""
+
+    def __init__(self) -> None:
+        self._real = threading.Timer
+        self.deliveries: list[dict] = []
+
+    def __call__(self, interval, function, args=None, kwargs=None):
+        if getattr(function, "__name__", "") != "_check_delivered":
+            return self._real(interval, function, args, kwargs)
+        record = {"function": function, "args": args or (), "kwargs": kwargs or {},
+                  "ran": False, "started": False, "timer": None,
+                  "creator": threading.current_thread()}
+        real_function = record["function"]
+        real_args, real_kwargs = record["args"], record["kwargs"]
+
+        def run_once() -> None:
+            record["ran"] = True
+            real_function(*real_args, **real_kwargs)
+
+        timer = self._real(interval, run_once)
+        real_start = timer.start
+
+        def start() -> None:
+            real_start()
+            record["started"] = True
+
+        timer.start = start
+        record["timer"] = timer
+        self.deliveries.append(record)
+        return timer
+
+
+@pytest.fixture(autouse=True)
+def _no_splash_update_failure_goes_unnoticed(request, monkeypatch):
+    """D-CI-601 (CLAUDE.md: a CI warning becomes a failing local test in the same PR).
+
+    kestrel.desktop.shell._Splash logs splash_update_failed when an update the loading page did
+    not take would leave the window on "Opening your data" (shell.py `_js`, `_check_delivered`).
+    A startup test that lets that happen is not exercising a real loading page, and the warning
+    is the defect, so it fails the test here: give the test a Channel its page fetches, a splash
+    stub, or mark it splash_update_failed_is_the_point with the reason it asserts the warning.
+
+    `_js` checks delivery from a daemon timer DELIVERY_WAIT_S (10 s) later, after the test has
+    returned. `threading.Timer` is replaced for the test by a recorder, so teardown knows exactly
+    which delivery timers this test started and whether each callback ran. A timer whose page
+    already fetched is cancelled; one that would warn is joined for the rest of its own grace so
+    it logs as production does. Both are waits on the thread, never a sleep, and a timer that did
+    not warn never reaches the next test. A warning is blamed on this test only when it came from
+    this test's own thread or a thread that did not exist when the test began, so a timer left
+    behind by another test is not attributed here.
+    """
+    import time
+
+    import structlog
+
+    from kestrel.desktop import shell
+
+    events: list[dict] = []
+    real_logger = structlog.get_logger
+
+    def tapped_logger(*args, **kwargs):
+        # tests/test_platform.py reloads the shell module; its fresh logger must be tapped too.
+        return _SplashWarningTap(real_logger(*args, **kwargs), events)
+
+    monkeypatch.setattr(structlog, "get_logger", tapped_logger)
+    monkeypatch.setattr(shell, "log", _SplashWarningTap(shell.log, events))
+    timers = _SplashTimers()
+    monkeypatch.setattr(threading, "Timer", timers)
+    expected = request.node.get_closest_marker("splash_update_failed_is_the_point")
+    if expected is not None and not (expected.args and str(expected.args[0]).strip()):
+        pytest.fail(
+            "the splash_update_failed_is_the_point marker needs the one-line reason it asserts "
+            "the warning (D-CI-601).",
+            pytrace=False,
+        )
+    before = set(threading.enumerate())
+    yield
+    stuck: list[str] = []
+    for record in timers.deliveries:
+        timer, function = record["timer"], record["function"]
+        # Constructed and never started: nothing can be logged. A live thread is settled even
+        # when the starting thread has not returned from Thread.start yet (D-CI-602 review).
+        if not record["started"] and not timer.is_alive():
+            continue
+        args = record["args"]
+        splash = getattr(function, "__self__", None)
+        last_fetch = getattr(getattr(splash, "channel", None), "last_fetch", None)
+        posted = args[2]
+        if expected is not None or (last_fetch is not None and last_fetch >= posted):
+            timer.cancel()
+            timer.join(timeout=1.0)
+        else:
+            grace = getattr(splash, "DELIVERY_WAIT_S", 10.0)
+            timer.join(timeout=max(0.0, posted + grace - time.monotonic()) + 1.0)
+            if not record["ran"]:
+                timer.cancel()
+                timer.join(timeout=1.0)
+                if not record["ran"]:  # the canceled thread never started it: run it now
+                    function(*args)
+        if timer.is_alive():
+            timer.cancel()
+            timer.join(timeout=1.0)
+        if timer.is_alive():
+            stuck.append(getattr(function, "__name__", "?"))
+    if stuck:
+        pytest.fail(
+            f"splash delivery timer(s) {stuck} did not finish at teardown; the guard cannot "
+            "judge their warning (D-CI-601).",
+            pytrace=False,
+        )
+    creators = {r["timer"]: r["creator"] for r in timers.deliveries}
+    own = [e for e in events
+           if e["_thread"] is threading.current_thread()
+           or creators.get(e["_thread"], e["_thread"]) not in before]
+    if own and expected is None:
+        said = "; ".join(f"fn={e.get('fn')} cause={e.get('cause')}" for e in own)
+        pytest.fail(
+            "the test logged splash_update_failed: the loading page never took an update "
+            f"({said}). Give the test a Channel its page fetches or a splash stub, or mark it "
+            "splash_update_failed_is_the_point with the reason (D-CI-601).",
+            pytrace=False,
+        )
+
+
 def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "splash_update_failed_is_the_point(reason): the test asserts a splash_update_failed "
+        "warning on purpose, so the autouse guard (D-CI-601) lets it through; state the reason",
+    )
     config.addinivalue_line(
         "markers",
         "real_hardware_detection: run kestrel.llm.profiles.detect_hardware itself (the test fakes "

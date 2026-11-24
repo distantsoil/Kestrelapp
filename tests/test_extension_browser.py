@@ -13,6 +13,7 @@ Invariants proved here, in the browser:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
@@ -324,6 +325,23 @@ def _shot(page, name: str) -> None:
         page.screenshot(path=str(Path(SHOTS) / f"{name}.png"))
 
 
+def _failure_artifacts(page, name: str, folder: Path) -> None:
+    """D-CI-602: a failed popup assertion keeps the page's text and a screenshot, and prints
+    where they are, so a gate log names the state instead of only the timeout."""
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        text_path = folder / f"{name}.txt"
+        shot_path = folder / f"{name}.png"
+        text_path.write_text(page.inner_text("body"), encoding="utf-8")
+        page.screenshot(path=str(shot_path), full_page=True)
+        print(f"failure artifacts: {text_path}")
+        print(f"failure screenshot: {shot_path}")
+    except Exception as exc:  # noqa: BLE001 - never replace the original failure
+        # A closed output pipe must not replace the failure either (D-CI-602).
+        with contextlib.suppress(Exception):
+            print(f"failure artifacts could not be saved: {type(exc).__name__}: {exc}")
+
+
 def _ext_page(live, path: str, *, scheme: str = "light", width: int = 380, height: int = 600):
     page = live["ctx"].new_page()
     page.set_viewport_size({"width": width, "height": height})
@@ -492,23 +510,27 @@ def test_check_page_offers_no_save(live, scheme):
 
 
 @pytest.mark.parametrize("scheme", ["light", "dark"])
-def test_nothing_waiting_and_not_running(live, scheme):
+def test_nothing_waiting_and_not_running(live, scheme, tmp_path):
     helper, _ = _ext_page(live, "options.html")
     _store(helper, {"port": live["port"], "secret": KEY})
     page, errors = _ext_page(live, "popup.html", scheme=scheme)
-    _features(page, live["port"], waiting=False)
-    page.reload()
-    page.wait_for_selector("text=Capture this role")
-    page.click("button[aria-label='More ways to capture']")
-    page.wait_for_selector("text=Capture and score now")
-    _shot(page, f"popup-nothing-waiting-{scheme}")
-    _features(page, live["port"], waiting=True)
-    _store(helper, {"port": 1, "secret": KEY})  # nothing listens there
-    page.reload()
-    page.wait_for_selector("text=Open Kestrel on this computer")
-    _shot(page, f"popup-kestrel-not-running-{scheme}")
-    _store(helper, {"port": live["port"], "secret": KEY})
-    assert not errors
+    try:
+        _features(page, live["port"], waiting=False)
+        page.reload()
+        page.wait_for_selector("text=Capture this role")
+        page.click("button[aria-label='More ways to capture']")
+        page.wait_for_selector("text=Capture and score now")
+        _shot(page, f"popup-nothing-waiting-{scheme}")
+        _features(page, live["port"], waiting=True)
+        _store(helper, {"port": 1, "secret": KEY})  # nothing listens there
+        page.reload()
+        page.wait_for_selector("text=Open Kestrel on this computer")
+        _shot(page, f"popup-kestrel-not-running-{scheme}")
+        _store(helper, {"port": live["port"], "secret": KEY})
+        assert not errors
+    except Exception:
+        _failure_artifacts(page, f"popup-nothing-waiting-{scheme}", tmp_path)
+        raise
 
 
 def test_pages_cannot_reach_any_other_host(live):

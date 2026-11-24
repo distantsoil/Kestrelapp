@@ -1242,6 +1242,9 @@ def test_desktop_window_allows_downloads(shell, monkeypatch):
         @staticmethod
         def start(func=None, args=()) -> None:
             func(*args)  # the startup steps, behind the loading page
+            # The loading page fetched the updates before the window closes (D-CI-601).
+            channel = shell._splash_server.channel
+            channel.after(channel.seq, 0)
 
     class _FakeThread:
         def is_alive(self) -> bool:
@@ -1313,6 +1316,9 @@ def test_a_failed_start_shows_the_problem_card_and_keeps_the_window(shell, monke
         @staticmethod
         def start(func=None, args=()) -> None:
             func(*args)
+            # The loading page fetched the updates before the window closes (D-CI-601).
+            channel = shell._splash_server.channel
+            channel.after(channel.seq, 0)
 
     class _FakeServer:
         should_exit = False
