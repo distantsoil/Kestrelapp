@@ -194,10 +194,16 @@ def test_leaving_the_role_page_stops_the_poll(role_live):
     try:
         page.goto(f"{base}/opportunities/{ids['strong']}")
         page.wait_for_selector("#rl-body")
+        # The body element exists before the page script mounts; the timer count is the
+        # mounted page's, so wait for the mount, not for the markup.
+        page.wait_for_function("KUI.page.current() === 'role'")
         assert page.evaluate("KUI.page._stats().timers") == 1
-        # Another tab has no notice; no timer is left running for it.
+        # Another tab has no notice; no timer is left running for it. The posting pane's own
+        # element is the swap condition: "#rl-pane" alone matched before the swap ever landed,
+        # so the 4 s below was spent on the click-request-swap round trip under load and the
+        # timer had not had its afterSwap yet.
         page.get_by_test_id("tab-posting").click()
-        page.wait_for_selector("#rl-pane [data-tab='posting'], #rl-pane")
+        page.wait_for_selector("#rl-tab-posting")
         page.wait_for_function("KUI.page._stats().timers === 0", timeout=4000)
     finally:
         ctx.close()

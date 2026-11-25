@@ -57,14 +57,15 @@ MONTH_MODULES = ["tests/test_hosted_balance.py", "tests/test_analytics.py"]
 
 
 # It runs its own pytest subprocess over the time-sensitive modules (up to 900 s, below), so the
-# 60 s default per-test timeout (D-TEST-8) does not apply.
+# 60 s default per-test timeout (D-TEST-8) does not apply. Its child run uses four workers
+# (D-TEST-840), and the boundary plugin freezes the clock in each of them.
 @pytest.mark.timeout(960)
 @pytest.mark.parametrize("label", INSTANT_LABELS)
 def test_time_sensitive_modules_pass_just_after_midnight(label):
     env = {**os.environ, "KESTREL_FROZEN_AT": _instants()[label].isoformat()}
     env.pop("KESTREL_BOUNDARY", None)
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "-n", "0", "-q", "-p", "tests.boundary_clock",
+        [sys.executable, "-m", "pytest", "-n", "4", "-q", "-p", "tests.boundary_clock",
          "-p", "no:cacheprovider", *(MONTH_MODULES if "UTC" in label else MODULES)],
         cwd=ROOT, env=env, capture_output=True, text=True, timeout=900,
     )

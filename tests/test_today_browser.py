@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -428,10 +429,31 @@ def test_on_touch_a_tap_opens_the_summary_and_a_swipe_only_moves(live):
         page.wait_for_timeout(400)
         assert page.evaluate(_BOXES, ".td-card")[0]["l"] < before - 100
         assert not page.evaluate(_DRAWER_OPEN)
-        # A tap on the active card opens its summary.
+        # A tap on the active card opens its summary. Under a loaded machine the tap itself can
+        # be lost by the browser's input pipeline: no touch events reach the page, no click is
+        # synthesized, and the drawer then stays closed for the whole budget (seen once in a
+        # full gate on Chromium, and reproduced here by dropping the first tap: the same 30 s
+        # timeout). The page counts the gestures it actually receives; only a tap that arrived
+        # as nothing at all is tapped again. A tap the page saw and did not answer gets the
+        # full budget once and fails there: it is never retried.
         x, y = _body_point(page)
-        page.touchscreen.tap(x, y)
-        page.wait_for_function(_DRAWER_OPEN, timeout=SETTLE_MS)
+        page.evaluate("""() => { window.__taps = 0; const mark = () => { window.__taps += 1; };
+          document.addEventListener('pointerdown', mark, { capture: true, passive: true });
+          document.addEventListener('click', mark, { capture: true, passive: true }); }""")
+        for _attempt in range(5):
+            page.touchscreen.tap(x, y)
+            try:
+                # Three seconds of total silence and a closed drawer mean the tap never
+                # arrived; anything else gets the full budget below.
+                page.wait_for_function(
+                    f"({_DRAWER_OPEN}) || window.__taps > 0", timeout=3_000)
+            except PlaywrightTimeoutError:
+                continue
+            page.wait_for_function(_DRAWER_OPEN, timeout=SETTLE_MS)
+            break
+        else:
+            page.touchscreen.tap(x, y)
+            page.wait_for_function(_DRAWER_OPEN, timeout=SETTLE_MS)
     finally:
         ctx.close()
 

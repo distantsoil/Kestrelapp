@@ -163,3 +163,16 @@ def test_history_is_newest_first_and_ends_with_where_it_was_found():
         "Found on Indeed and 1 other place",
     ]
     assert tl[1]["sub"] == "m · prompt version 7"
+
+
+def test_capture_origin_names_the_extension_and_hides_the_site_in_confidential_mode():
+    from types import SimpleNamespace
+
+    from kestrel.web.role_view import capture_origin
+
+    opp = SimpleNamespace(
+        raw={"captured_via": "extension", "captured_host": "careers.example.test"})
+    assert capture_origin(opp) == "From the browser extension (careers.example.test)"
+    assert capture_origin(opp, conf=True) == "From the browser extension"
+    assert capture_origin(SimpleNamespace(raw={"site": "indeed"})) == ""
+    assert capture_origin(SimpleNamespace(raw=None)) == ""

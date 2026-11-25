@@ -48,6 +48,7 @@ from kestrel.pipeline.context import (
     org_signals_lines,
     render_user,
 )
+from kestrel.queue.rescore import past_tier1
 from kestrel.web.fit import EMPTY_POSTING_STAGE_REASON
 
 log = structlog.get_logger()
@@ -294,6 +295,11 @@ async def handle_t2(
                 if done_since:
                     return HandlerOutcome("skip", 2)
         elif changed:
+            # A changed posting is scored again only for a role already past Quick sort. One
+            # the rules or Quick sort set aside, one not screened yet or one whose scoring
+            # failed is never sent to the model from here (issue #250, D-SCORE-910).
+            if not past_tier1(opp.stage):
+                return HandlerOutcome("skip", 2)
             already = (
                 await session.execute(
                     select(func.count())

@@ -16,11 +16,21 @@ from kestrel.db.models import Opportunity, Quarantine
 from kestrel.queue.rescore import _TO_T2
 
 # The failed row's tier to the task a retry of it runs. Only Fit score is run again from a row:
-#   Tier 1 (Quick sort): the failure already kept the role and queued Fit score (hard rule 4). A
-#     Quick sort re-run could set aside a role that rule saved, so there is nothing to retry.
+#   Tier 1 (Quick sort): a reply that could not be read was already promoted and passed on (hard
+#     rule 4), so that row has nothing to retry. A Quick sort task that used up its tries
+#     (deadletter.py) left its role waiting at `quarantined`; hard rule 4 escalates that row to
+#     Fit score, so it is tried again instead of refused (#220, see QUICK_SORT_RETRY_TASK).
 #   Tier 3 (Deep read): escalation is operator-confirmed only, from the role's Escalate.
 #   Every other tier: no worker task runs that step from here.
 ROW_TASK: dict[int, str] = {2: "t2"}
+# The one tier-1 row that can be retried, and the task its retry runs. A role at `quarantined`
+# may have got there from deadletter.py: a Quick sort task that dies while the role still waits
+# moves it (`_stage_move`, 101-112, 146-149); the same stage is also written by a Tier 2 refusal,
+# quarantine or over-budget result (tier2.py:432, 448, 470) and by a dead Tier 2 task. In every
+# case a tier-1 row is retried by escalating it to Fit score, while a promoted reply-quarantine
+# stays at `t1_pass`. So the stage tells the two apart without reading the error text.
+QUICK_SORT_RETRY_STAGE = "quarantined"
+QUICK_SORT_RETRY_TASK = "t2"
 # The stages each task may run from. Outside them the role has moved on since the row failed.
 RUNS_FROM: dict[str, tuple[str, ...]] = {"t2": _TO_T2}
 
@@ -50,9 +60,17 @@ def plan(q: Quarantine, opp: Opportunity | None) -> RowPlan:
         return RowPlan(None, NO_ROLE)
     if opp is None or opp.id != q.opportunity_id:
         return RowPlan(None, ROLE_GONE)
-    task = ROW_TASK.get(int(q.tier or 0))
+    tier = int(q.tier or 0)
+    if tier == 1:
+        # Only the dead-letter outcome is retryable: the role is still waiting at `quarantined`
+        # and hard rule 4 escalates it to Fit score. A promoted reply-quarantine (t1_pass) or a
+        # role that has moved on keeps the refusal it already had.
+        if opp.stage != QUICK_SORT_RETRY_STAGE:
+            return RowPlan(None, KEPT)
+        return RowPlan(QUICK_SORT_RETRY_TASK)
+    task = ROW_TASK.get(tier)
     if task is None:
-        why = {1: KEPT, 3: DEEP}.get(int(q.tier or 0), OTHER)
+        why = {3: DEEP}.get(tier, OTHER)
         return RowPlan(None, why)
     if opp.stage not in RUNS_FROM[task]:
         return RowPlan(None, MOVED_ON)

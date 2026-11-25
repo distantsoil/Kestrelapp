@@ -135,7 +135,15 @@ def rendered_forms(world_template, monkeypatch) -> dict[str, list[dict[str, str]
 
 egress_recorder = _contracts.recorder
 
-pytestmark = pytest.mark.usefixtures("_isolate_data_home")
+# The first test in each xdist worker builds rendered_forms: 400 page renders (200 GET routes in
+# two worlds, measured 32.5 s of the 40.7 s alone on the owner's Windows PC). Under the gate's
+# -n 8 that first call passes the 60 s default, and pytest-timeout's thread method on Windows
+# then kills the worker ("node down: Not properly terminated"). The page count, not a wait, is
+# the cost; a marker, not a changed default, so every other file keeps 60 s (D-TEST-856).
+pytestmark = [
+    pytest.mark.usefixtures("_isolate_data_home"),
+    pytest.mark.timeout(240),
+]
 
 WORLDS = ("online-off", "ack-stale")
 

@@ -206,6 +206,7 @@ patterns = [
 files = [
   "test_role_browser.py", "test_cover_letter_browser.py", "test_rescoring_browser.py",
   "test_not_scored_browser.py", "test_research_jobs_browser.py",
+  "test_extension_origin_browser.py",
 ]
 
 [[rule]]

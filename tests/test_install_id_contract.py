@@ -715,6 +715,11 @@ def test_the_guard_sees_a_client_that_bypasses_the_recorded_ones(recorder):
     assert recorder.leaks(PLANTED)
 
 
+# Drives every route in every method as a key holder on another device: 26.7 s alone on the
+# owner's Windows PC (measured 2026-11-24, -n 8, --timeout=0), and under the gate's -n 8 load
+# that passes pyproject's 60 s default, whose thread timeout on Windows stops the worker. The
+# sweep's size, not a wait, is the cost; same sizing as the marked sweep above (D-TEST-860).
+@pytest.mark.timeout(240)
 def test_no_page_served_to_another_device_carries_the_install_id(recorder):
     """Every route in every method (route_driver: the route table decides), requested by a key
     holder on another device: the ID is in none of the responses (it is shown on this computer

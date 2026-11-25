@@ -467,6 +467,11 @@ def test_a_request_without_the_key_is_still_401_not_403(monkeypatch):
 
 
 # ------------------------------------------------------------------ this computer is unaffected
+# Walks every guarded route as the operator on two hosts: 25.4 s alone on the owner's Windows PC
+# (measured 2026-11-24, -n 8, --timeout=0), and under the gate's -n 8 load that passes
+# pyproject's 60 s default, whose thread timeout on Windows stops the worker. The route count,
+# not a wait, is the cost; the ceiling is raised for this test only (D-TEST-860).
+@pytest.mark.timeout(240)
 def test_the_operator_at_the_keyboard_is_never_refused_by_the_guard(
         route_table, monkeypatch, no_network):
     """Loopback and Host 127.0.0.1 or localhost, no key at all: not one guarded route answers with
@@ -1225,6 +1230,11 @@ def local_only_writes(route_table, client) -> list[str]:
     return sorted(out)
 
 
+# Drives every non-GET route twice (form and JSON) and reads every setting statement: 56.4 s
+# alone on the owner's Windows PC (measured 2026-11-24, -n 8, --timeout=0), past pyproject's 60 s
+# default, whose thread timeout on Windows stops the worker. The sweep's size, not a wait, is the
+# cost; the ceiling is raised for this test only (D-TEST-860).
+@pytest.mark.timeout(240)
 def test_no_request_from_a_key_holder_writes_a_local_only_setting(
         route_table, monkeypatch, no_network):
     """The runtime check the source scan cannot make: drive every non-GET route as a key holder

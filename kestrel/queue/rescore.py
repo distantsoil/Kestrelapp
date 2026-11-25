@@ -43,8 +43,23 @@ MAX_ROLES = 200
 # operator asked for these.
 RESCORE_PRIORITY = 1000
 
-_TO_T2 = ("t1_pass", "t2_done", "t3_done", "quarantined", "error")
+# Past Quick sort for certain: the stage itself says Tier 1 kept the role or Tier 2 scored it.
+_PAST_T1 = ("t1_pass", "t2_done", "t3_done")
+# The person's own Score again also sends a failed role to Fit score. `quarantined` does not say
+# which step failed (a Tier 1 task that ran out of tries parks a role there too, deadletter.py),
+# so it is in this list and not in the one above.
+_TO_T2 = (*_PAST_T1, "quarantined", "error")
 _TO_T1 = ("t0_pass", "t1_reject")
+
+
+def past_tier1(stage: str | None) -> bool:
+    """Whether a role at `stage` is past Quick sort for certain: the rules let it through and
+    Quick sort kept it, or it has a Fit score. The one definition (D-SCORE-910): only such a role
+    may be sent to Fit score by anything but the person's own request, so a posting whose text
+    changed is scored again from these stages and never from `new`, `t0_pass`, `t0_reject` or
+    `t1_reject` (issue #250). A failed role (`quarantined`, `error`) is not counted: the stage
+    does not say whether Quick sort ever kept it, and it waits under Needs another try."""
+    return stage in _PAST_T1
 
 
 @dataclass

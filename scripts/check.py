@@ -20,6 +20,14 @@ assertion floor, protected paths and the test-quality lint. The full gate adds t
 for `fix:` commits. Each failure names the rule, the file:line and the fix.
     uv run --extra dev python scripts/check.py --workers 0  # serial comparison
 
+Fail-fast order (D-CI-610 to D-CI-616): the full gate runs the tests this branch's change selects
+first (S4), then the failures the last gate recorded (S5), then up to 12 selected browser files
+(S6), then the whole suite exactly as before (S7), the stress run (S8), more than 12 browser files
+(S9), diff coverage (S10) and the red-first proof (S11). Each test stage stops at its first
+failure and names it. S4 to S6 repeat tests S7 runs anyway, so nothing is skipped or moved out.
+    uv run --extra dev python scripts/check.py --keep-going  # the old order, every test run to
+                                                             # its end (also KESTREL_KEEP_GOING=1)
+
 Windows-only behavior still needs the Windows CI job; everything else should be green here
 before anything is pushed.
 """
@@ -31,12 +39,14 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import diff_gate  # noqa: E402  (sits beside this script; the path is added just above)
@@ -54,6 +64,27 @@ CI_ENV = {"KESTREL_HEADLESS": "1"}
 # modules again with the clock frozen just after midnight. --quick and CI leave it off.
 FULL_GATE_ENV = {"KESTREL_BOUNDARY": "1"}
 
+# Fail-fast (D-CI-610 to D-CI-616). The plugin stops a stage at its first failure, under xdist
+# too (D-CI-611); it is a pytest option so a child pytest never inherits it.
+FAILFAST_PLUGIN = ("-p", "tests.failfast_plugin")
+FAILFAST_OPTION = "--kestrel-failfast-file"
+# The off switch for a gate started by gate.py or a hook, which cannot pass --keep-going
+# (D-CI-614, D-CI-616): "1" gives the old order and the old commands.
+KEEP_GOING_ENV = "KESTREL_KEEP_GOING"
+# Selected browser files run before the suite when there are this many or fewer (D-CI-613):
+# measured at about 27 s a file on four workers, so 12 files is about five minutes.
+EARLY_BROWSER_MAX = 12
+# S4 repeats tests S7 runs anyway; past this many files it would nearly repeat the suite, so it
+# steps aside and S7 (fail-fast too) finds the failure (D-CI-610).
+CHANGED_TESTS_MAX = 60
+# The last gate's first failure, replayed first next time (D-CI-612). Git-ignored, beside gate.py's
+# records but under its own name, so gate.py and push_gated.py never read it.
+FAILFAST_RECORD = diff_gate.ROOT / ".gate" / "failfast-last.json"
+RECORD_VERSION = 1
+RECORD_MAX_IDS = 50
+# Fifty IDs of this length stay far below Windows' 32,767-character command line.
+RECORD_MAX_ID_CHARS = 400
+
 
 def _run(label: str, cmd: list[str]) -> bool:
     print(f"==> {label}: {' '.join(cmd)}", flush=True)
@@ -68,8 +99,9 @@ def _run(label: str, cmd: list[str]) -> bool:
 SKIP_LINE = re.compile(r"^SKIPPED \[(\d+)\] (.+?): (.*)$")
 PASSED_COUNT = re.compile(r"\b(\d+) passed\b")
 # How many tests the last _run_pytest saw pass (None: its summary line named none), so a run that
-# executed nothing, or only skipped, is never counted as a pass (D-CI-39).
-LAST_RUN = {"passed": None}
+# executed nothing, or only skipped, is never counted as a pass (D-CI-39); and its exit code, which
+# S5 reads (D-CI-612).
+LAST_RUN: dict[str, int | None] = {"passed": None, "exit": None}
 BROWSER_WORDS = ("browser", "playwright", "edge", "chromium")
 
 
@@ -177,10 +209,13 @@ def browser_worker_count(value: str) -> int:
     return worker_count(value)
 
 
-def _browser_coverage_env() -> dict[str, str]:
-    """Line coverage through sys.monitoring (Python 3.12+) in the browser stage: the default
-    tracer slowed the stage by about a fifth, sys.monitoring by nothing measurable (D-CI-35)."""
-    return {"COVERAGE_CORE": "sysmon"} if sys.version_info >= (3, 12) else {}
+def _coverage_run_env(cov_env: dict[str, str]) -> dict[str, str]:
+    """The environment of every stage that adds to the diff-coverage data (S6, S7, S9): one data
+    file, and line coverage through sys.monitoring on Python 3.12+. The default tracer loses the
+    lines that run after SQLAlchemy's async greenlet bridge, so tested lines read as missed
+    (D-GATE-940); it also slowed the browser stage by about a fifth (D-CI-35)."""
+    tracer = {"COVERAGE_CORE": "sysmon"} if sys.version_info >= (3, 12) else {}
+    return {**cov_env, **tracer}
 
 
 def _run_pytest(
@@ -195,6 +230,7 @@ def _run_pytest(
     )
     skips: list[tuple[int, str, str]] = []
     LAST_RUN["passed"] = None
+    LAST_RUN["exit"] = None
     assert proc.stdout is not None
     for line in proc.stdout:
         print(line, end="", flush=True)
@@ -202,7 +238,9 @@ def _run_pytest(
             LAST_RUN["passed"] = int(counted.group(1))
         if m := SKIP_LINE.match(line.rstrip()):
             skips.append((int(m.group(1)), m.group(2), m.group(3)))
-    ok = proc.wait() == 0
+    code = proc.wait()
+    LAST_RUN["exit"] = code
+    ok = code == 0
     print(f"    {'ok' if ok else 'FAILED'} ({time.monotonic() - started:.0f}s)", flush=True)
     return ok, skips
 
@@ -481,6 +519,181 @@ def base_override(alone: bool, environ: dict[str, str] | None = None) -> str | N
     return value
 
 
+# ---- fail-fast (D-CI-610 to D-CI-616) ----------------------------------------------------------
+
+
+def keep_going(args: argparse.Namespace, environ: dict[str, str] | None = None) -> bool:
+    """--keep-going or KESTREL_KEEP_GOING=1: the old order and commands, every test stage run to
+    its end (D-CI-614, D-CI-616)."""
+    value = (os.environ if environ is None else environ).get(KEEP_GOING_ENV, "").strip()
+    return bool(args.keep_going) or value == "1"
+
+
+def _with_failfast(cmd: list[str], first: Path) -> list[str]:
+    """The command with the fail-fast plugin and its file added after `-p no:cacheprovider`;
+    nothing else changes (the invariant test strips exactly these three items, D-CI-610)."""
+    at = cmd.index("no:cacheprovider") + 1
+    return [*cmd[:at], *FAILFAST_PLUGIN, FAILFAST_OPTION, str(first), *cmd[at:]]
+
+
+def _read_first_failure(first: Path) -> str | None:
+    """The node ID in a stage's first-failure file; "" when the file exists but cannot be read
+    (it still fails the stage); None when there is no file."""
+    if not first.exists():
+        return None
+    try:
+        return first.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def _failfast_stage(
+    stage: str, cmd: list[str], *, extra_env: dict[str, str] | None, fail_fast: bool,
+) -> tuple[bool, list[tuple[int, str, str]], str | None]:
+    """Run one pytest stage; return (passed, skips, first failure).
+
+    With fail-fast the stage gets a fresh empty folder and a file path inside it that does not
+    exist yet, so no earlier stage or gate can leave a file behind (D-CI-611). A stage passes only
+    when pytest exits 0 AND that file does not exist (G5): a test held back by the plugin can never
+    turn into a pass."""
+    if not fail_fast:
+        ok, skips = _run_pytest(cmd, extra_env=extra_env)
+        return ok, skips, None
+    folder = Path(tempfile.mkdtemp(prefix="kestrel-failfast-"))
+    first = folder / "first-failure"
+    try:
+        ok, skips = _run_pytest(_with_failfast(cmd, first), extra_env=extra_env)
+        failed = _read_first_failure(first)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+    if failed is not None:
+        ok = False
+        print(f"FIRST FAILURE in stage {stage}: {failed or '(the failure file was unreadable)'}",
+              flush=True)
+        if failed:
+            write_record(FAILFAST_RECORD, [failed], stage)
+    return ok, skips, failed
+
+
+def _head_sha() -> str:
+    proc = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", check=False, cwd=diff_gate.ROOT)
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def write_record(path: Path, failed: list[str], stage: str) -> None:
+    """Write the record atomically: a uniquely named temporary file beside it, then os.replace,
+    so a crash leaves the old record or the new one, and two gates never share a temporary name.
+    Any OSError is one printed note: the record never changes a gate's result (D-CI-612)."""
+    data = {"version": RECORD_VERSION, "sha": _head_sha(), "failed": failed, "stage": stage}
+    tmp = ""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix="failfast-", suffix=".tmp", dir=path.parent)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+        os.replace(tmp, path)
+    except OSError as exc:
+        print(f"==> fail-fast record not written ({exc}); the gate's result is unchanged",
+              flush=True)
+        if tmp:
+            try:
+                Path(tmp).unlink(missing_ok=True)
+            except OSError:
+                pass  # a scanner holding it; the next gate writes a new name
+
+
+def safe_test_id(value: object, root: Path) -> bool:
+    """A node ID the record may replay (G6): a string of at most RECORD_MAX_ID_CHARS characters
+    (fifty fit on a Windows command line) with no control character, written as
+    `tests/...` (so it can never be read as a pytest option), naming a `test_*.py` file that,
+    once resolved, lies inside root/tests (so `tests/../x` cannot leave it) and exists."""
+    if not isinstance(value, str) or "::" not in value or len(value) > RECORD_MAX_ID_CHARS:
+        return False
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        return False
+    file_part = value.split("::", 1)[0]
+    parts = PurePosixPath(file_part).parts
+    if parts[:1] != ("tests",):
+        return False
+    if not (parts[-1].startswith("test_") and parts[-1].endswith(".py")):
+        return False
+    target = (root / file_part).resolve()
+    if not target.is_relative_to((root / "tests").resolve()):
+        return False
+    return target.is_file()
+
+
+def read_record(path: Path, root: Path) -> tuple[list[str], str]:
+    """(IDs to replay, a note). A missing, empty, corrupt or wrong-shaped record gives no IDs and
+    never an error: S5 steps aside and S7 runs everything (fail closed, D-CI-612)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return [], "no record of an earlier failure"
+    except (OSError, UnicodeDecodeError) as exc:
+        return [], f"the record could not be read ({exc.__class__.__name__})"
+    try:
+        data = json.loads(text)
+    except (ValueError, RecursionError):
+        return [], "the record is not valid JSON"
+    if not isinstance(data, dict) or data.get("version") != RECORD_VERSION \
+            or not isinstance(data.get("failed"), list):
+        return [], "the record has an unknown shape"
+    ids: list[str] = []
+    for item in data["failed"]:
+        if safe_test_id(item, root) and item not in ids:
+            ids.append(item)
+        if len(ids) == RECORD_MAX_IDS:
+            break
+    sha = data.get("sha") if isinstance(data.get("sha"), str) else ""
+    head = _head_sha()
+    note = f"from commit {sha[:7]}, a hint only" if sha and sha != head else "from this commit"
+    return ids, note
+
+
+def is_browser_test(name: str) -> bool:
+    path = PurePosixPath(name)
+    return path.parts[:1] == ("tests",) and path.name.startswith("test_") \
+        and path.name.endswith("_browser.py")
+
+
+def _changed_selection() -> tuple[list[str], list[str]]:
+    """(S4's test files, changed browser test files). S4 takes what the stress run takes
+    (stress.affected_test_files: changed test files, the files that name a changed module, helper
+    users); a changed `*_browser.py` file joins the browser files run live (D-CI-615)."""
+    base, _note = diff_gate.diff_base()
+    if base is None:
+        return [], []
+    names, _lines = diff_gate.git_changes(base)
+    texts = stress.read_test_texts(diff_gate.ROOT)
+    tests = stress.affected_test_files(names, texts, stress.read_texts("kestrel", diff_gate.ROOT))
+    tests = [t for t in tests if (diff_gate.ROOT / t).is_file()]
+    live = sorted(n for n in names if is_browser_test(n) and (diff_gate.ROOT / n).is_file())
+    return tests, live
+
+
+def _junit_path(args: argparse.Namespace, key: str, fallback: Path | None) -> Path | None:
+    """Where a stage writes its junit report: --junit-dir/<key>.xml when given (the acceptance
+    comparison reads one per stage), else the fallback."""
+    if getattr(args, "junit_dir", None):
+        folder = Path(args.junit_dir)
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder / f"{key}.xml"
+    return fallback
+
+
+def _required_stages(browser: list[str], fail_fast: bool) -> list[str]:
+    """The stages a full gate must have run before its pass line, worked out apart from the list
+    that runs them (G4): the whole suite, stress, the browser files when any are selected, diff
+    coverage and red-first. A stage dropped from the run list cannot reach "Ready to push."."""
+    required = ["S7 suite", "S8 stress"]
+    if browser:
+        early = fail_fast and len(browser) <= EARLY_BROWSER_MAX
+        required.append("S6 browser" if early else "S9 browser")
+    return [*required, "S10 coverage", "S11 red-first"]
+
+
 PASS_LINES = {
     "full": "Ready to push.",
     "quick": "Quick checks passed; run the full check before pushing.",
@@ -538,6 +751,12 @@ def _build_parser() -> argparse.ArgumentParser:
                              f"{BROWSER_WORKER_CAP}; each test is CPU bound, and more workers "
                              "than CPUs push slow pages past the 30 s waits)")
     parser.add_argument("--junitxml", metavar="PATH", help="write test outcomes for comparison")
+    parser.add_argument("--junit-dir", metavar="DIR",
+                        help="write one junit report per test stage into DIR (the fail-fast "
+                             "acceptance comparison, D-CI-610)")
+    parser.add_argument("--keep-going", action="store_true",
+                        help="the old order: every test stage runs to its end and lists every "
+                             f"failure (also {KEEP_GOING_ENV}=1; D-CI-614)")
     return parser
 
 
@@ -627,55 +846,35 @@ def _gate(args: argparse.Namespace) -> int:
         return 1
     if not _export_lint(py):
         return 1
+    fail_fast = not keep_going(args)
+    if not fail_fast:
+        print("==> keep-going: the old order; every test stage runs to its end (D-CI-614)",
+              flush=True)
     pytest_args = [py, "-m", "pytest", "-q", "-rs", "-p", "no:cacheprovider",
                    "-n", str(args.workers), "--dist", "worksteal", "--max-worker-restart", "0"]
-    if args.junitxml:
-        pytest_args.extend(["--junitxml", args.junitxml])
+    junit_main = args.junitxml or _junit_path(args, "s7-suite", None)
+    if junit_main:
+        pytest_args.extend(["--junitxml", str(junit_main)])
     scratch = tempfile.TemporaryDirectory(prefix="kestrel-cov-")
     cov_env = {"COVERAGE_FILE": str(Path(scratch.name) / ".coverage")}
     light = args.quick or args.fast  # no coverage, no browser stage
-    cov_args = [] if light or plan is None else ["--cov=kestrel", "--cov-report="]
-    ok, skips = _run_pytest(
-        [*pytest_args, *cov_args, *tests],
-        extra_env=None if light else {**FULL_GATE_ENV, **cov_env},
-    )
-    _report_skips(skips)
-    if not ok:
-        print("Not ready to push: fix the failure above first.")
-        return 1
     if light:
-        if plan is not None and plan[0]:
+        ok, skips, _first = _failfast_stage("S7 suite", [*pytest_args, *tests], extra_env=None,
+                                            fail_fast=fail_fast)
+        _report_skips(skips)
+        if not ok:
+            print("Not ready to push: fix the failure above first.")
+            return 1
+        if plan[0]:
             print("Browser files the full gate would run for this branch: " + " ".join(plan[0]))
         if args.fast:
             print("Fast checks passed; run the full check before pushing.")
         else:
             print("Quick checks passed; run the full check before pushing.")
         return 0
-    assert plan is not None  # checked before the suite ran
-    if not _stress_gate(py):
-        return 1
-    browser_files, changed_lines, _unmapped = plan
-    if browser_files:
-        # Browser tests are gated off in the main run; run the selected files for real, and add
-        # their execution to the coverage data.
-        junit = Path(scratch.name) / "browser-junit.xml"
-        browser_args = [py, "-m", "pytest", "-q", "-rs", "-p", "no:cacheprovider",
-                        "-n", str(args.browser_workers), "--dist", "worksteal",
-                        "--max-worker-restart", "0"]
-        ok, bskips = _run_pytest(
-            [*browser_args, "--cov=kestrel", "--cov-append", "--cov-report=",
-             "--junitxml", str(junit), *browser_files],
-            extra_env={**cov_env, **_browser_coverage_env(), "KESTREL_LIVE_BROWSER": "1"},
-        )
-        _report_skips(bskips)
-        if not ok:
-            print("Not ready to push: a browser test for a touched page failed.")
-            return 1
-        if not _browser_evidence_gate(junit, browser_files):
-            return 1
-    if not _coverage_step(py, cov_env, Path(scratch.name), changed_lines):
-        return 1
-    if not _red_first_gate():
+    stages, browser = _full_stages(py, args, plan, pytest_args, cov_env, Path(scratch.name),
+                                   fail_fast)
+    if not _run_stages(stages, _required_stages(browser, fail_fast)):
         return 1
     dirty = subprocess.run(
         ["git", "status", "--porcelain"], capture_output=True, text=True,
@@ -685,8 +884,169 @@ def _gate(args: argparse.Namespace) -> int:
     if dirty:
         print("Checked the working tree, which has uncommitted changes; they are NOT in the push:")
         print(dirty)
+    if FAILFAST_RECORD.exists():
+        write_record(FAILFAST_RECORD, [], "ready")  # cleared only by a whole passing gate
     print("Ready to push.")
     return 0
+
+
+Stage = tuple[str, Callable[[], bool]]
+
+
+def _run_stages(stages: list[Stage], required: list[str]) -> bool:
+    """Run the stages in order and stop at the first that fails (its own "Not ready" line is
+    the last line). The gate passes only when every required stage ran (G4)."""
+    ran: list[str] = []
+    for name, run in stages:
+        if not run():
+            return False
+        ran.append(name)
+    missing = [name for name in required if name not in ran]
+    if missing:
+        print(f"Not ready to push: the gate skipped required stage(s) {', '.join(missing)}; "
+              "it cannot pass without them (D-CI-610).")
+        return False
+    return True
+
+
+def _full_stages(
+    py: str, args: argparse.Namespace, plan: tuple[list[str], dict[str, set[int]], list[str]],
+    pytest_args: list[str], cov_env: dict[str, str], scratch: Path, fail_fast: bool,
+) -> tuple[list[Stage], list[str]]:
+    """The full gate's stages after the static checks, in order, and the browser files it runs.
+
+    Fail-fast (D-CI-610): S4 changed-file tests, S5 the last gate's failures, S6 up to
+    EARLY_BROWSER_MAX browser files, S7 the whole suite, S8 stress, S9 more browser files, S10
+    diff coverage, S11 red-first. S7 is the old suite command plus the plugin and --cov-append
+    (so S6's coverage is kept); S4 to S6 only repeat tests S7 runs. Keep-going (D-CI-614): the
+    old order and the old commands exactly: S7, S8, S9 with the mapped files, S10, S11."""
+    browser_files, changed_lines, _unmapped = plan
+    changed_tests, changed_browser = _changed_selection() if fail_fast else ([], [])
+    browser = [*browser_files, *(f for f in changed_browser if f not in browser_files)]
+    if changed_browser:
+        print("==> changed browser test file(s), run live (D-CI-615): "
+              + " ".join(changed_browser), flush=True)
+    stages: list[Stage] = []
+    if fail_fast:
+        if len(changed_tests) > CHANGED_TESTS_MAX:
+            print(f"==> S4 changed-file tests: {len(changed_tests)} files would nearly repeat "
+                  "the suite; S7 runs them all, fail-fast (D-CI-610)", flush=True)
+        elif changed_tests:
+            stages.append(("S4 changed", lambda: _changed_tests_stage(py, args, changed_tests)))
+        stages.append(("S5 last failures", lambda: _last_failures_stage(py, args, browser)))
+        if browser and len(browser) <= EARLY_BROWSER_MAX:
+            stages.append(("S6 browser", lambda: _browser_stage(
+                py, args, browser, cov_env, scratch, "S6 browser", fail_fast)))
+    cov_args = ["--cov=kestrel", "--cov-append", "--cov-report="] if fail_fast \
+        else ["--cov=kestrel", "--cov-report="]
+    suite_cmd = [*pytest_args, *cov_args]
+
+    def suite() -> bool:
+        ok, skips, _first = _failfast_stage("S7 suite", suite_cmd,
+                                            extra_env={**FULL_GATE_ENV,
+                                                       **_coverage_run_env(cov_env)},
+                                            fail_fast=fail_fast)
+        _report_skips(skips)
+        if not ok:
+            print("Not ready to push: fix the failure above first.")
+        return ok
+
+    stages.append(("S7 suite", suite))
+    stages.append(("S8 stress", lambda: _stress_gate(py)))
+    if browser and (not fail_fast or len(browser) > EARLY_BROWSER_MAX):
+        stages.append(("S9 browser", lambda: _browser_stage(
+            py, args, browser, cov_env, scratch, "S9 browser", fail_fast)))
+    stages.append(("S10 coverage", lambda: _coverage_step(py, cov_env, scratch, changed_lines)))
+    stages.append(("S11 red-first", _red_first_gate))
+    return stages, browser
+
+
+def _changed_tests_stage(py: str, args: argparse.Namespace, files: list[str]) -> bool:
+    """S4: the test files this change selects, first, under the full gate's environment and
+    without coverage (S7 measures it). A run that collected nothing (exit 5) is a note."""
+    print(f"==> S4 changed-file tests: {len(files)} file(s) this change selects, run first "
+          "(D-CI-610)", flush=True)
+    cmd = [py, "-m", "pytest", "-q", "-rs", "-p", "no:cacheprovider",
+           "-n", str(min(args.workers, stress.WORKERS)), "--dist", "load",
+           "--max-worker-restart", "0"]
+    junit = _junit_path(args, "s4-changed", None)
+    if junit:
+        cmd.extend(["--junitxml", str(junit)])
+    ok, _skips, first = _failfast_stage("S4 changed", [*cmd, *files],
+                                        extra_env=dict(FULL_GATE_ENV), fail_fast=True)
+    if ok:
+        return True
+    if first is None and LAST_RUN["exit"] == 5:
+        print("==> S4 note: the selected files hold no test to run; S7 runs every test")
+        return True
+    print("Not ready to push: a test this change selects failed (stage S4); fix it first.")
+    return False
+
+
+def _last_failures_stage(py: str, args: argparse.Namespace, browser: list[str]) -> bool:
+    """S5: replay the last gate's recorded first failure, alone, before anything slow. Only IDs
+    this gate runs anyway: a non-browser test, or a browser test whose file is in this run's
+    browser selection (run live). It fails the gate only on a real failure (exit 1 or a
+    first-failure file); any other result is a note that never starts with "Not ready to push"
+    (G8), because S6, S7 and S9 run every test anyway (D-CI-612)."""
+    ids, note = read_record(FAILFAST_RECORD, diff_gate.ROOT)
+    plain = [i for i in ids if not is_browser_test(i.split("::", 1)[0])]
+    live = [i for i in ids if i.split("::", 1)[0] in browser and i not in plain]
+    if not plain and not live:
+        print(f"==> S5 last run's failures: nothing to replay ({note})", flush=True)
+        return True
+    print(f"==> S5 last run's failures: {len(plain) + len(live)} test(s), {note} (D-CI-612)",
+          flush=True)
+    groups = (("s5-last", plain, dict(FULL_GATE_ENV)),
+              ("s5-last-browser", live, {**FULL_GATE_ENV, "KESTREL_LIVE_BROWSER": "1"}))
+    for key, group, env in groups:
+        if not group:
+            continue
+        cmd = [py, "-m", "pytest", "-q", "-rs", "-p", "no:cacheprovider", "-n", "0"]
+        junit = _junit_path(args, key, None)
+        if junit:
+            cmd.extend(["--junitxml", str(junit)])
+        # No OSError handler here: one around the whole stage could also swallow an error raised
+        # after a failure was recorded (Codex round 2). RECORD_MAX_ID_CHARS keeps the command
+        # line short enough to start; any other error stops the gate, never passes it.
+        ok, _skips, first = _failfast_stage("S5 last failures", [*cmd, *group], extra_env=env,
+                                            fail_fast=True)
+        if first is not None or LAST_RUN["exit"] == 1:
+            print("Not ready to push: a test that failed in the last gate still fails (stage "
+                  "S5); fix it first.")
+            return False
+        if not ok:
+            print(f"==> S5 note: pytest exit {LAST_RUN['exit']} on the recorded test(s) (renamed, "
+                  "or not collected here); a hint only, S7 still runs every test")
+        elif not LAST_RUN["passed"]:
+            print("==> S5 note: the hint ran no test that passed (skipped here); a hint only, "
+                  "S7 still runs every test")
+    return True
+
+
+def _browser_stage(py: str, args: argparse.Namespace, browser: list[str],
+                   cov_env: dict[str, str], scratch: Path, stage: str, fail_fast: bool) -> bool:
+    """S6 or S9: the selected browser files, live, adding to the coverage data, then the per-file
+    evidence check (every file has a passed test, D-TEST-7). Browser tests are gated off in the
+    main run."""
+    key = "s6-browser" if stage.startswith("S6") else "s9-browser"
+    junit = _junit_path(args, key, scratch / "browser-junit.xml")
+    assert junit is not None  # the fallback is never None
+    browser_args = [py, "-m", "pytest", "-q", "-rs", "-p", "no:cacheprovider",
+                    "-n", str(args.browser_workers), "--dist", "worksteal",
+                    "--max-worker-restart", "0"]
+    ok, bskips, _first = _failfast_stage(
+        stage,
+        [*browser_args, "--cov=kestrel", "--cov-append", "--cov-report=",
+         "--junitxml", str(junit), *browser],
+        extra_env={**_coverage_run_env(cov_env), "KESTREL_LIVE_BROWSER": "1"},
+        fail_fast=fail_fast,
+    )
+    _report_skips(bskips)
+    if not ok:
+        print("Not ready to push: a browser test for a touched page failed.")
+        return False
+    return _browser_evidence_gate(junit, browser)
 
 
 if __name__ == "__main__":

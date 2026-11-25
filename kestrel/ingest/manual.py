@@ -30,6 +30,12 @@ async def _manual_source(session: AsyncSession, track: str) -> Source:
     return src
 
 
+def _host(url: str | None) -> str:
+    from kestrel.services.extension import host_of
+
+    return host_of(url)
+
+
 def _title_from(text: str | None, url: str | None) -> str | None:
     for line in (text or "").splitlines():
         line = line.strip()
@@ -59,6 +65,7 @@ async def manual_ingest(
     title: str | None = None,
     org_name: str | None = None,
     track: str = "employment",
+    captured_via: str | None = None,
 ) -> Opportunity | None:
     """Create (or re-see) one opportunity from a captured page and enqueue its embed. Returns the
     opportunity, or None if there is neither a url nor text to work with."""
@@ -70,12 +77,21 @@ async def manual_ingest(
         track = "employment"
     source = await _manual_source(session, track)
     external_id = url or "manual:" + hashlib.sha1((text or "").encode("utf-8")).hexdigest()[:16]  # noqa: S324  content id, not a security hash
+    # Where it came from, kept on a role that is new (a role already on file keeps its own
+    # origin). Only the host of the link the caller already handed over; nothing new is read.
+    origin: dict[str, str] = {}
+    if captured_via == "extension":
+        origin["captured_via"] = "extension"
+        host = _host(url)
+        if host:
+            origin["captured_host"] = host
     raw = RawPosting(
         external_id=external_id,
         url=url,
         title=title or _title_from(text, url),
         org_name=org_name,
         description_md=text,
+        raw=origin,
     )
     res = await normalize_and_store(session, raw, source=source)
     if res.enqueue_embed:

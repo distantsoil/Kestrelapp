@@ -543,7 +543,7 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
             "w": w,
             **applied_ctx,
             "consulting": track == "consulting",
-            "facts_row": rv.facts_row(opp, detail["org_name"]),
+            "facts_row": rv.facts_row(opp, detail["org_name"], conf),
             "liveness": pv.liveness_fact(opp),
             "dims": rv.dimension_rows(ev_json, track),
             "ring_pct": round((fit.score or 0) / 5 * 100) if fit.score is not None else 0,

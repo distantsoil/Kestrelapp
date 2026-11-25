@@ -2,6 +2,27 @@
 
 All notable changes to Kestrel are listed here, newest first. The format follows Keep a Changelog.
 
+## [Unreleased]
+
+### Changed
+
+- **A role captured with the browser extension now says where it came from.** The role page header reads "From the browser extension" with the site in brackets (the site is left out in confidential mode), and a capture with no company name reads "Unknown company". Nothing more is sent from the page.
+### Fixed
+
+- **Settings > This computer no longer says a run choice was saved when it was not.** With online models switched off, choosing Online model or Both used to show a saved message and then go back to On this computer, and a second press stacked a second message. The card now keeps On this computer, stores nothing, and says that online models are off and where to turn them on.
+### Fixed
+
+- **Two rule switches pressed together on a fresh install both save.** On a new install, pressing two switches on Settings > Which roles you see at almost the same moment could show "Could not save that" for the second one, because both wrote the same setting for the first time. Both saves now take their turn, and the setting keeps both changes.
+- **A Quick sort that ran out of tries can now be tried again.** When a Quick sort failed every time it was tried, Needs another try showed that its role had already been kept and offered no retry. It now offers Try again: the role is scored by Fit score, the step that follows a kept Quick sort, and the row spends one try.
+- **A resume without section headings is imported instead of refused.** When a resume has no SUMMARY, EXPERIENCE or SKILLS headings, Kestrel could stop at "the layout failed" and import nothing. It now keeps those lines with the role they belong to and says so in the review; check the summary and skills in the list before you accept.
+### Fixed
+
+- **A role your rules set aside is no longer scored when its posting changes.** When a search or a company board saw a stored role again with clearly different text, Kestrel queued a new fit score for it whatever had happened to it before. A role your rules had set aside, one the quick sort had set aside, or one not yet checked was then scored by the model anyway and moved into the scored list, which cost model time for roles you had excluded. Now only a role that already passed the quick sort is scored again when its posting changes. Your rules are unchanged.
+
+### Changed
+
+- **Company boards and searches bring in fewer unrelated roles.** Kestrel keeps a posting when its title shares a word with one of your target titles. One shared word was always enough, so a target title such as "Director of Enterprise Systems" let in every sales, design and HR role with "enterprise" or "systems" in its title. Now a general word (operations, enterprise, systems, business, engineering) keeps a posting only together with a second shared word. A word that names your field, such as IT or marketing, still keeps a posting by itself, and so does a general word when it is all one of your target titles names ("Operations Manager"). Roles Kestrel already stored are not touched, with one case: a role that came through the old background lane is checked against the rule before Kestrel scores it by itself, as it already was against your titles and countries. That check never sets aside a role you did anything with (pursued, applied to, labeled, saved, hid, wrote notes or a letter for, or chose to score anyway), never one the quick sort kept or the model scored, and it does not set aside a role, or finish its task unrun, under a score you asked for (Score this role anyway, Score again, Try again): the check reads your request at the moment it writes. One rare case is still open: a request made in the same instant the check sets that role aside can be queued and then skipped. Roles you add by hand or capture with the extension are never filtered. The list of general words is in the rules file (filters.yml); there is no page for it yet.
+
 ## [0.7.7] - 2026-11-22
 
 ### Added

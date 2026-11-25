@@ -153,6 +153,35 @@ _SAID = {
 }
 
 
+def choice_refusal(settings, rows: dict) -> str | None:
+    """THE check for a run choice stored from this card, by a press or by its Undo (D-PRIV-860):
+    why the card would not show the choice in `rows`, the card rows as they would be stored, or
+    None when it would. It asks `run_choice`, the rule the card is drawn from, so what is stored
+    and what is shown cannot part. `run_choice` hides a stored choice for one reason, online
+    models switched off after they were set up, and the answer is the sentence every page says
+    for that. Nothing here turns online models on."""
+    stored = rows.get(ss.CHOICE_KEY)
+    if stored not in ss.CHOICES:
+        # No choice row: a stored hosted mode is what the card would have to show.
+        stored = "hosted" if rows.get(ss.MODE_KEY) == "hosted" else None
+    if stored is None or ss.run_choice(settings, rows)[0] == stored:
+        return None
+    return ss.ONLINE_OFF
+
+
+async def _written_refusal(session) -> str | None:
+    """`choice_refusal` on what this session has written and not yet committed (D-PRIV-862). The
+    check before a write reads the rows at one moment and the write lands at a later one; online
+    models switched off in between would leave a stored choice the card does not show. Once the
+    write is flushed this connection holds the database's write lock, so the rows and settings
+    read here (plain selects of the stored values, never a cached row) are the ones the commit
+    will leave. On a refusal the caller rolls back."""
+    from kestrel.web.pages.setup import _rows
+
+    await session.flush()
+    return choice_refusal(await load_settings_with_db(session), await _rows(session))
+
+
 @router.post("/settings/computer/mode", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def mode_save(request: Request):
     form = await request.form()
@@ -164,12 +193,20 @@ async def mode_save(request: Request):
 
     async with sessionmaker()() as s:
         settings = await load_settings_with_db(s)
-        prev, _ = ss.run_choice(settings, await _rows(s))
+        rows = await _rows(s)
+        prev, _ = ss.run_choice(settings, rows)
         if prev == choice:
             return _mode_card(request, await mode_ctx())
+        why = choice_refusal(settings, {**rows, ss.CHOICE_KEY: choice})
+        if why is not None:
+            # Nothing is stored and nothing says it was: the card answers with the reason.
+            return _mode_card(request, await mode_ctx(message=why, ok=False))
         before = {k: await io.read(s, k) for k in (ss.CHOICE_KEY, ss.MODE_KEY)}
         await ss.set_run_mode(s, choice, settings)
-        await s.flush()
+        why = await _written_refusal(s)
+        if why is not None:
+            await s.rollback()
+            return _mode_card(request, await mode_ctx(message=why, ok=False))
         after = {k: await io.read(s, k) for k in before}
         changed = [k for k in before if before[k] != after[k]]
         token = await pursuit_undo.save(s, {"kind": "run_mode",
@@ -195,8 +232,25 @@ async def mode_undo(request: Request):
         for key, value in row.value["after"].items():
             if io.dumps(await io.read(s, key)) != value:
                 return io.refuse(io.NO_UNDO)
+        # The rows as Undo would leave them go through the card's own check (D-PRIV-860).
+        from kestrel.web.pages.setup import _rows
+
+        restore: dict[str, Any] = {}
         for key, value in row.value["before"].items():
-            await io.write(s, key, io.loads(value))
+            restore[key] = io.loads(value)
+        back = await _rows(s)
+        for key, value in restore.items():
+            if value is io.ABSENT:
+                back.pop(key, None)
+            else:
+                back[key] = value
+        if choice_refusal(await load_settings_with_db(s), back) is not None:
+            return io.refuse(io.NO_UNDO)
+        for key, value in restore.items():
+            await io.write(s, key, value)
+        if await _written_refusal(s) is not None:
+            await s.rollback()
+            return io.refuse(io.NO_UNDO)
         await s.delete(row)
         await s.commit()
     return io.reply("Put back.")

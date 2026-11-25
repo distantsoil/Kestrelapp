@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Evaluation, Opportunity, Quarantine, Run, ScrapeRun, Source, Task
 from kestrel.ingest import failure_code
 from kestrel.llm.failure_kind import split_stored
@@ -49,6 +50,11 @@ router = APIRouter()
 # set the role aside; Deep read is operator-confirmed escalation (hard rule 1). A Fit score retry of
 # a parked role puts it back at "t1_pass", the normal entry to Tier 2.
 _RETRY_STAGE = {2: "t1_pass"}
+# A tier-1 row is retried by escalating it to Fit score (#220). Its role is not at the normal
+# entry (deadletter.py left it at `quarantined`), so the task carries the score-again flag that
+# handle_t2 runs from any stage, built exactly as rescore.py builds it (rescore + requested_at);
+# requested_at also skips a score that finished since the click.
+_TIER1_RETRY_EXTRA = {"rescore": True}
 
 
 async def _scrape_runs_during(session: AsyncSession, run: Run, limit: int = 50) -> list[dict]:
@@ -223,8 +229,12 @@ async def _retry_quarantine(session: AsyncSession, quarantine_id: int) -> str | 
         opp.stage = stage
         opp.stage_reason = f"quarantine #{q.id} retry: re-queued for tier {q.tier}"
     # The operator clicked Retry: never held by a switched-off track (finding 10).
+    extra: dict = {"requested": True}
+    if q.tier == 1:
+        # #220: the escalation task must run from `quarantined`, not the normal t1_pass entry.
+        extra.update(_TIER1_RETRY_EXTRA, requested_at=utcnow_iso())
     if not await enqueue_once(session, plan.task, opp.id, priority=int(opp.pre_score * 100),
-                              extra={"requested": True}):
+                              extra=extra):
         await session.rollback()
         return "This role is already waiting to be scored."
     q.attempts = (q.attempts or 0) + 1

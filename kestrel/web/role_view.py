@@ -521,10 +521,14 @@ def level_box(opp, ev_json: dict | None) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------------- facts and the summary
-def facts_row(opp, org_name: str | None) -> list[dict[str, str]]:
+def facts_row(opp, org_name: str | None, conf: bool = False) -> list[dict[str, str]]:
     """The facts under the title: company, location, pay, type, posted and whether it is still
     live. Each is {icon, text}; a missing one is left out (never guessed)."""
     out: list[dict[str, str]] = []
+    # A capture with no company name gets the shared placeholder org "unknown" (orgs.resolve_org);
+    # the header words it like any missing company instead of printing the raw placeholder.
+    if (org_name or "").strip().lower() == "unknown":
+        org_name = None
     out.append({"icon": "apps", "text": org_name or "Unknown company", "kind": "org"})
     place = pv.place_text(opp)
     if place:
@@ -551,7 +555,23 @@ def facts_row(opp, org_name: str | None) -> list[dict[str, str]]:
         found = pv.found_age(opp)
         posted = found["text"] or posted
     out.append({"icon": "clock", "text": posted, "kind": "posted"})
+    origin = capture_origin(opp, conf)
+    if origin:
+        out.append({"icon": "apps", "text": origin, "kind": "source"})
     return out
+
+
+def capture_origin(opp, conf: bool = False) -> str:
+    """\"From the browser extension (jobs.example.com)\" for a role the extension
+    brought in; "" for any other path. The site is dropped in confidential mode, where a
+    company's own careers host would name the employer (the posting link is hidden then too)."""
+    raw = getattr(opp, "raw", None)
+    if not isinstance(raw, dict) or raw.get("captured_via") != "extension":
+        return ""
+    host = raw.get("captured_host")
+    if conf or not isinstance(host, str) or not host:
+        return "From the browser extension"
+    return f"From the browser extension ({host})"
 
 
 def summary_card(opp, ev_json: dict | None, org) -> dict[str, Any]:

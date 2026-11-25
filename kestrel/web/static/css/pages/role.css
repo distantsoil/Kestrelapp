@@ -29,6 +29,8 @@
 .rl-facts { display: flex; flex-wrap: wrap; gap: 4px 18px; color: var(--ink); font-size: 14px; margin-top: 6px; }
 .rl-facts > span { display: inline-flex; gap: 6px; align-items: center; }
 .rl-facts .k-ic { width: 16px; height: 16px; color: var(--muted); }
+/* Where an extension capture came from takes its own line, so the row stops before the header art. */
+.rl-facts > [data-kind="source"] { flex-basis: 100%; }
 .rl-live { color: var(--muted); }
 
 /* ------------------------------------------------------------------------------------- tabs */

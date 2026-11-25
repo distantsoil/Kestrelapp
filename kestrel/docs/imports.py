@@ -29,6 +29,12 @@ log = structlog.get_logger()
 _MAX_DERIVED_PER_SLOT = 2
 
 
+# The #217 review note, one wording for both review pages. The owner signs this wording off
+# before merge: change it here, never in a template.
+OVERLAP_NOTE = ("Kestrel kept {n} line{s} with {its} role. {Those} also looked like summary or "
+                "skills. Check the summary and skills in the list.")
+
+
 @dataclass
 class ImportFlags:
     non_verbatim: list[str] = field(default_factory=list)  # "role/slot/variant" keys
@@ -48,10 +54,21 @@ class ImportFlags:
     # Roles Kestrel split on their own header lines after the model merged them into one range
     # (and a second ask did not fix it): shown as a note in the review.
     split_roles: int = 0
+    # Lines the model called both part of a role and summary or skills: the role keeps them and
+    # the duplicate classification is dropped (#217). Shown in the review, never silent.
+    overlap_trimmed: int = 0
 
     @property
     def clean(self) -> bool:
         return not self.non_verbatim and not self.too_many_derived
+
+    @property
+    def overlap_note(self) -> str:
+        """The one review sentence for `overlap_trimmed` (#217); both templates render it."""
+        n = self.overlap_trimmed
+        return OVERLAP_NOTE.format(
+            n=n, s="" if n == 1 else "s", its="its" if n == 1 else "their",
+            Those="That line" if n == 1 else "Those lines")
 
 
 @dataclass
@@ -230,6 +247,14 @@ def _dated(text: str) -> bool:
     hits = sum(w in _SENTENCE_WORDS for w in words)
     verb_first = bool(words) and words[0].lower().endswith("ed") and hits >= 1
     return not (len(words) >= 5 and (hits >= 2 or verb_first))
+
+
+def _names_a_section(text: str) -> bool:
+    """A line that names a summary, skills or experience section in any spelling: "## Skills",
+    "PROFESSIONAL SUMMARY", "Experience:", "Work history". A name or contact line is not one,
+    so a resume whose only heading is the person's name counts as having no section headings."""
+    key = text.strip().lstrip("#").strip().rstrip(":").strip().lower()
+    return key in _OTHER_SECTIONS or key in _SUMMARY_SECTIONS or key in _ROLE_SECTIONS
 
 
 def _is_section_heading(text: str) -> bool:
@@ -908,7 +933,14 @@ async def propose_import(
         {n: book.encode(t) or "" for n, t in lines.items()} if book is not None else lines
     )
 
+    overlap_trimmed = 0
+    # A document that names its sections (SUMMARY, EXPERIENCE, SKILLS...) is not the #217 case:
+    # an overlapping role range there is a mapping error the refusal still reports.
+    has_sections = any(_names_a_section(text) for text in lines.values())
+
     def check_outline(outline):
+        nonlocal overlap_trimmed
+        overlap_trimmed = 0  # only the answer this call judges counts for the review note
         outline = _extend_role_ranges(
             _repair_outline(_settle_role_ranges(outline), lines), lines)
         ranges: list[tuple[int, int]] = []
@@ -926,13 +958,37 @@ async def propose_import(
         summary = [_check_refs(b.lines, every, "the summary") for b in outline.summary_blocks]
         skills = [(g, _check_refs(g.lines, every, f"skills {g.label!r}"))
                   for g in outline.skill_groups]
+        # #217: a plain bulleted resume without section headings makes the model call a line both
+        # part of a role and summary or skills. The role keeps the line (the role call copies the
+        # text); the duplicate classification is dropped, counted, and shown in the review, so
+        # the import goes to the person's confirmation instead of failing (hard rule 4). The
+        # verbatim check is untouched: every copied line still comes from the source.
+        # A resume that HAS section headings is not this case: an overlap there is a mapping
+        # mistake the existing refusal still reports, because the document already says where
+        # each section starts and ends.
+        in_roles = {n for a, b in ranges for n in range(a, b + 1)}
         grouped_lines = {n for refs in summary for n in refs} | {
             n for _g, refs in skills for n in refs}
-        for i, (a, b) in enumerate(ranges):
-            if any(a <= n <= b for n in grouped_lines):
-                raise _RefError(f"role {i + 1} (lines {a}-{b}) overlaps the summary or skills "
-                                "lines")
-        return outline, ranges, summary, skills
+        if has_sections:
+            for i, (a, b) in enumerate(ranges):
+                if any(a <= n <= b for n in grouped_lines):
+                    raise _RefError(
+                        f"role {i + 1} (lines {a}-{b}) overlaps the summary or skills lines")
+            kept_summary, kept_skills = summary, skills
+        else:
+            kept_summary = []
+            for refs in summary:
+                kept = [n for n in refs if n not in in_roles]
+                overlap_trimmed += len(refs) - len(kept)
+                if kept:
+                    kept_summary.append(kept)
+            kept_skills = []
+            for group, refs in skills:
+                kept = [n for n in refs if n not in in_roles]
+                overlap_trimmed += len(refs) - len(kept)
+                if kept:
+                    kept_skills.append((group, kept))
+        return outline, ranges, kept_summary, kept_skills
 
     spec = load_prompt("resume_outline/v1")
     outline_user = spec.user.replace("{numbered_lines}",
@@ -1118,6 +1174,7 @@ async def propose_import(
         proof_points=proofs,
     )
     flags = flag_proposal(value, markdown)
+    flags.overlap_trimmed = overlap_trimmed
     # Coverage (hard rule 4 in spirit), shown and never silently dropped: every line inside a
     # role that is not its header, context or a bullet (a missed wrap, a skipped bullet), and
     # every bullet line outside all roles that the summary and skills did not take (a role the

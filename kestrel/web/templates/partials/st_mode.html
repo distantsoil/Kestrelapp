@@ -9,7 +9,10 @@
 <section class="k-card st-card" id="st-mode" data-testid="st-mode">
   {{ st.head('How should Kestrel run?', 'laptop') }}
   {% call lo.fence(request) %}
-  <div class="st-modes" role="radiogroup" aria-label="How should Kestrel run?">
+  {# One run choice in flight at a time (hx-sync, inherited by the three cards): a second card
+     pressed before the answer is back sends nothing, so the card always shows the answer to
+     the one request that was stored (D-PRIV-861). #}
+  <div class="st-modes" role="radiogroup" aria-label="How should Kestrel run?" hx-sync="this:drop">
     {% for key, value, name, icon, lines in modes %}
     <button type="button" class="st-mc{% if choice == value %} is-on{% endif %}" role="radio"
             aria-checked="{{ 'true' if choice == value else 'false' }}" data-testid="st-mode-{{ key }}"
@@ -20,7 +23,7 @@
     </button>
     {% endfor %}
   </div>
-  {% if mode_message %}<p class="st-note st-note--{{ 'good' if mode_ok else 'bad' }}" role="status">{{ mode_message }}</p>{% endif %}
+  {% if mode_message %}<p class="st-note st-note--{{ 'good' if mode_ok else 'bad' }} u-mt-06" role="status" data-testid="st-mode-message">{{ mode_message }}</p>{% endif %}
   <p class="st-note u-mt-06" data-testid="st-online-models-note">What online models send, and the disclosure you accept to use them: <a class="k-link" href="/settings/hosted/review" data-testid="st-online-models">Settings &gt; Online models</a>.</p>
 
   <div class="st-fold{% if choice != 'local' %} is-on{% endif %}" id="st-online"{% if choice == 'local' %} inert aria-hidden="true"{% endif %}>
