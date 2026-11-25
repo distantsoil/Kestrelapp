@@ -78,6 +78,11 @@
       <span class="ob-dsm">Each job header starts its own role. Check the company, title and dates of every role below.</span>
     </div></div>
     {% endif %}
+    {% if proposal.flags.overlap_trimmed %}
+    <div class="ob-note ob-note--warn" data-testid="ob-overlap-trimmed">{{ ui.icon('info') }}<div>
+      <b>{{ proposal.flags.overlap_note }}</b>
+    </div></div>
+    {% endif %}
     {% if proposal.flags.missed_roles %}
     <div class="ob-note ob-note--warn" data-testid="import-missed-roles">{{ ui.icon('alert') }}<div>
       <b>Kestrel may have missed {{ proposal.flags.missed_roles | length }} role{{ '' if proposal.flags.missed_roles | length == 1 else 's' }}.</b>

@@ -19,8 +19,9 @@ def _load_check():
 
 
 @pytest.fixture
-def runner(monkeypatch):
+def runner(monkeypatch, tmp_path):
     monkeypatch.delenv("KESTREL_TEST_WORKERS", raising=False)
+    monkeypatch.delenv("KESTREL_KEEP_GOING", raising=False)  # fail-fast is the default (D-CI-614)
     path = Path(__file__).resolve().parents[1] / "scripts" / "check.py"
     spec = importlib.util.spec_from_file_location("check_runner", path)
     module = importlib.util.module_from_spec(spec)
@@ -33,6 +34,10 @@ def runner(monkeypatch):
     monkeypatch.setattr(module, "_browser_evidence_gate", lambda *args: True)
     monkeypatch.setattr(module, "_export_lint", lambda *args: True)  # D-CI-27: tested below
     monkeypatch.setattr(module, "_stress_gate", lambda *args: True)  # D-CI-26: tested below
+    # No git selection and no record of a real gate: S4 and S5 select nothing unless a test
+    # says so (D-CI-610, D-CI-612); tested in tests/test_failfast_gate.py.
+    monkeypatch.setattr(module, "_changed_selection", lambda: ([], []))
+    monkeypatch.setattr(module, "FAILFAST_RECORD", tmp_path / "gate" / "failfast-last.json")
     # No host cgroup either: the quota tests below write their own files (D-CI-590).
     monkeypatch.setattr(module, "CGROUP_ROOT", Path(__file__).resolve().parent / "no-cgroup-here")
     monkeypatch.setattr(module, "PROC_CGROUP", Path(__file__).resolve().parent / "no-cgroup-here")
@@ -434,7 +439,8 @@ def test_full_gate_runs_selected_browser_files_live_and_with_coverage(runner, mo
     plan = (["tests/test_nav_browser.py"], {"kestrel/a.py": {1}}, [])
     commands = _full_gate(runner, monkeypatch, plan, [(True, []), (True, [])])
     assert runner.main() == 0
-    (main_cmd, main_kw), (browser_cmd, browser_kw) = commands
+    # D-CI-613: 12 or fewer browser files run before the suite, so the browser command is first
+    (browser_cmd, browser_kw), (main_cmd, main_kw) = commands
     assert "--cov=kestrel" in main_cmd and "tests/test_nav_browser.py" not in main_cmd
     assert browser_cmd[-1] == "tests/test_nav_browser.py" and "--cov-append" in browser_cmd
     assert browser_kw["extra_env"]["KESTREL_LIVE_BROWSER"] == "1"
@@ -459,26 +465,51 @@ def test_the_browser_stage_runs_in_parallel_by_default_and_honors_the_override(
     plan = (["tests/test_nav_browser.py"], {"kestrel/a.py": {1}}, [])
     commands = _full_gate(runner, monkeypatch, plan, [(True, []), (True, [])])
     assert runner.main() == 0
-    (_main_cmd, _), (browser_cmd, _) = commands
+    (browser_cmd, _), (_main_cmd, _) = commands  # browser files first (D-CI-613)
     assert browser_cmd[browser_cmd.index("-n") + 1] == "4"
     assert "--dist" in browser_cmd and "worksteal" in browser_cmd
     commands = _full_gate(runner, monkeypatch, plan, [(True, []), (True, [])])
     monkeypatch.setattr(runner.sys, "argv", ["check.py", "--workers", "0",
                                              "--browser-workers", "1"])
     assert runner.main() == 0
-    assert commands[1][0][commands[1][0].index("-n") + 1] == "1"
+    assert commands[0][0][commands[0][0].index("-n") + 1] == "1"
 
 
 def test_the_browser_stage_measures_coverage_through_sys_monitoring(runner, monkeypatch):
     plan = (["tests/test_nav_browser.py"], {"kestrel/a.py": {1}}, [])
     commands = _full_gate(runner, monkeypatch, plan, [(True, []), (True, [])])
     assert runner.main() == 0
-    (_main_cmd, main_kw), (browser_cmd, browser_kw) = commands
+    (browser_cmd, browser_kw), (_main_cmd, main_kw) = commands  # browser first (D-CI-613)
     assert "--cov=kestrel" in browser_cmd and "--cov-append" in browser_cmd
     expected = "sysmon" if runner.sys.version_info >= (3, 12) else None
     assert browser_kw["extra_env"].get("COVERAGE_CORE") == expected
-    # the main run keeps coverage's default tracer: this change is for the browser stage only
-    assert "COVERAGE_CORE" not in (main_kw.get("extra_env") or {})
+    # D-GATE-940: the suite (S7) adds to the same coverage data, so it measures the same way
+    assert main_kw["extra_env"].get("COVERAGE_CORE") == expected
+
+
+@pytest.mark.parametrize("keep_going", [False, True])
+@pytest.mark.parametrize("version,expected", [((3, 12, 0), "sysmon"), ((3, 11, 9), None)])
+def test_the_suite_stage_measures_coverage_the_way_the_browser_stage_does(
+        runner, monkeypatch, keep_going, version, expected):
+    # D-GATE-940: the default tracer loses the lines after SQLAlchemy's greenlet bridge, so S7's
+    # coverage, which feeds the diff-coverage number, runs through sys.monitoring on 3.12+
+    # (KF-087).
+    plan = (["tests/test_nav_browser.py"], {"kestrel/a.py": {1}}, [])
+    commands = _full_gate(runner, monkeypatch, plan, [(True, []), (True, [])])
+    if keep_going:
+        monkeypatch.setenv(runner.KEEP_GOING_ENV, "1")
+    else:
+        monkeypatch.delenv(runner.KEEP_GOING_ENV, raising=False)
+    monkeypatch.setattr(runner.sys, "version_info", version)
+    assert runner.main() == 0
+    suite = [(cmd, kw) for cmd, kw in commands if "tests/test_nav_browser.py" not in cmd]
+    browser = [(cmd, kw) for cmd, kw in commands if "tests/test_nav_browser.py" in cmd]
+    assert len(suite) == 1 and len(browser) == 1
+    (suite_cmd, suite_kw), (_browser_cmd, browser_kw) = suite[0], browser[0]
+    assert "--cov=kestrel" in suite_cmd
+    assert suite_kw["extra_env"].get("COVERAGE_CORE") == expected
+    assert browser_kw["extra_env"].get("COVERAGE_CORE") == expected
+    assert suite_kw["extra_env"]["COVERAGE_FILE"] == browser_kw["extra_env"]["COVERAGE_FILE"]
 
 
 def test_browser_files_with_no_passed_test_do_not_pass(runner, monkeypatch, capsys):

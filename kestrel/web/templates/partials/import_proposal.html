@@ -63,6 +63,11 @@
           Each job header starts its own role. Check the company, title and dates of every role below.
         </div>
       {% endif %}
+      {% if proposal.flags.overlap_trimmed %}
+        <div class="warnbox" data-testid="import-overlap-trimmed">
+          <b>{{ proposal.flags.overlap_note }}</b>
+        </div>
+      {% endif %}
       {% if proposal.flags.missed_roles %}
         {# #102: lines that look like role headers but sit in no role, even after a second try. #}
         <div class="warnbox" data-testid="import-missed-roles">

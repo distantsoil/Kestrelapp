@@ -66,6 +66,34 @@ ROLE2 = {
 }
 
 
+# #217: a plain bulleted resume with no SUMMARY / EXPERIENCE / SKILLS headings. The model
+# answers in this shape: the contact line and the trailing skills line are also inside role 1's
+# range, which used to fail the whole import ("overlaps the summary or skills lines").
+PLAIN_RESUME = """# Pat Example
+pat@example.com
+Acme Retail, Director of IT
+2019 - 2024
+- Led IT for 300 staff across three countries.
+- Cut infrastructure costs 20%.
+Skills: Entra ID, Okta, Intune
+"""
+PLAIN_OUTLINE = {
+    "summary_blocks": [{"lines": [2]}],
+    "roles": [{"header_lines": [3, 4], "first_line": 2, "last_line": 7,
+               "company_label": "Acme Retail", "title": "Director of IT",
+               "start_date": "2019", "end_date": "2024"}],
+    "skill_groups": [{"label": "Skills", "lines": [7]}],
+}
+PLAIN_ROLE = {
+    "context_lines": [2, 3, 4, 7],
+    "bullets": [
+        {"key": "led", "lines": [5], "optional": False, "tags": []},
+        {"key": "cost", "lines": [6], "optional": False, "tags": []},
+    ],
+    "proof_points": [],
+}
+
+
 class _Fake:
     """Answers the outline and each role call from fixed payloads, recording what it was sent."""
 
@@ -103,6 +131,7 @@ def test_text_is_copied_from_the_source_and_the_proposal_is_clean():
     assert mna.optional and acme.context_line == "Led IT for 300 staff across three countries."
     assert prop.value.summary_variants[0].text.startswith("IT leader with 15 years")
     assert prop.value.skill_groups[0].items == ["Entra ID", "Okta", "Intune"]
+    assert prop.flags.overlap_trimmed == 0  # headings present: nothing was reclassified
     assert prop.flags.clean and flag_proposal(prop.value, RESUME).clean
 
 
@@ -122,6 +151,33 @@ def test_an_invented_line_number_is_an_error_never_defaulted():
     bad = json.loads(json.dumps(ROLE1))
     bad["bullets"][0]["lines"] = [99]
     prop = _run(_Fake(roles=(bad, ROLE2)))
+    assert prop.value is None and "do not exist" in prop.error and "99" in prop.error
+
+
+def test_a_plain_bulleted_resume_imports_without_section_headings():
+    """#217: the model called lines 2 and 7 both part of role 1 and summary/skills. The role
+    keeps them, the duplicate classification is dropped and counted, and the person reviews."""
+    fake = _Fake(outline=PLAIN_OUTLINE, roles=(PLAIN_ROLE, PLAIN_ROLE))
+    prop = asyncio.run(propose_import(fake, PLAIN_RESUME, source_format="md"))
+    assert prop.error is None
+    assert len(prop.value.roles) == 1
+    assert prop.value.summary_variants == [] and prop.value.skill_groups == []
+    assert prop.flags.overlap_trimmed == 2
+    assert prop.flags.clean
+    texts = [v.text for s in prop.value.roles[0].slots for v in s.variants]
+    assert texts == ["Led IT for 300 staff across three countries.",
+                     "Cut infrastructure costs 20%."]
+    # The fallback is proposed from the first answer: no extra model call.
+    assert [c["schema_name"] for c in fake.sent] == ["resume_outline_v1", "resume_role_v1"]
+
+
+def test_the_plain_resume_fallback_still_refuses_a_line_the_source_does_not_have():
+    """#217 keeps the verbatim boundary exactly as strict: dropping a duplicate classification
+    never relaxes the role map's reference check."""
+    bad = json.loads(json.dumps(PLAIN_ROLE))
+    bad["bullets"][0]["lines"] = [99]
+    fake = _Fake(outline=PLAIN_OUTLINE, roles=(bad, bad))
+    prop = asyncio.run(propose_import(fake, PLAIN_RESUME, source_format="md"))
     assert prop.value is None and "do not exist" in prop.error and "99" in prop.error
 
 
@@ -844,6 +900,25 @@ def test_both_review_templates_note_a_split():
     for name in ("import_proposal.html", "onboarding_proposal.html"):
         src = (tpl_dir / name).read_text(encoding="utf-8")
         assert "proposal.flags.split_roles" in src and "the model had merged" in src, name
+
+
+def test_both_review_templates_note_the_lines_kept_with_their_role():
+    """The wording is ONE constant (#217 review condition 3), rendered by both pages."""
+    from kestrel.docs.imports import OVERLAP_NOTE, ImportFlags
+
+    assert ImportFlags(overlap_trimmed=1).overlap_note == (
+        "Kestrel kept 1 line with its role. That line also looked like summary or skills. "
+        "Check the summary and skills in the list.")
+    assert ImportFlags(overlap_trimmed=2).overlap_note == (
+        "Kestrel kept 2 lines with their role. Those lines also looked like summary or skills. "
+        "Check the summary and skills in the list.")
+    assert "Kestrel kept" in OVERLAP_NOTE
+    tpl_dir = Path(__file__).parent.parent / "kestrel" / "web" / "templates" / "partials"
+    for name, testid in (("import_proposal.html", "import-overlap-trimmed"),
+                         ("onboarding_proposal.html", "ob-overlap-trimmed")):
+        src = (tpl_dir / name).read_text(encoding="utf-8")
+        assert "proposal.flags.overlap_note" in src and testid in src, name
+        assert "Check the summary and skills" not in src, name  # wording lives in imports.py
 
 
 def test_the_outline_prompt_states_the_promotion_rule_in_spec_and_prompt():

@@ -99,7 +99,11 @@ def test_the_title_row_clears_the_art_of_every_scene_of_the_day(live, monkeypatc
             seen.add(scene)
             drawn = art_visible_left(page)
             right = page.evaluate(TITLE_RIGHT_JS)
-            assert drawn is None or right <= drawn, (scene, theme, right, drawn)
+            # Two exact facts, each able to fail alone (a-or-b hid which one held): this scene
+            # draws art, and the first visible art pixel is at or right of the title row's edge.
+            assert drawn is not None, (
+                "no visible art was measured, so the title row was never checked", scene, theme)
+            assert right <= drawn, (scene, theme, right, drawn)
         finally:
             ctx.close()
     assert seen == set(u.SCENES), "a scene was never drawn, so it was never checked"

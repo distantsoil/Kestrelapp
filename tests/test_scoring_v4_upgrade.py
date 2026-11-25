@@ -20,6 +20,7 @@ import json
 import httpx
 import pytest
 import respx
+import structlog
 from fastapi.testclient import TestClient
 from httpx import Response
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -302,6 +303,19 @@ def _old_digest() -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:24]
 
 
+def _plain_tracebacks() -> None:
+    """Print a logged exception as plain text (D-TEST-841). structlog's default renderer draws
+    a rich traceback with every local variable and syntax colors; a route that raises under the
+    blocked network spent about 9 s on that, three times a run, and nothing here reads the log.
+    The suite's process-globals fixture puts structlog's configuration back after each test."""
+    plain = structlog.dev.ConsoleRenderer(exception_formatter=structlog.dev.plain_traceback)
+    processors = [
+        plain if isinstance(p, structlog.dev.ConsoleRenderer) else p
+        for p in structlog.get_config()["processors"]
+    ]
+    structlog.configure(processors=processors)
+
+
 # Sweeps every write route: 37-44 s alone on the owner's Windows PC against the 60 s default,
 # and a timeout under the full gate's -n 8 load stopped the worker there. The sweep's size,
 # not a wait, is the cost (profile in the PR notes); a smaller sweep is filed for 0.7.8.
@@ -314,6 +328,7 @@ def test_no_route_turns_online_on_without_the_confirmed_dialog(monkeypatch, shap
     no banner or Approve on any page, and every route that can write the online switch, posted
     without the confirmed dialog, leaves it exactly as it was. Then the confirmed dialog (and
     only it) turns online models on."""
+    _plain_tracebacks()
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")  # a key is saved
     _client().__enter__().__exit__(None, None, None)
     _seed(shape)

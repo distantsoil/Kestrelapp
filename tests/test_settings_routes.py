@@ -8,7 +8,9 @@ import asyncio
 import io
 import json
 import re
+import threading
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi.testclient import TestClient
@@ -162,6 +164,40 @@ def test_switching_a_rule_off_is_stored_skipped_by_tier0_and_queues_a_recheck():
         assert _row("tier0.rules_off.employment") is None
         assert "is on." in _toast(on)["message"]
         assert c.post("/settings/roles/rule", data={"track": "x", "key": "visa"}).status_code == 404
+
+
+def test_two_rule_switches_reaching_the_server_together_both_take(monkeypatch):
+    """#241: the observable case. Two switches on Settings > Roles arrive together; both save
+    and the stored list holds both. Each request's first rule-list read waits for the other, so
+    the race is the test's precondition and not a timing accident."""
+    from kestrel.web import settings_io as sett_io
+
+    real_read = sett_io.read
+    arrived: list[object] = []
+    both_arrived = asyncio.Event()
+
+    async def read_after_both(session, key):
+        if key.startswith("tier0.rules_off.") and len(arrived) < 2:
+            arrived.append(asyncio.current_task())
+            if len(arrived) == 2:
+                both_arrived.set()
+            await asyncio.wait_for(both_arrived.wait(), timeout=10)
+        return await real_read(session, key)
+
+    with _client() as c:
+        monkeypatch.setattr(sett_io, "read", read_after_both)
+        start = threading.Barrier(2, timeout=10)
+
+        def switch(rule: str):
+            start.wait()
+            return c.post("/settings/roles/rule", data={"track": "employment", "key": rule})
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(switch, rule) for rule in ("visa", "clear")]
+            answers = [f.result(timeout=30) for f in futures]
+
+    assert [r.status_code for r in answers] == [200, 200]
+    assert sorted(_row("tier0.rules_off.employment")) == ["clearance", "sponsorship"]
 
 
 def test_tier0_skips_a_switched_off_rule(monkeypatch):
@@ -818,3 +854,299 @@ def test_a_tracker_the_csv_reader_refuses_is_said_plainly_at_both_steps():
     for r in (read, review):
         assert r.status_code == 200
         assert "could not be read as CSV" in r.text and "field limit" not in r.text
+
+
+# ------------------------------------------------- the run card and the online switch agree
+# Invariant: what the two pages show for the online state is what is stored, and the gate every
+# online send asks opens only on recorded consent. Named cases: turning online on from
+# Settings > Online models, choosing it on the run card, a second press, a reload after a
+# refused choice, and turning it off.
+def _online_rows(*, enabled: bool, choice: str | None = None, mode: str | None = None) -> None:
+    """Online models set up once (the disclosure accepted as it reads now, both scoring steps
+    assigned), switched on or off, with the run card rows as given."""
+    from kestrel.config import HostedMode
+
+    rows = {
+        "llm.hosted_mode.enabled": enabled,
+        "llm.hosted_mode.acknowledged_at": "2026-10-01T00:00:00+00:00",
+        "llm.hosted_mode.acknowledged_terms": HostedMode().disclosure_terms(),
+    }
+    for tier in ("tier1", "tier2"):
+        rows[f"llm.hosted_tiers.{tier}.backend"] = "frontier"
+        rows[f"llm.hosted_tiers.{tier}.model"] = "invented/model-for-tests"
+    if choice is not None:
+        rows["setup.run_choice"] = choice
+    if mode is not None:
+        rows["llm.mode"] = mode
+
+    async def f(s):
+        for key, value in rows.items():
+            row = await s.get(Setting, key)
+            if row is None:
+                s.add(Setting(key=key, value=value))
+            else:
+                row.value = value
+
+    _db(f, commit=True)
+
+
+def _shown(html_text: str) -> str:
+    """The run card's selected choice, as stored values (local, hosted, both)."""
+    on = re.findall(r'aria-checked="true" data-testid="st-mode-(\w+)"', html_text)
+    assert len(on) == 1, on
+    return {"online": "hosted"}.get(on[0], on[0])
+
+
+def _undo_tokens() -> int:
+    from kestrel.services import pursuit_undo
+
+    return len(_all(select(Setting.key).where(Setting.key.like(pursuit_undo.PREFIX + "%"))))
+
+
+def _gate() -> str | None:
+    """What the one send gate says now, from the stored rows (None: a send may go)."""
+    from kestrel.services import setup_state as ss
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    async def f(s):
+        return await ss.online_send_held_now(await load_settings_with_db(s))
+
+    return _db(f)
+
+
+def _seen_matches_stored(c, label: str) -> str:
+    """Both pages, fetched again as a reload would, against the rows. Returns the card choice."""
+    from kestrel.config import HostedMode
+
+    card = _shown(c.get("/settings/computer/mode").text)
+    panel = c.get("/settings/hosted").text
+    stored = _row("setup.run_choice")
+    assert stored is None or card == stored, (label, card, stored)
+    consent = (_row("llm.hosted_mode.enabled") is True
+               and bool(_row("llm.hosted_mode.acknowledged_at"))
+               and _row("llm.hosted_mode.acknowledged_terms") == HostedMode().disclosure_terms())
+    assert ("Online models on" in panel) == consent, label
+    if _gate() is None:  # a send may go: only on recorded consent and an online card
+        assert consent and card != "local", label
+    return card
+
+
+def test_a_choice_the_run_card_cannot_show_is_refused_and_nothing_is_stored():
+    """Online models set up, then switched off: the card shows On this computer whatever is
+    stored. Choosing Online model or Both there used to store the choice, say it was saved and
+    show On this computer again; every further press stacked another message."""
+    import html
+
+    from kestrel.services import setup_state as ss
+
+    with _client() as c:
+        _online_rows(enabled=False, choice="local", mode="local")
+        for asked in ("online", "both", "online"):  # the third is the second press
+            r = c.post("/settings/computer/mode", data={"mode": asked})
+            assert r.status_code == 200, asked
+            assert "k-toast" not in r.headers.get("HX-Trigger", ""), asked  # nothing was saved
+            assert _row("setup.run_choice") == "local" and _row("llm.mode") == "local", asked
+            assert _undo_tokens() == 0, asked
+            assert _shown(r.text) == "local", asked
+            said = re.findall(r'data-testid="st-mode-message"[^>]*>([^<]+)<', r.text)
+            assert [html.unescape(t) for t in said] == [ss.ONLINE_OFF], asked
+            assert 'href="/settings/hosted/review"' in r.text, asked  # the place it names
+        # A reload shows the same card, without the message.
+        again = c.get("/settings/computer/mode").text
+        assert _shown(again) == "local" and "st-mode-message" not in again
+        # Turning online on later does not bring back a choice the card never showed.
+        c.post("/settings/hosted/mode", data={"action": "on", "ack": "on"})
+        assert _seen_matches_stored(c, "on after a refused choice") == "local"
+        assert _gate() == ss.LOCAL_CHOSEN
+
+
+def test_the_refusal_reason_is_true_whenever_the_card_refuses():
+    """The card hides a stored choice for one reason, online models switched off, and the
+    refusal says that sentence. A second reason added to run_choice fails here, so it gets its
+    own sentence instead of this one."""
+    from kestrel.config import HostedMode, load_settings
+    from kestrel.services import setup_state as ss
+    from kestrel.web.pages import settings_computer as sc
+
+    base = load_settings()  # the packaged defaults: this test's data home holds no settings
+    refused = kept = 0
+    terms = HostedMode().disclosure_terms()
+    for enabled in (True, False):
+        for ack in (None, "2026-10-01T00:00:00+00:00"):
+            for accepted in (terms, {"version": "an older text"}):
+                for stored in (None, "local", "hosted", "both"):
+                    for mode in (None, "local", "hosted"):
+                        settings = base.model_copy(deep=True)
+                        settings.llm.hosted_mode = HostedMode(
+                            enabled=enabled, acknowledged_at=ack,
+                            acknowledged_terms=accepted if ack else None)
+                        rows = {k: v for k, v in ((ss.CHOICE_KEY, stored), (ss.MODE_KEY, mode))
+                                if v is not None}
+                        for choice in ss.CHOICES:
+                            after = {**rows, ss.CHOICE_KEY: choice}
+                            why = sc.choice_refusal(settings, after)
+                            shown = ss.run_choice(settings, after)[0]
+                            assert (why is None) == (shown == choice), (after, shown)
+                            if why is None:
+                                kept += 1
+                                continue
+                            refused += 1
+                            assert why == ss.ONLINE_OFF
+                            assert not settings.llm.hosted_mode.active, after
+                            assert ss.online_not_in_use(settings, after) == ss.ONLINE_OFF
+    assert refused and kept  # both happen in this matrix
+
+
+@pytest.mark.parametrize("choice", ["hosted", None], ids=["a stored choice", "the mode row alone"])
+def test_undo_never_puts_back_a_run_choice_the_card_cannot_show(choice):
+    """Online on and running online (by the stored choice, or by the mode row alone as an older
+    install has it); the person picks On this computer (a toast with Undo), then switches online
+    models off. Undo used to store the online run again, unseen."""
+    with _client() as c:
+        _online_rows(enabled=True, choice=choice, mode="hosted")
+        assert _shown(c.get("/settings/computer/mode").text) == "hosted"
+        saved = c.post("/settings/computer/mode", data={"mode": "local"})
+        assert _toast(saved)["message"] == "Kestrel will run on this computer."
+        c.post("/settings/hosted/mode", data={"action": "off"})
+        undone = _undo(c, _toast(saved)["undoUrl"])
+        assert undone == {"ok": False, "message": "This can no longer be undone."}
+        assert _row("setup.run_choice") == "local" and _row("llm.mode") == "local"
+        assert _seen_matches_stored(c, "after the refused undo") == "local"
+
+
+def test_undo_still_puts_back_a_run_choice_the_card_can_show():
+    """The control for the guard on Undo: with online models still on, Undo works."""
+    with _client() as c:
+        _online_rows(enabled=True, choice="hosted", mode="hosted")
+        saved = c.post("/settings/computer/mode", data={"mode": "local"})
+        assert _row("setup.run_choice") == "local"
+        assert _undo(c, _toast(saved)["undoUrl"])["ok"]
+        assert _row("setup.run_choice") == "hosted" and _row("llm.mode") == "hosted"
+        assert _seen_matches_stored(c, "after undo") == "hosted"
+
+
+def test_seen_and_stored_agree_and_sends_need_recorded_consent_across_the_named_cases():
+    from kestrel.services import setup_state as ss
+
+    def press(mode: str):
+        return c.post("/settings/computer/mode", data={"mode": mode})
+
+    def switch(**form):
+        return c.post("/settings/hosted/mode", data=form)
+
+    with _client() as c:
+        assert _seen_matches_stored(c, "never set up") == "local"
+        assert _gate() == ss.ONLINE_OFF
+        # Case 2, before online was ever set up: the choice is kept as the pending setup, and
+        # nothing can be sent on it.
+        assert "online model" in _toast(press("online"))["message"]
+        assert _seen_matches_stored(c, "pending") == "hosted" and _gate() == ss.ONLINE_OFF
+        press("local")
+        # Case 1: turning online on from Settings > Online models needs the tick.
+        _online_rows(enabled=False, choice="local", mode="local")
+        switch(action="on")
+        assert _row("llm.hosted_mode.enabled") is False
+        assert _seen_matches_stored(c, "on without the tick") == "local"
+        switch(action="on", ack="on")
+        assert _row("llm.hosted_mode.enabled") is True
+        assert _seen_matches_stored(c, "on") == "local" and _gate() == ss.LOCAL_CHOSEN
+        # Case 3: a second submit of the same thing changes nothing more.
+        switch(action="on", ack="on")
+        assert _seen_matches_stored(c, "on twice") == "local" and _gate() == ss.LOCAL_CHOSEN
+        # Case 2, online on: the card keeps the choice, says so once, and sends may go.
+        assert "online model" in _toast(press("online"))["message"]
+        assert _seen_matches_stored(c, "online chosen") == "hosted" and _gate() is None
+        tokens = _undo_tokens()
+        assert "HX-Trigger" not in press("online").headers  # the second press: nothing to say
+        assert _undo_tokens() == tokens
+        # Case 5: turning it off on the card, then on Settings > Online models.
+        assert _toast(press("local"))["message"] == "Kestrel will run on this computer."
+        assert _seen_matches_stored(c, "local chosen") == "local" and _gate() == ss.LOCAL_CHOSEN
+        press("both")
+        assert _seen_matches_stored(c, "both chosen") == "both" and _gate() is None
+        switch(action="off")
+        assert _row("llm.hosted_mode.enabled") is False
+        assert _seen_matches_stored(c, "off") == "local" and _gate() == ss.ONLINE_OFF
+        # Case 4: a choice refused while off, then a reload: nothing was stored.
+        assert "HX-Trigger" not in press("online").headers
+        assert _seen_matches_stored(c, "refused while off") == "local"
+        assert _gate() == ss.ONLINE_OFF
+
+
+# Named cases 6 and 7: online models are switched off between the card's check and its write.
+def _switch_off_after_the_next_passing_check(monkeypatch) -> dict:
+    """Make the moment exact: the next time the card's check lets a choice through, online
+    models are switched off (the rows Settings > Online models writes, committed by another
+    connection) before the route writes anything. Returns the switch; set "armed" to use it."""
+    from sqlalchemy import text
+
+    from kestrel.db.engine import make_sync_engine
+    from kestrel.web.pages import settings_computer as sc
+
+    state = {"armed": False, "fired": 0}
+    real = sc.choice_refusal
+
+    def switch_off() -> None:
+        engine = make_sync_engine(paths.db_path())
+        try:
+            with engine.begin() as conn:
+                for key, value in (("llm.hosted_mode.enabled", False), ("llm.mode", "local"),
+                                   ("setup.run_choice", "local")):
+                    done = conn.execute(
+                        text("UPDATE setting SET value = :v WHERE key = :k"),
+                        {"v": json.dumps(value), "k": key})
+                    assert done.rowcount == 1, key
+        finally:
+            engine.dispose()
+
+    def checked(settings, rows):
+        why = real(settings, rows)
+        if why is None and state["armed"]:
+            state["armed"] = False
+            state["fired"] += 1
+            switch_off()
+        return why
+
+    monkeypatch.setattr(sc, "choice_refusal", checked)
+    return state
+
+
+def test_online_switched_off_between_the_check_and_the_write_stores_no_online_choice(
+        monkeypatch):
+    """Case 6. The press passed the check while online models were on; they are off by the time
+    it writes. It used to store Online model and say so, with the card on On this computer."""
+    import html
+
+    from kestrel.services import setup_state as ss
+
+    with _client() as c:
+        _online_rows(enabled=True, choice="local", mode="local")
+        switch = _switch_off_after_the_next_passing_check(monkeypatch)
+        switch["armed"] = True
+        r = c.post("/settings/computer/mode", data={"mode": "online"})
+        assert switch["fired"] == 1  # the switch-off did land between the check and the write
+        assert r.status_code == 200 and _row("llm.hosted_mode.enabled") is False
+        assert "k-toast" not in r.headers.get("HX-Trigger", "")
+        assert _row("setup.run_choice") == "local" and _row("llm.mode") == "local"
+        assert _undo_tokens() == 0
+        assert _shown(r.text) == "local"
+        said = re.findall(r'data-testid="st-mode-message"[^>]*>([^<]+)<', r.text)
+        assert [html.unescape(t) for t in said] == [ss.ONLINE_OFF]
+        assert _seen_matches_stored(c, "off between the check and the write") == "local"
+        assert _gate() == ss.ONLINE_OFF
+
+
+def test_online_switched_off_between_the_undo_check_and_its_write_puts_nothing_back(
+        monkeypatch):
+    """Case 7. The same moment in Undo: it used to answer Put back and store Online model."""
+    with _client() as c:
+        _online_rows(enabled=True, choice="hosted", mode="hosted")
+        switch = _switch_off_after_the_next_passing_check(monkeypatch)
+        saved = c.post("/settings/computer/mode", data={"mode": "local"})
+        assert _row("setup.run_choice") == "local" and switch["fired"] == 0
+        switch["armed"] = True
+        undone = _undo(c, _toast(saved)["undoUrl"])
+        assert switch["fired"] == 1
+        assert undone == {"ok": False, "message": "This can no longer be undone."}
+        assert _row("setup.run_choice") == "local" and _row("llm.mode") == "local"
+        assert _seen_matches_stored(c, "off between the undo check and its write") == "local"

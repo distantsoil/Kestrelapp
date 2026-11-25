@@ -77,3 +77,18 @@ consulting:
     - { id: recent_trigger, when: "age_days(opp.event_date) <= 30", weight: 1.2 }
     - { id: multi_signal,   when: "org_signal_count(org, 90) >= 2", weight: 1.5 }
     - { id: no_url,         when: "opp.url is None", weight: -0.2 }
+
+# Title filter (kestrel/ingest/smart_filter.py, D-SCORE-914). Not a track and not a Tier 0 rule.
+# A fetched posting is kept when its title shares a word with your target titles. The words
+# below do not name a field, so one of them shared is not enough: such a word keeps a posting
+# only together with a second shared word, or when it is all one of your target titles names
+# (a target title "Operations Manager" makes "operations" count alone). Every other shared
+# word keeps a posting by itself. Remove a word to let it count alone again; an empty list
+# (generic_words: []) keeps a posting on any one shared word, as before.
+title_filter:
+  generic_words:
+    - business
+    - engineering
+    - enterprise
+    - operations
+    - systems

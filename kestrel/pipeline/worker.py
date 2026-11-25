@@ -591,21 +591,22 @@ class Worker:
                     )
                     if opp_id:
                         local_only = local_only or await lane.prior_lane(session, opp_id)
-                    if local_only and opp and await lane.reject_mismatch(session, opp):
-                        stored = await session.get(Task, task.id)
-                        if stored and stored.status == "leased" and stored.worker_id == wid:
-                            stored.status = "done"
-                            stored.worker_id = None
-                            stored.lease_until = None
-                            stored.updated_at = utcnow_iso()
+                    if local_only and opp:
+                        # Decided from the task row as it is now, not as it was leased: a
+                        # Score again or Try again may have stamped it since (lane.settle_recheck).
+                        outcome, _ = await lane.settle_recheck(session, task.id, worker_id=wid)
                         await session.commit()
-                        return
+                        if outcome == lane.REJECTED:
+                            return
                     if local_only:
-                        payload = {**payload, lane.LOCAL_ONLY: True}
-                        stored = await session.get(Task, task.id)
-                        if stored and stored.status == "leased" and stored.worker_id == wid:
-                            stored.payload = payload
-                            await session.commit()
+                        # Stamped in place: the payload read at lease time is never written back,
+                        # and the handler runs on the payload as stored now, so a request that
+                        # landed after the lease reaches it.
+                        fresh = await lane.stamp_leased(
+                            session, task.id, wid, lane.LOCAL_ONLY, True)
+                        await session.commit()
+                        payload = fresh if fresh is not None else {
+                            **payload, lane.LOCAL_ONLY: True}
                 if local_only:
                     if lane.scores_on_hosted(self._settings):
                         held_ids.add(task.id)
@@ -618,12 +619,12 @@ class Worker:
                         stats.held += 1
                         return
             if self._online_approval is not None and "online_approval" not in payload:
-                payload = {**payload, "online_approval": self._online_approval}
                 async with self._sm() as session:
-                    stored = await session.get(Task, task.id)
-                    if stored is not None and stored.status == "leased" and stored.worker_id == wid:
-                        stored.payload = payload
-                        await session.commit()
+                    fresh = await lane.stamp_leased(
+                        session, task.id, wid, "online_approval", self._online_approval)
+                    await session.commit()
+                payload = fresh if fresh is not None else {
+                    **payload, "online_approval": self._online_approval}
             settings, client = await self._task_settings(task_type, payload)
             from kestrel.services.online_consent import held_for_approval
 
@@ -1122,12 +1123,12 @@ class Worker:
                 try:
                     payload = task.payload or {}
                     if self._online_approval is not None and "online_approval" not in payload:
-                        payload = {**payload, "online_approval": self._online_approval}
                         async with self._sm() as session:
-                            stored = await session.get(Task, task.id)
-                            if stored is not None and stored.status == "leased":
-                                stored.payload = payload
-                                await session.commit()
+                            fresh = await lane.stamp_leased(
+                                session, task.id, wid, "online_approval", self._online_approval)
+                            await session.commit()
+                        payload = fresh if fresh is not None else {
+                            **payload, "online_approval": self._online_approval}
                     async with self._sm() as s:
                         src = await s.get(Source, source_id) if source_id is not None else None
                         kind = src.kind if src else None

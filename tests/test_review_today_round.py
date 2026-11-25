@@ -552,6 +552,12 @@ def test_operator_requested_tasks_are_never_held_by_the_track_switch():
 
 
 def test_score_again_and_quarantine_retry_mark_their_tasks_requested():
+    """Each enqueueing path carries the literal `"requested": True` in its source, except the
+    quarantine retry: its payload is asserted behaviorally on a real queued row in
+    tests/test_retry_follows_row.py::
+    test_a_quick_sort_that_used_up_its_tries_is_retried_by_promoting_it (requested and rescore
+    true on the task the quarantine retry writes), because a source-text match on that rewrite
+    was brittle (D-TEST-6)."""
     import inspect
 
     from kestrel.mcp import server
@@ -561,7 +567,10 @@ def test_score_again_and_quarantine_retry_mark_their_tasks_requested():
 
     assert '"requested": True' in inspect.getsource(rescore.enqueue_rescore)
     assert 'extra["requested"] = True' in inspect.getsource(rescore.requeue_rescore_task)
-    assert 'extra={"requested": True}' in inspect.getsource(runs_detail._retry_quarantine)
+    # The quarantine retry's payload shape, not its source text: `requested` rides every retry
+    # and this extra is added only for a tier-1 row (the behavior is asserted end to end in
+    # tests/test_retry_follows_row.py, the test named in this test's docstring).
+    assert runs_detail._TIER1_RETRY_EXTRA == {"rescore": True}
     assert '"requested": True' in inspect.getsource(tier1.handle_t1)
     assert '"requested": True' in inspect.getsource(server)
 

@@ -810,7 +810,10 @@ the ATS copy is authoritative. Non-canonical members keep their URLs and show as
 
 **Re-seen handling.** Same hash: increment `seen_count`, update `last_seen_at`, no
 re-evaluation. Materially changed (Jaccard below 0.9 against stored): increment `version`, store
-`previous_description_md`, re-queue Tier 2 with a `changed` flag.
+`previous_description_md`, re-queue Tier 2 with a `changed` flag only for a role already past
+Tier 1 (`t1_pass`, `t2_done`, `t3_done`; D-SCORE-910). A role the rules or Tier 1 set aside, one
+not screened yet, or one whose scoring failed is never sent to Tier 2 by a changed posting; the
+new text is stored and the normal flow, or the operator's own retry, reads it.
 
 `seen_count` combined with the span between `first_seen_at` and `last_seen_at` is the raw
 material for ghost-job detection (`SPEC-MODULES.md` §6).
@@ -1040,6 +1043,20 @@ not update an existing row either.
 and track from the profile's target titles, their phrasings, seniority floor and words learned
 from at least two pursuits. If the unchanged `smart_filter.keep(title, context)` returns false,
 skip the posting before storage and increment `dropped_unrelated_title` on the scrape run.
+Since D-SCORE-914 one shared word keeps a posting only when it names a field: a shared word on
+the `title_filter.generic_words` list in `filters.yml` (operations, systems, business and
+similar) keeps it only with a second shared word, or when that word is the only field word of
+one of the profile's target titles. A stored role is not changed by this, with the one case
+D-SRC-13 already had: a role that went through the legacy lane is rechecked with the rule when
+the lane sweep runs and before any Tier 1 or Tier 2 task of its own runs. That recheck never
+touches a task the operator asked for (Score this role anyway, Score again, a retry: payload
+`requested` or `rescore`), a role past Tier 1 (`t1_pass`, `t2_done`, `t3_done`), or a role the
+operator did something with (`kestrel.services.person_touched`: a pursuit, a label, a Save,
+notes, a hide and every other mark; D-SCORE-919). In the lane sweep and the worker, and only
+there, the recheck decides from the task row and the role as stored at its own write
+(`lane.settle_recheck`, a compare on status, owner and payload); the request side
+(`enqueue_rescore`) and four older payload writes in `queue.py` and `rescore.py` do not have
+that guard yet (D-SCORE-919, amendment of 2026-11-25 on scope).
 **Dropped-title sample (D-SRC-17, amends D-SRC-13).** The first 25 postings a run skips for an
 unrelated title are recorded, in the order seen, in that scrape run's `counts` as
 `dropped_title_sample`: a list of `{"title", "org"}`, each string cut at 200 characters. No

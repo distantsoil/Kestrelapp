@@ -712,3 +712,137 @@ def test_ingest_without_score_now_keeps_priority_zero():
     body = {"url": "https://jobs.example.test/fresh-2",
             "text": "Logistics Coordinator\n" + LONG_TEXT}
     assert _embed_priority_after_ingest(body) == 0
+
+
+# ------------------------------------------------------------------ where a captured role came from
+
+
+def _facts_after_capture(body: dict) -> list[tuple[str, str]]:
+    import re
+
+    _store_key()
+    with _client() as c:
+        r = c.post("/api/opportunities/ingest", json=body, headers=_headers())
+        assert r.status_code == 200, r.text
+        page = c.get(f"/opportunities/{r.json()['id']}")
+    assert page.status_code == 200
+    block = re.search(r'<div class="rl-facts".*?</div>', page.text, re.S).group(0)
+    block = re.sub(r"<svg.*?</svg>", "", block, flags=re.S)
+    return re.findall(r'data-kind="(\w+)">([^<]*)<', block)
+
+
+def test_an_extension_capture_names_its_origin_in_the_role_header():
+    facts = dict(_facts_after_capture({
+        "url": "https://www.jobs.example.test/post/9",
+        "text": "Logistics Coordinator\n" + LONG_TEXT, "title": "Logistics Coordinator"}))
+    assert facts["source"] == "From the browser extension (jobs.example.test)"
+    assert facts["org"] == "Unknown company"
+
+
+def test_an_extension_capture_without_a_link_still_says_it_came_from_the_extension():
+    facts = dict(_facts_after_capture({"text": "Logistics Coordinator\n" + LONG_TEXT}))
+    assert facts["source"] == "From the browser extension"
+
+
+def test_a_role_from_another_path_has_no_extension_label():
+    _store_key()
+    rid = _seed_role()
+    with _client() as c:
+        page = c.get(f"/opportunities/{rid}")
+    assert page.status_code == 200
+    assert "From the browser extension" not in page.text
+
+
+def _facts_of(opp_id: int) -> dict[str, str]:
+    import re
+
+    with _client() as c:
+        page = c.get(f"/opportunities/{opp_id}")
+    assert page.status_code == 200
+    block = re.search(r'<div class="rl-facts".*?</div>', page.text, re.S).group(0)
+    block = re.sub(r"<svg.*?</svg>", "", block, flags=re.S)
+    return dict(re.findall(r'data-kind="(\w+)">([^<]*)<', block))
+
+
+_NO_EXT_LINE = "From the browser extension"
+
+
+def test_a_plain_api_ingest_without_the_key_or_an_extension_origin_has_no_extension_line():
+    with _client() as c:
+        r = c.post("/api/opportunities/ingest", json={
+            "url": "https://jobs.example.test/api-1",
+            "text": "Logistics Coordinator\n" + LONG_TEXT})
+    assert r.status_code == 200, r.text
+    assert "source" not in _facts_of(r.json()["id"])
+    assert _get_opp(r.json()["id"]).raw in (None, {})
+
+
+def test_an_mcp_ingest_has_no_extension_line():
+    from fastmcp import Client
+
+    from kestrel.mcp.server import build_mcp
+
+    async def go():
+        async with Client(build_mcp()) as c:
+            return (await c.call_tool("ingest_opportunity", {
+                "url": "https://jobs.example.test/mcp-1",
+                "text": "Logistics Coordinator\n" + LONG_TEXT})).data
+
+    out = asyncio.run(go())
+    assert "source" not in _facts_of(out["id"])
+    assert _get_opp(out["id"]).raw in (None, {})
+
+
+def test_a_role_added_by_hand_in_the_app_has_no_extension_line():
+    from kestrel.services.applied_import import add_found_role
+
+    async def go(s):
+        res = await add_found_role(
+            s, track="employment", url="https://jobs.example.test/hand-1",
+            text="Logistics Coordinator\n" + LONG_TEXT, title=None, org_name=None)
+        await s.commit()
+        return res
+
+    res = _with_session(go)
+    assert res.ok, res
+    assert "source" not in _facts_of(res.opportunity_id)
+    assert _get_opp(res.opportunity_id).raw in (None, {})
+
+
+def test_confidential_mode_drops_the_host_from_the_extension_line():
+    async def on(s):
+        s.add(Setting(key="confidential_mode", value=True))
+        await s.commit()
+
+    _with_session(on)
+    facts = dict(_facts_after_capture({
+        "url": "https://careers.employer-example.test/post/9",
+        "text": "Logistics Coordinator\n" + LONG_TEXT}))
+    assert facts["source"] == "From the browser extension"
+    assert "employer-example" not in facts["source"]
+
+
+def _label_after_ingest(headers: dict[str, str]) -> tuple[int, object]:
+    _store_key()
+    with _client() as c:
+        r = c.post("/api/opportunities/ingest", headers=headers, json={
+            "url": "https://jobs.example.test/auth-1",
+            "text": "Logistics Coordinator\n" + LONG_TEXT})
+    if r.status_code != 200:
+        return r.status_code, None
+    return r.status_code, (_get_opp(r.json()["id"]).raw or {}).get("captured_via")
+
+
+def test_an_extension_origin_without_the_key_does_not_label_a_capture():
+    status, label = _label_after_ingest({"Origin": EXT_ORIGIN})
+    assert label is None, (status, label)
+
+
+def test_a_wrong_key_does_not_label_a_capture():
+    status, label = _label_after_ingest({"X-Kestrel-Key": "not-the-key"})
+    assert label is None, (status, label)
+
+
+def test_the_right_key_labels_a_capture_as_the_extension():
+    status, label = _label_after_ingest({"X-Kestrel-Key": KEY})
+    assert (status, label) == (200, "extension")

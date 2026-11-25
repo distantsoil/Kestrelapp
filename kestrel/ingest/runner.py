@@ -38,6 +38,7 @@ from kestrel.ingest.location import parse_location
 from kestrel.ingest.normalize import normalize_and_store
 from kestrel.pipeline.profile import load_profile
 from kestrel.pipeline.tasks import enqueue_once
+from kestrel.queue.rescore import past_tier1
 from kestrel.rules.helpers import value_in
 from kestrel.services import run_model
 from kestrel.web.errors import fixed_reason
@@ -195,7 +196,7 @@ async def run_source(
                         session.add(
                             Task(type="embed", payload={"opportunity_id": res.opportunity.id})
                         )
-                    if res.requeue_t2:
+                    if res.requeue_t2 and past_tier1(res.opportunity.stage):
                         # Idempotent: never stack a second live t2 task on an opportunity that
                         # already has one queued. The Tier 2 handler is additionally guarded by
                         # content_version so even a duplicate can never double-evaluate.

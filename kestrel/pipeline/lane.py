@@ -10,12 +10,13 @@ now" (D-SRC-9). All state is on the task rows (hard rule 5)."""
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from statistics import median
-from typing import Any
+from typing import Any, cast
 
 import structlog
-from sqlalchemy import func, or_, select
+from sqlalchemy import CursorResult, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.config import Settings
@@ -147,26 +148,48 @@ async def is_idle(session: AsyncSession) -> bool:
     return new == 0
 
 
-def _free(
-    task: Task,
+def _waiting_now():
+    """A task that is a waiting lane task as its row stands at the write: the guard of every
+    update the sweep makes (D-SCORE-919 as amended). Pending, in the lane, and not one the
+    person asked for since it was listed."""
+    return (
+        Task.status == "pending",
+        func.coalesce(func.json_extract(Task.payload, "$.lane"), 0) == 1,
+        ~requested_by_operator(),
+    )
+
+
+async def _free(
+    session: AsyncSession,
+    task_id: int,
     *,
     on: str | None,
     online_approval: dict[str, list[str]] | None = None,
-) -> None:
-    payload = dict(task.payload or {})
-    task.priority = int(payload.pop("lane_priority", 0) or 0)
-    payload["lane"] = 0
-    payload[LOCAL_ONLY] = True
+) -> bool:
+    """Release one waiting lane task into the normal flow. One guarded UPDATE that edits the
+    stored payload in place (json_set): the row is released only if it is still a waiting lane
+    task at the write, and nothing a person's request wrote to it since the sweep listed it is
+    ever overwritten. False when it no longer was (a Score again took it out of the lane)."""
+    sets: list[Any] = ["$.lane", 0, f"$.{LOCAL_ONLY}", func.json("true")]
     if on:
-        payload["lane_released_on"] = on
+        sets += ["$.lane_released_on", on]
     if online_approval is not None:
         from kestrel.services.online_consent import read_approval
 
         approval = read_approval(online_approval)
         if approval:
-            payload["online_approval"] = approval
-    task.payload = payload
-    task.updated_at = utcnow_iso()
+            sets += ["$.online_approval", func.json(json.dumps(approval))]
+    done = await session.execute(
+        update(Task)
+        .where(Task.id == task_id, *_waiting_now())
+        .values(
+            priority=func.coalesce(func.json_extract(Task.payload, "$.lane_priority"), 0),
+            payload=func.json_set(func.json_remove(Task.payload, "$.lane_priority"), *sets),
+            updated_at=utcnow_iso(),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    return cast(CursorResult, done).rowcount == 1
 
 
 async def _pending_lane_tasks(session: AsyncSession) -> list[Task]:
@@ -180,13 +203,64 @@ async def _pending_lane_tasks(session: AsyncSession) -> list[Task]:
     )
 
 
+def asked_by_person(payload: dict | None) -> bool:
+    """A task the person explicitly asked for: payload `requested` or `rescore`, the same two
+    keys as kestrel.queue.queue.requested_by_operator (the SQL form the lane sweep uses)."""
+    return bool(payload) and bool(payload.get("requested") or payload.get("rescore"))
+
+
+async def _not_ours_to_reject(
+    session: AsyncSession, opp: Opportunity, payload: dict | None
+) -> bool:
+    """Whether the recheck must leave this role alone (issue #250, D-SCORE-919). Three questions,
+    each answered in one place:
+      - the task being run is one the person asked for (Score this role anyway, Score again, a
+        retry): `asked_by_person`, read from the task's own payload, because a first Score this
+        role anyway is recorded nowhere else until Quick sort has run;
+      - the role is past Quick sort, kept by it or scored: `rescore.past_tier1`;
+      - the person did something with the role (a pursuit, a label, a Save, notes, a hide and
+        every other mark): `kestrel.services.person_touched.person_touched`.
+    The recheck is for a role still waiting on its first model read; a filter that changed
+    later never restages a role the person acted on, never finishes their request unrun, and
+    never takes a kept or scored role back."""
+    from kestrel.queue.rescore import past_tier1
+    from kestrel.services.person_touched import person_touched
+
+    if asked_by_person(payload) or past_tier1(opp.stage):
+        return True
+    return await person_touched(session, opp)
+
+
 async def reject_mismatch(
     session: AsyncSession,
     opp: Opportunity,
     *,
     contexts: dict[str, tuple[Any, smart_filter.FilterContext]] | None = None,
+    payload: dict | None = None,
 ) -> bool:
-    """Recheck one legacy row using today's ingest rules, without a model or work-mode test."""
+    """Recheck one legacy row using today's ingest rules, without a model or work-mode test.
+    `payload` is the payload of the task about to run for this role, when there is one. Never a
+    task the person asked for, a role that is the person's own, or one past Quick sort
+    (`_not_ours_to_reject`, the one place that decides). It judges what it is given: a caller
+    that also finishes a task goes through `settle_recheck`, which gives it fresh rows."""
+    reason = await _mismatch(session, opp, contexts, payload)
+    if reason is None:
+        return False
+    opp.stage = "t0_reject"
+    opp.stage_reason = reason
+    return True
+
+
+async def _mismatch(
+    session: AsyncSession,
+    opp: Opportunity,
+    contexts: dict[str, tuple[Any, smart_filter.FilterContext]] | None,
+    payload: dict | None,
+) -> str | None:
+    """The stage reason a recheck would set for this role, or None to leave it. Changes
+    nothing."""
+    if await _not_ours_to_reject(session, opp, payload):
+        return None
     cache = contexts if contexts is not None else {}
     if opp.track not in cache:
         profile = load_profile(opp.track)
@@ -201,22 +275,117 @@ async def reject_mismatch(
         reason = "outside_area: Outside your search countries."
     elif not smart_filter.keep(opp.title, ctx):
         reason = "unrelated_title: Title does not match your target titles."
-    if reason is None:
-        return False
-    opp.stage = "t0_reject"
-    opp.stage_reason = reason
-    return True
+    return reason
+
+
+REJECTED, KEPT, CHANGED = "rejected", "kept", "changed"
+# A lost compare still takes the write lock, so the read after it is current and the second
+# compare wins. Two tries are all a real row needs.
+_COMPARE_TRIES = 2
+
+
+async def _fresh_task(session: AsyncSession, task_id: int) -> Task | None:
+    """The task row as it is stored now, never the copy this session read earlier."""
+    return await session.get(Task, task_id, populate_existing=True)
+
+
+async def settle_recheck(
+    session: AsyncSession,
+    task_id: int,
+    *,
+    worker_id: str | None = None,
+    contexts: dict[str, tuple[Any, smart_filter.FilterContext]] | None = None,
+) -> tuple[str, dict | None]:
+    """Recheck the role of one task and write the result, deciding from the rows as they are at
+    the write (issue #250, D-SCORE-919 as amended). The one place a recheck finishes a task: the
+    lane sweep (a pending lane task) and the worker (`worker_id`: the task it holds leased).
+
+    A person's Score again, Try again or Score this role anyway can commit at any moment, and
+    it always writes to the task row. So nothing is decided from a copy read earlier:
+      1. the task row is read fresh;
+      2. a guarded UPDATE that changes nothing takes the database's write lock, and applies
+         only if the row's status, owner and payload are still exactly as just read. If it does
+         not apply, someone changed the row in between: read it again and compare again;
+      3. with the lock held nobody else can commit, so the role and every mark of the person's
+         are read fresh and `reject_mismatch` decides from them and from that payload;
+      4. a rejection finishes the task with a second guarded UPDATE in the same transaction.
+    The caller commits. Returns (REJECTED | KEPT | CHANGED, the payload it decided from).
+    CHANGED: the row is no longer this caller's to judge (it left the lane, was taken by a
+    request, or its lease moved), and nothing was written to it."""
+    for _ in range(_COMPARE_TRIES):
+        task = await _fresh_task(session, task_id)
+        if task is None:
+            return CHANGED, None
+        payload = dict(task.payload or {})
+        if worker_id is None:
+            ours = (task.status == "pending" and (payload.get("lane") or 0) == 1
+                    and not asked_by_person(payload))
+        else:
+            ours = task.status == "leased" and task.worker_id == worker_id
+        if not ours:
+            return CHANGED, payload
+        as_read = (
+            Task.id == task_id,
+            Task.status == task.status,
+            Task.worker_id.is_(None) if task.worker_id is None else (
+                Task.worker_id == task.worker_id),
+            # Minified on both sides: the stored text may come from json_set (compact).
+            func.json(Task.payload) == func.json(json.dumps(task.payload)),
+        )
+        locked = await session.execute(
+            update(Task).where(*as_read).values(updated_at=Task.updated_at)
+            .execution_options(synchronize_session=False)
+        )
+        if cast(CursorResult, locked).rowcount == 1:
+            break
+    else:
+        return CHANGED, None  # the read never matched the stored row: decide nothing
+    opp = await session.get(Opportunity, payload.get("opportunity_id"), populate_existing=True)
+    if opp is None or not await reject_mismatch(
+            session, opp, contexts=contexts, payload=payload):
+        return KEPT, payload
+    await session.execute(
+        update(Task).where(*as_read)
+        .values(status="done", worker_id=None, lease_until=None, updated_at=utcnow_iso())
+        .execution_options(synchronize_session=False)
+    )
+    return REJECTED, payload
+
+
+async def stamp_leased(
+    session: AsyncSession, task_id: int, worker_id: str, key: str, value: Any
+) -> dict | None:
+    """Set one key on the payload of a task this worker holds, in place (json_set), and return
+    the payload as stored afterwards; None when the worker no longer holds it. A payload read
+    at lease time is never written back: a request that stamped the row since stays on it."""
+    done = await session.execute(
+        update(Task)
+        .where(Task.id == task_id, Task.status == "leased", Task.worker_id == worker_id)
+        .values(payload=func.json_set(Task.payload, f"$.{key}", func.json(json.dumps(value))))
+        .execution_options(synchronize_session=False)
+    )
+    if cast(CursorResult, done).rowcount != 1:
+        return None
+    task = await _fresh_task(session, task_id)
+    return dict(task.payload or {}) if task is not None else None
 
 
 async def _eligible_tasks(session: AsyncSession) -> list[Task]:
+    """The waiting lane tasks that survive the recheck. The list is read once, so it is only a
+    list of candidates: a role that looks like a mismatch is settled by `settle_recheck`, from
+    the rows as they are then, and each result is committed before the next is looked at."""
     contexts: dict[str, tuple[Any, smart_filter.FilterContext]] = {}
     eligible: list[Task] = []
     for task in await _pending_lane_tasks(session):
-        opp = await session.get(Opportunity, task.payload["opportunity_id"])
-        if await reject_mismatch(session, opp, contexts=contexts):
-            task.status = "done"
-            task.updated_at = utcnow_iso()
-        else:
+        # The waiting filter joined the role through this payload, so both exist.
+        payload = task.payload or {}
+        opp = cast(Opportunity, await session.get(Opportunity, payload["opportunity_id"]))
+        if await _mismatch(session, opp, contexts, payload) is None:
+            eligible.append(task)
+            continue
+        outcome, _fresh = await settle_recheck(session, task.id, contexts=contexts)
+        await session.commit()
+        if outcome == KEPT:
             eligible.append(task)
     return eligible
 
@@ -241,13 +410,15 @@ async def release_due(
         room = cap - await released_today(s, today)
         if room <= 0:
             return 0
-        tasks = eligible[:room]
-        for t in tasks:
-            _free(t, on=today)
+        freed = 0
+        for t in eligible:
+            if freed >= room:
+                break
+            freed += await _free(s, t.id, on=today)
         await s.commit()
-    if tasks:
-        log.info("lane.released", count=len(tasks))
-    return len(tasks)
+    if freed:
+        log.info("lane.released", count=freed)
+    return freed
 
 
 async def release_all(
@@ -259,12 +430,12 @@ async def release_all(
     """Recheck and release surviving legacy tasks for local scoring only, outside the cap."""
     async with sessionmaker() as s:
         eligible = await _eligible_tasks(s)
-        tasks = [] if hosted else eligible
-        for t in tasks:
-            _free(t, on=None, online_approval=online_approval)
+        freed = 0
+        for t in ([] if hosted else eligible):
+            freed += await _free(s, t.id, on=None, online_approval=online_approval)
         await s.commit()
-    log.info("lane.released_all", count=len(tasks))
-    return len(tasks)
+    log.info("lane.released_all", count=freed)
+    return freed
 
 
 async def seconds_per_role(session: AsyncSession) -> tuple[float, bool]:

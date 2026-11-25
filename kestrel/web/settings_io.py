@@ -16,6 +16,8 @@ from urllib.parse import urlencode
 
 import structlog
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.base import utcnow_iso
@@ -144,17 +146,62 @@ async def read(session: AsyncSession, key: str) -> Any:
 
 
 async def write(session: AsyncSession, key: str, value: Any) -> None:
-    """Set or (for ABSENT) delete one row. The caller commits."""
-    row = await session.get(Setting, key)
+    """Set or (for ABSENT) delete one row. The caller commits.
+
+    A first write is an atomic upsert: two requests that both found no row (two rule switches on
+    a fresh install, #241) cannot make the second fail on the primary key. A row this session
+    already loaded is updated in place, so its identity map stays true."""
     if value is ABSENT:
+        row = await session.get(Setting, key)
         if row is not None:
             await session.delete(row)
         return
-    if row is None:
-        session.add(Setting(key=key, value=value))
-    else:
+    row = await session.get(Setting, key)
+    if row is not None:
         row.value = value
         row.updated_at = utcnow_iso()
+        return
+    now = utcnow_iso()
+    await session.execute(
+        sqlite_insert(Setting)
+        .values(key=key, value=value, updated_at=now)
+        .on_conflict_do_update(
+            index_elements=[Setting.key], set_={"value": value, "updated_at": now}
+        )
+    )
+
+
+async def switch_rule(
+    session: AsyncSession, track: str, rule: str, on: bool
+) -> tuple[Any, Any, bool]:
+    """Turn one hidden-role rule on or off and store the list, as one serialized change.
+
+    The rule list is one row. Read, changed and written back in separate statements, two
+    switches that reach the server together both read the same list: one change is lost, or the
+    second first write fails on the primary key (#241). BEGIN IMMEDIATE takes SQLite's write lock
+    before the read, so the second switch waits (busy_timeout) and then changes the list the
+    first wrote. Returns (value before, value now, whether anything changed); the row is
+    committed here, and (prev, prev, False) leaves it untouched."""
+    key = f"tier0.rules_off.{track}"
+    await session.execute(text("BEGIN IMMEDIATE"))  # first statement: no transaction yet
+    row = await session.get(Setting, key)
+    prev: Any = ABSENT if row is None else row.value
+    off = [str(x) for x in prev] if isinstance(prev, list) else []
+    if on == (rule not in off):
+        await session.rollback()  # release the write lock; nothing changed
+        return prev, prev, False
+    new = [r for r in off if r != rule] if on else [*off, rule]
+    now: Any = ABSENT if not new else new
+    if now is ABSENT:
+        if row is not None:
+            await session.delete(row)
+    elif row is None:
+        session.add(Setting(key=key, value=now))
+    else:
+        row.value = now
+        row.updated_at = utcnow_iso()
+    await session.commit()
+    return prev, now, True
 
 
 def undo_url(key: str, prev: Any, now: Any) -> str | None:

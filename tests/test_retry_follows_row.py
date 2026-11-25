@@ -9,13 +9,17 @@ no retry. Invented roles only; no network, no model."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from urllib.parse import quote
 
 import pytest
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from kestrel.db.models import Opportunity, Quarantine
+from kestrel import paths
+from kestrel.db.engine import make_async_engine
+from kestrel.db.models import Opportunity, Quarantine, Task
 from kestrel.llm import failure_kind as fk
 from kestrel.web import retry_groups
 from tests.test_needs_try import _online, _read, _tasks, _write
@@ -27,12 +31,17 @@ ONLINE = "hosted:vendor/model-b:free"
 STEP_KEY = {1: "quick", 2: "fit", 3: "deep", 5: "other"}
 
 # (case, the failed row's tier, the role's stage now, the task a retry of that row must queue).
-# Only Fit score can be run again from a row: Quick sort already kept the role (hard rule 4),
-# Deep read is operator-confirmed escalation, other steps have no task here, and a Fit score row
-# whose role has moved on since (here, set aside by a later Quick sort) is not re-run behind it.
+# Fit score runs again from a Fit score row. A Quick sort reply that could not be read was already
+# promoted, so that row refuses; only the dead-letter outcome (#220, the role left waiting at
+# `quarantined`) is retried, by the escalation hard rule 4 names (Fit score). Deep read is
+# operator-confirmed escalation, other steps have no task here, and a Fit score row whose role has
+# moved on since (here, set aside by a later Quick sort) is not re-run behind it.
 CASES = [
     ("quick-sort-kept", 1, "t1_pass", None),
     ("quick-sort-scored-since", 1, "t2_done", None),
+    ("quick-sort-out-of-tries", 1, "quarantined", "t2"),
+    ("quick-sort-error", 1, "error", None),
+    ("quick-sort-moved-on", 1, "t1_reject", None),
     ("fit-score-parked", 2, "quarantined", "t2"),
     ("fit-score-scored", 2, "t2_done", "t2"),
     ("fit-score-moved-on", 2, "t1_reject", None),
@@ -151,3 +160,103 @@ def test_every_retry_runs_the_failed_rows_own_step_or_nothing(make, monkeypatch,
     assert len(tasks) == len(ran), tasks
     assert queued == {oid: expected for oid in ran}, queued
     assert after == {oid: before[oid] + (1 if oid in ran else 0) for oid in before}
+
+
+def _dead_quick_sort(make):  # noqa: F811
+    """The real dead-letter outcome: a dead t1 task, quarantine_dead.py's tier-1 row, and the
+    role left waiting at `quarantined`. Returns (client, role id, the tier-1 row)."""
+    from kestrel.pipeline.deadletter import quarantine_dead
+    from kestrel.web.fit import DEAD_TASK_MARK
+
+    client, ids = make(_rows(1))
+    oid = ids["Role 0"]["opp"]
+    _set_stage(ids, "new")  # the role still waits on scoring, as deadletter.py requires
+
+    async def add_dead(s):
+        s.add(Task(type="t1", status="dead", opportunity_id=oid, attempts=3,
+                   payload={"opportunity_id": oid}, last_error="request error: timed out"))
+
+    _write(add_dead)
+
+    async def sweep():
+        engine = make_async_engine(paths.db_path())
+        try:
+            await quarantine_dead(async_sessionmaker(engine, expire_on_commit=False))
+        finally:
+            await engine.dispose()
+
+    asyncio.run(sweep())
+
+    async def state(s):
+        rows = list((await s.execute(select(Quarantine))).scalars())
+        stage = (await s.get(Opportunity, oid)).stage
+        return rows, stage
+
+    rows, stage = _read(state)
+    # The three seeded rows plus the one deadletter.py just wrote for Role 0.
+    dead = [r for r in rows if r.opportunity_id == oid and (r.error or "").startswith(
+        DEAD_TASK_MARK)]
+    assert len(dead) == 1 and dead[0].tier == 1 and stage == "quarantined"
+    return client, oid, dead[0]
+
+
+def test_a_quick_sort_that_used_up_its_tries_is_retried_by_promoting_it(make):  # noqa: F811
+    """#220, through the real dead-letter path: Try again queues Fit score (the escalation hard
+    rule 4 names), never another Quick sort and never a refusal."""
+    client, _oid, q = _dead_quick_sort(make)
+
+    assert "Quick sort" in client.get("/quarantine").text
+    r = client.post(f"/quarantine/{q.id}/retry", headers={**HX, "HX-Target": f"rt-row-{q.id}"})
+    assert r.status_code == 200
+
+    async def queued(s):
+        tasks = (await s.execute(select(Task).where(Task.status == "pending"))).scalars()
+        row = await s.get(Quarantine, q.id)
+        return [(t.type, dict(t.payload or {})) for t in tasks], row.attempts
+
+    tasks, attempts = _read(queued)
+    assert [t for t, _ in tasks] == ["t2"]  # the escalation, from the tier-1 row
+    # The behavior behind the source-text guard: the person's retry is marked requested (the
+    # lane recheck leaves it alone) and declared a score-again (so handle_t2 runs from
+    # `quarantined`), exactly as rescore.py builds it.
+    assert tasks[0][1]["requested"] is True
+    assert tasks[0][1]["rescore"] is True
+    assert attempts == (q.attempts or 0) + 1
+
+
+@pytest.mark.parametrize("entry", ["row", "bulk"])
+def test_the_promoted_quick_sort_is_actually_scored_by_the_worker(make, entry):  # noqa: F811
+    """#220 review blocker: the queued Fit score must run, not be skipped by handle_t2 because
+    the role is still at `quarantined` and the task carried no score-again flag. Both route
+    entry points (per-row Try again and Try all again) end with a real Tier 2 Evaluation."""
+    from kestrel.config import get_settings
+    from kestrel.db.models import Evaluation
+    from kestrel.pipeline.tier2 import handle_t2
+    from kestrel.pipeline.worker import TierStats, Worker
+    from kestrel.web import app as app_module
+    from tests.pipeline_fakes import FakeLLM
+
+    app_module.set_paused(False)
+    client, oid, q = _dead_quick_sort(make)
+    if entry == "row":
+        r = client.post(f"/quarantine/{q.id}/retry",
+                        headers={**HX, "HX-Target": f"rt-row-{q.id}"})
+    else:
+        r = client.post("/quarantine/bulk", data={"ids": [str(q.id)]}, headers=HX)
+    assert r.status_code == 200
+
+    async def drain():
+        engine = make_async_engine(paths.db_path())
+        try:
+            sm = async_sessionmaker(engine, expire_on_commit=False)
+            settings = get_settings()
+            await Worker(sm, FakeLLM(settings), settings).drain_tier(
+                "t2", 1, handle_t2, TierStats())
+            async with sm() as s:
+                return list((await s.execute(select(Evaluation).where(
+                    Evaluation.opportunity_id == oid))).scalars())
+        finally:
+            await engine.dispose()
+
+    evals = asyncio.run(drain())
+    assert [e.tier for e in evals] == [2]

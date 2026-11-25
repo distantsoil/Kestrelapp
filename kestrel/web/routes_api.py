@@ -243,10 +243,17 @@ async def opportunities_ingest(request: Request):
     if from_extension and is_linkedin(url):
         # D-SRC-5: the extension never reads LinkedIn; a LinkedIn posting is pasted by hand.
         return JSONResponse({"error": "linkedin"}, status_code=422)
+    # The "from the browser extension" label follows the key check, never the Origin or the mere
+    # presence of the header: only a request that carries the shared key (the check every
+    # /api/extension route makes) is labeled (D-EXT-885).
+    from kestrel.web.auth import current_key, key_is_valid
+
+    key_ok = key_is_valid(request.headers.get("X-Kestrel-Key"), await current_key())
     async with sessionmaker()() as s:
         opp = await manual_ingest(
             s, url=url, text=text, title=_cut(body.title, INGEST_TITLE_MAX),
             org_name=_cut(body.org_name, INGEST_TITLE_MAX), track=body.track or "employment",
+            captured_via="extension" if key_ok else None,
         )
         if opp is not None and body.score_now:
             # Capture and score now (issue #186, D-EXT-746): the role's queued embed moves to the

@@ -8,7 +8,7 @@ import os
 
 import pytest
 
-from tests.browser import launch_sync, wait_for_app_ready
+from tests.browser import launch_sync, wait_for_app_ready, wait_for_layout
 from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.skipif(
@@ -222,3 +222,178 @@ def test_a_real_settings_save_during_a_run_shows_the_notice_and_stop_ends_the_ho
     finally:
         app_mod._release_run()
         app_mod.set_paused(False)
+
+
+# ------------------------------------------------ the run card says only what it stored
+# Settings > This computer, "How should Kestrel run?". Invariant: the card shows what is
+# stored, and a message that a choice was saved appears once, only when it was.
+_ONLINE_OFF_ROWS = {"enabled": False, "choice": "local", "mode": "local"}
+_ONLINE_ON_ROWS = {"enabled": True, "choice": "local", "mode": "local"}
+
+
+def _off_loop(fn):
+    """Run `fn` on its own thread: the browser owns this thread's event loop."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(fn).result()
+
+
+def _seed_online(*, enabled: bool, choice: str, mode: str) -> None:
+    """Online models set up once (disclosure accepted as it reads now, both scoring steps
+    assigned), switched on or off, with the run card rows as given."""
+    import asyncio
+
+    from kestrel.config import HostedMode
+    from kestrel.db.models import Setting
+    from kestrel.web.deps import sessionmaker
+
+    rows = {
+        "llm.hosted_mode.enabled": enabled,
+        "llm.hosted_mode.acknowledged_at": "2026-10-01T00:00:00+00:00",
+        "llm.hosted_mode.acknowledged_terms": HostedMode().disclosure_terms(),
+        "setup.run_choice": choice, "llm.mode": mode,
+    }
+    for tier in ("tier1", "tier2"):
+        rows[f"llm.hosted_tiers.{tier}.backend"] = "frontier"
+        rows[f"llm.hosted_tiers.{tier}.model"] = "invented/model-for-tests"
+
+    async def write():
+        async with sessionmaker()() as s:
+            for key, value in rows.items():
+                s.add(Setting(key=key, value=value))
+            await s.commit()
+
+    _off_loop(lambda: asyncio.run(write()))
+
+
+def _stored_choice():
+    import asyncio
+
+    from kestrel.db.models import Setting
+    from kestrel.web.deps import sessionmaker
+
+    async def read():
+        async with sessionmaker()() as s:
+            row = await s.get(Setting, "setup.run_choice")
+            return None if row is None else row.value
+
+    return _off_loop(lambda: asyncio.run(read()))
+
+
+_CARD = """() => ({
+  toasts: Array.from(document.querySelectorAll('.k-toast span')).map(e => e.textContent),
+  on: Array.from(document.querySelectorAll('.st-mc[aria-checked="true"]'))
+    .map(e => e.dataset.testid),
+  said: Array.from(document.querySelectorAll('[data-testid="st-mode-message"]'))
+    .filter(e => e.offsetParent !== null).map(e => e.textContent.trim()),
+})"""
+
+
+def _open_run_card(live, **viewport):
+    base, browser = live
+    page = browser.new_page(**viewport)
+    page.goto(f"{base}/settings#computer")
+    wait_for_app_ready(page)
+    page.wait_for_selector('[data-testid="st-mode-online"]')
+    return page
+
+
+def _press_and_wait_for_the_card(page, key: str, release=None) -> dict:
+    """Press one run card and wait until the card it answers with is on the page."""
+    page.evaluate("document.getElementById('st-mode').dataset.before = '1'")
+    page.click(f'[data-testid="st-mode-{key}"]')
+    if release is not None:
+        release()
+    page.wait_for_function("""() => { const card = document.getElementById('st-mode');
+        return !!card && card.dataset.before !== '1'; }""")
+    return page.evaluate(_CARD)
+
+
+def test_choosing_online_while_online_models_are_off_says_why_and_raises_no_toast(live):
+    """Online models set up, then switched off. Choosing Online model used to raise "Kestrel
+    will use an online model" with Undo and show On this computer again, and a second press
+    stacked a second one. Now nothing is stored, no toast is raised, and the card says why."""
+    from kestrel.services import setup_state as ss
+
+    _seed_online(**_ONLINE_OFF_ROWS)
+    page = _open_run_card(live)
+    for press in ("first", "second"):
+        seen = _press_and_wait_for_the_card(page, "online")
+        assert seen["toasts"] == [], press
+        assert seen["on"] == ["st-mode-local"], press
+        assert seen["said"] == [ss.ONLINE_OFF], press
+        assert _stored_choice() == "local", press
+    assert page.locator('[data-testid="st-online-models"]').is_visible()  # the place it names
+    page.reload()
+    wait_for_app_ready(page)
+    page.wait_for_selector('[data-testid="st-mode-online"]')
+    assert page.evaluate(_CARD) == {"toasts": [], "on": ["st-mode-local"], "said": []}
+
+
+def test_a_second_run_choice_pressed_while_the_first_is_in_flight_is_not_sent(live):
+    """Online models on. Online model is pressed, then Both before the answer is back: one
+    request, one message, and the card shows what is stored."""
+    _seed_online(**_ONLINE_ON_ROWS)
+    page = _open_run_card(live)
+    held: list = []
+
+    def hold(route):
+        if route.request.method == "POST":
+            held.append(route)  # answered only when the test lets it go
+        else:
+            route.continue_()
+
+    page.route("**/settings/computer/mode", hold)
+
+    def press_both_then_let_the_first_go():
+        page.wait_for_function("() => document.querySelectorAll('.htmx-request').length > 0")
+        page.click('[data-testid="st-mode-both"]')
+        held[0].continue_()
+
+    seen = _press_and_wait_for_the_card(page, "online", press_both_then_let_the_first_go)
+    assert len(held) == 1  # the second press sent nothing
+    assert seen["toasts"] == ["Kestrel will use an online model and ask before sending."]
+    assert seen["on"] == ["st-mode-online"] and _stored_choice() == "hosted"
+
+
+_FIT = """() => {
+  const card = document.getElementById('st-mode').getBoundingClientRect();
+  const said = document.querySelector('[data-testid="st-mode-message"]');
+  const box = said.getBoundingClientRect();
+  const hit = (a, b) => a.left < b.right - 1 && b.left < a.right - 1
+    && a.top < b.bottom - 1 && b.top < a.bottom - 1;
+  const others = [document.querySelector('#st-mode .st-modes'),
+                  document.querySelector('[data-testid="st-online-models-note"]')];
+  return {
+    sideways: document.documentElement.scrollWidth > innerWidth,
+    inside: box.left >= card.left && box.right <= card.right + 1 && box.height > 0,
+    clipped: said.scrollWidth > said.clientWidth + 1 || said.scrollHeight > said.clientHeight + 1,
+    overlaps: others.filter(e => hit(box, e.getBoundingClientRect())).length,
+    color: getComputedStyle(said).color,
+    plain: getComputedStyle(document.querySelector('[data-testid="st-online-models-note"]')).color,
+  };
+}"""
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1280, 390])
+def test_the_refusal_fits_the_card_in_both_schemes_wide_and_narrow(live, theme, width):
+    """The reason is whole, inside the card, over nothing, and reads as a refusal. Screenshots
+    go to the folder KESTREL_SHOTS names when it is set (never into the repository)."""
+    import pathlib
+
+    _seed_online(**_ONLINE_OFF_ROWS)
+    page = _open_run_card(live, viewport={"width": width, "height": 1000}, color_scheme=theme)
+    wait_for_layout(page)
+    _press_and_wait_for_the_card(page, "online")
+    wait_for_layout(page)
+    fit = page.evaluate(_FIT)
+    assert not fit["sideways"] and fit["inside"] and not fit["clipped"], (theme, width, fit)
+    assert fit["overlaps"] == 0 and fit["color"] != fit["plain"], (theme, width, fit)
+    root = os.environ.get("KESTREL_SHOTS")
+    if root:
+        folder = pathlib.Path(root) / "run-card-refusal"
+        folder.mkdir(parents=True, exist_ok=True)
+        page.locator("#st-mode").scroll_into_view_if_needed()
+        page.screenshot(path=str(folder / f"after-{theme}-{width}.png"))

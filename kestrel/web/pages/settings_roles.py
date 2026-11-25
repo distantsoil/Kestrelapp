@@ -160,16 +160,12 @@ async def rule_switch(request: Request):
     on = f.get("on") in ("1", "true", "on")
     key = f"tier0.rules_off.{track}"
     async with sessionmaker()() as s:
-        prev = await io.read(s, key)
-        off = await _rules_off(s, track)
-        was_on = d.rule not in off
-        if on == was_on:
-            ctx = await rules_ctx(request, track)
-            return _rules_card(request, ctx)
-        new = [r for r in off if r != d.rule] if on else [*off, d.rule]
-        now = io.ABSENT if not new else new
-        await io.write(s, key, now)
-        await s.commit()
+        # One owning change: it holds SQLite's write lock across the read and the write, so a
+        # second switch that reached the server at the same moment changes the list this one
+        # wrote instead of losing it or failing on a first write (#241).
+        prev, now, changed = await io.switch_rule(s, track, d.rule, on)
+    if not changed:
+        return _rules_card(request, await rules_ctx(request, track))
     if not on:
         await queue_rule_recheck(track)
     name = d.name if not d.number else sv.SHORT_NAMES[d.number]
