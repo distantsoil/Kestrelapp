@@ -36,6 +36,7 @@ class Channel:
         self._events: deque[tuple[int, str, list[Any]]] = deque(maxlen=EVENTS_KEPT)
         self._seq = 0
         self._cond = threading.Condition()
+        self._ending = False  # shutdown has begun: waits return instead of holding the server
         self.last_fetch: float | None = None  # monotonic time a page last asked for events
 
     def post(self, name: str, *args: Any) -> int:
@@ -52,16 +53,30 @@ class Channel:
         with self._cond:
             return self._seq
 
+    @property
+    def ending(self) -> bool:
+        """True once end_waits ran: the answer tells the page to stop asking."""
+        with self._cond:
+            return self._ending
+
+    def end_waits(self) -> None:
+        """Shutdown has begun: every current and later wait returns at once instead of
+        holding the server's graceful shutdown for its full timeout (the page keeps long
+        polling after the closing event, so the drain sat on a 20 s wait every time)."""
+        with self._cond:
+            self._ending = True
+            self._cond.notify_all()
+
     def after(self, after: int, timeout: float) -> tuple[int, list[list[Any]]]:
         """Events numbered above `after`, waiting up to `timeout` seconds for one. `after` below
         zero means "from now": the current number and no events, at once (a page that loads late
-        must not replay a closing screen or an old state)."""
+        must not replay a closing screen or an old state). Ends at once once shutdown began."""
         with self._cond:
             self.last_fetch = time.monotonic()
             if after < 0:
                 return self._seq, []
             if self._seq <= after:
-                self._cond.wait_for(lambda: self._seq > after, timeout=timeout)
+                self._cond.wait_for(lambda: self._seq > after or self._ending, timeout=timeout)
             self.last_fetch = time.monotonic()
             return self._seq, [[name, args] for seq, name, args in self._events if seq > after]
 

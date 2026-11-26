@@ -11,6 +11,9 @@
   <span class="k-dot{% if en.dot != 'good' %} k-dot--{{ en.dot }}{% endif %}"></span>
   <span>{% if en.href %}<a class="k-sstat__quiet" href="{{ en.href }}">{{ en.text }}</a>{% else %}{{ en.text }}{% endif %}{% if en.balance %} · <span data-rail="balance"{% if en.balance.state == 'warn' %} class="k-sstat__warn"{% endif %}>{{ en.balance.label }}</span>{% endif %}</span>
 </div>
+{# An extension capture notice is waiting (issue #267): this page claims it with a POST, whose
+   answer raises the toast. The GET that drew the rail changed nothing. #}
+{% if capture_waiting %}<div hidden data-testid="capture-claim" hx-post="/notifications/captured/claim" hx-trigger="load" hx-swap="none"></div>{% endif %}
 {# Out-of-band: the scan signal the toast container reads (D-UI-36). #}
 {% set sst = scan_state or {} %}
 <div id="scan-signal" hx-swap-oob="true" hidden data-ready="1" data-scanning="{{ 1 if sst.scanning else 0 }}"

@@ -79,6 +79,12 @@ HEALTH: dict[str, tuple[str, str]] = {  # key: (label, pill tone)
     "m": ("Paused", ""), "n": ("Not checked yet", ""),
 }
 SLOWED_REASON = "Site asked us to slow down. Retrying later."
+# D-UI-902, owner sign-off pending: the row a search the runner paused shows.
+AUTO_PAUSED_REASON = ("Kestrel switched this search off after three failed checks. "
+                      "Turn it back on for a clean slate.")
+# D-UI-902, owner sign-off pending: the Needs you tile's caption now that it counts the rows
+# the runner paused too.
+NEEDS_YOU_SUB = "Failed checks or a moved address"
 _RATE = re.compile(r"\b429\b|too many requests|rate.?limit|slow down", re.I)
 _MOVED = re.compile(r"\b(404|410)\b|not found|moved", re.I)
 
@@ -285,6 +291,19 @@ def body_lines(src: Source, counts: dict | None) -> list[dict]:
     return out
 
 
+def grade(src: Source, runs: list[ScrapeRun], sites: list[dict] | None) -> tuple[str, str, str]:
+    """(key, reason, raw) exactly as the row pill shows them, for a source on or off: the one
+    grading the Sources page and the menu's failing count both call (D-UI-904 review), so the
+    rail count and the Needs you tile cannot diverge - a runner-paused three-failure row whose
+    last check is partial grades Needs you here and is counted there."""
+    auto_paused = not src.enabled and src.consecutive_failures >= 3 and src.origin != "retired"
+    key, reason, raw = _health(src, runs, sites) if src.enabled else (
+        ("b", AUTO_PAUSED_REASON, "") if auto_paused else ("m", "", ""))
+    if not src.enabled and _no_boards(src):
+        reason = _NO_BOARDS_REFUSED()  # off, and the row still says why and what to do
+    return key, reason, raw
+
+
 def build_view(
     src: Source, runs: list[ScrapeRun], *, summary: str = "", sites: list[dict] | None = None
 ) -> SourceView:
@@ -292,9 +311,7 @@ def build_view(
     from kestrel.services import run_model as _run_model
 
     origin = origin_of(src)
-    key, reason, raw = _health(src, runs, sites) if src.enabled else ("m", "", "")
-    if not src.enabled and _no_boards(src):
-        reason = _NO_BOARDS_REFUSED()  # off, and the row still says why and what to do
+    key, reason, raw = grade(src, runs, sites)
     done = [r for r in runs if r.status != "running"]
     latest = done[0] if done else None
     counts = (latest.counts or {}) if latest is not None else {}
@@ -333,10 +350,12 @@ def build_view(
 
 
 def health_counts(views: list[SourceView]) -> dict[str, int]:
-    """Healthy, Slowed down and Needs you count only sources that are on."""
+    """Healthy, Slowed down and Needs you count what the operator must hear about: the on rows,
+    and a search the runner switched off after three failed checks (issue 256) - the same rows
+    the menu's failing_sources counts."""
     out = {"g": 0, "w": 0, "b": 0}
     for v in views:
-        if v.enabled and v.health in out:
+        if v.health in out and (v.enabled or v.health == "b"):
             out[v.health] += 1
     return out
 

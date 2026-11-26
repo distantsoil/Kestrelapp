@@ -9,7 +9,14 @@ so both name the same single step and never a list.
   score is older than that moment.
 - It is not set (the points were typed by hand, or there are none): the roles scored while the
   profile had no proof points at all. A profile that has proof points and no stamp counts zero,
-  because nothing says when they arrived."""
+  because nothing says when they arrived.
+
+A role whose Score again already ran since that moment (its task finished or gave up) is not
+counted again, even when the run wrote no new score: a posting with no text is skipped and a failed
+attempt keeps the old score, and both are shown where they always are (issue #253). Otherwise the
+same roles were queued on every press and the notice never went away. Dismiss hides the Score
+again notice for the track until the proof points change again (`DISMISSED_KEY` holds the stamp
+that was dismissed)."""
 
 from __future__ import annotations
 
@@ -30,6 +37,10 @@ from kestrel.web.fit import EMPTY_POSTING_STAGE_REASON
 log = structlog.get_logger()
 
 KEY = "proof_points_changed_at"
+DISMISSED_KEY = "proof_points_notice_dismissed"
+# {track: {"stamp": the proof-points stamp, "ids": roles the notice's Score again queued for it}}.
+# Kept in a setting, not read from task rows: prune deletes finished tasks (review of #253).
+TRIED_KEY = "proof_points_rescored"
 DOCS_HREF = "/profile?tab=documents"
 UNREADABLE_LINE = ("Your profile file could not be read, so Kestrel is scoring without it. "
                    "Open Profile to fix it.")
@@ -56,6 +67,8 @@ class Readiness:
     link_label: str = ""
     link_href: str = ""
     role_ids: list[int] = field(default_factory=list)
+    # The proof-points stamp this readiness was read for; Dismiss posts it back (review of #253).
+    stamp: str = ""
 
     @property
     def show_notice(self) -> bool:
@@ -77,8 +90,10 @@ def _roles(n: int) -> str:
 def assess(
     profile: Any, *, track: str = "employment", has_resume: bool,
     scored: list[tuple[int, str]], changed_at: str | None, unreadable: bool = False,
+    dismissed: bool = False,
 ) -> Readiness:
-    """`scored` is (role id, when its latest Tier 2 score was made) for the track's scored roles."""
+    """`scored` is (role id, when its latest Tier 2 score was made) for the track's scored roles.
+    `dismissed`: the person dismissed the Score again notice for this `changed_at`."""
     proofs = list(_get(profile, "proof_points") or [])
     has_proof = bool(proofs)
     has_narrative = bool(str(_get(profile, "narrative") or "").strip())
@@ -113,7 +128,7 @@ def assess(
         line = f"Add the {what} so Kestrel knows what to look for."
         link_label = "Add them"
         link_href = f"/profile?tab={track}&track={track}"
-    elif stale and has_proof:
+    elif stale and has_proof and not dismissed:
         step = SCORE_AGAIN
         line = f"{_roles(len(stale)).capitalize()} scored before your proof points."
         link_label = "Score again"
@@ -123,7 +138,7 @@ def assess(
         has_resume=has_resume, has_proof_points=has_proof, has_narrative=has_narrative,
         has_target_titles=has_titles, roles_scored_before_proof_points=len(stale),
         next_step=step, line=line, link_label=link_label, link_href=link_href,
-        role_ids=stale if step == SCORE_AGAIN else [],
+        role_ids=stale if step == SCORE_AGAIN else [], stamp=changed_at or "",
     )
 
 
@@ -132,6 +147,66 @@ async def changed_at(session: AsyncSession, track: str) -> str | None:
     value = row.value if row is not None else None
     stamp = value.get(track) if isinstance(value, dict) else None
     return stamp if isinstance(stamp, str) and stamp else None
+
+
+async def dismissed_at(session: AsyncSession, track: str) -> str | None:
+    """The proof-points stamp whose Score again notice the person dismissed on `track`."""
+    row = await session.get(Setting, DISMISSED_KEY)
+    value = row.value if row is not None else None
+    stamp = value.get(track) if isinstance(value, dict) else None
+    return stamp if isinstance(stamp, str) and stamp else None
+
+
+async def dismiss_score_again(session: AsyncSession, track: str, shown: str | None) -> bool:
+    """Hide the Score again notice on `track` until the proof points change again (the caller
+    commits). `shown` is the stamp the pressed notice was shown for: a press on a notice older
+    than the current stamp, or with none, stores nothing (review of #253). False when nothing
+    was stored."""
+    stamp = await changed_at(session, track)
+    if stamp is None or not shown or shown != stamp:
+        return False
+    row = await session.get(Setting, DISMISSED_KEY)
+    value = dict(row.value) if row is not None and isinstance(row.value, dict) else {}
+    value[track] = stamp
+    if row is None:
+        session.add(Setting(key=DISMISSED_KEY, value=value))
+    else:
+        row.value = value
+        row.updated_at = utcnow_iso()
+    return True
+
+
+async def tried_ids(session: AsyncSession, track: str, stamp: str) -> set[int]:
+    """The roles the notice's Score again already queued for `stamp` on `track`. The stored value
+    is read through our own shape (D-SEC-20): anything else (a restored backup, a hand edit)
+    reads as nothing tried, is logged, and never raises (review round 3)."""
+    row = await session.get(Setting, TRIED_KEY)
+    value = row.value if row is not None else None
+    entry = value.get(track) if isinstance(value, dict) else None
+    if row is not None and not (isinstance(value, dict) and (entry is None or isinstance(
+            entry, dict) and isinstance(entry.get("ids"), list))):
+        log.warning("proof_points_rescored_malformed", track=track)
+    if not isinstance(entry, dict) or entry.get("stamp") != stamp:
+        return set()
+    ids = entry.get("ids")
+    if not isinstance(ids, list):
+        return set()
+    return {i for i in ids if isinstance(i, int) and not isinstance(i, bool) and i > 0}
+
+
+async def record_tried(session: AsyncSession, track: str, stamp: str, ids: list[int]) -> None:
+    """Remember that the notice's Score again queued `ids` for `stamp` (the caller commits), so
+    they are not offered again for it even after prune removes their finished tasks. A newer
+    stamp replaces the record."""
+    row = await session.get(Setting, TRIED_KEY)
+    value = dict(row.value) if row is not None and isinstance(row.value, dict) else {}
+    old = await tried_ids(session, track, stamp)
+    value[track] = {"stamp": stamp, "ids": sorted(old | {int(i) for i in ids})}
+    if row is None:
+        session.add(Setting(key=TRIED_KEY, value=value))
+    else:
+        row.value = value
+        row.updated_at = utcnow_iso()
 
 
 async def mark_proof_points_changed(session: AsyncSession, track: str) -> None:
@@ -211,8 +286,24 @@ async def _gather(
             .where(Task.type.in_(("t1", "t2")), Task.status.in_(("pending", "leased")))
         )).scalars() if v is not None
     }
+    stamp = await changed_at(session, track)
+    if stamp:
+        # A role whose Score again already ran since the proof points changed had its chance; a
+        # run that wrote no new score (skipped or failed) is not queued again (issue #253). Only
+        # a Score again counts: an automatic task can skip without reading the new points.
+        waiting |= {
+            int(v) for v in (await session.execute(
+                select(Task.opportunity_id)
+                .where(Task.type.in_(("t1", "t2")), Task.status.in_(("done", "dead")),
+                       Task.created_at >= stamp,
+                       func.json_extract(Task.payload, "$.rescore").is_(True))
+            )).scalars() if v is not None
+        }
+        # The same fact once prune has removed those tasks: the notice's own presses.
+        waiting |= await tried_ids(session, track, stamp)
     return assess(
         profile, track=track, has_resume=has_resume,
         scored=[(int(oid), str(at)) for oid, at in rows if int(oid) not in waiting],
-        changed_at=await changed_at(session, track), unreadable=unreadable,
+        changed_at=stamp, unreadable=unreadable,
+        dismissed=stamp is not None and await dismissed_at(session, track) == stamp,
     )

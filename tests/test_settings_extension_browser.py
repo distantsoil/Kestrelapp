@@ -203,8 +203,74 @@ def test_not_connected_yet_before_the_extension_has_called(live):
     ctx, page, errors = _open(live, "light", 1280)
     try:
         assert page.inner_text('[data-testid="xt-status"]') == "Not connected yet"
-        assert page.get_attribute('[data-testid="xt-get-chrome"]', "href") == "/help"
+        # The Chrome listing is live and opens in the browser; Firefox opens Help (D-EXT-960).
+        chrome = '[data-testid="xt-get-chrome"]'
+        assert page.get_attribute(chrome, "href") == (
+            "https://chromewebstore.google.com/detail/kestrel-capture/"
+            "fdnolbohdjgelmfbhkbedlbjckfebaib")
+        assert page.get_attribute(chrome, "target") == "_blank"
+        assert page.get_attribute(chrome, "rel") == "noopener noreferrer"
         assert page.get_attribute('[data-testid="xt-get-firefox"]', "href") == "/help"
+        assert page.get_attribute('[data-testid="xt-get-firefox"]', "target") is None
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1280, 420])
+def test_the_status_turns_connected_without_a_reload(live, theme, width):
+    """Issue #265: Settings open on Browser extension while the extension connects. The pill
+    follows the extension's first call; the person does not have to reload the page."""
+    from kestrel.services import extension as ext
+
+    ext.reset_seen_throttle()  # this test's precondition: the next keyed call writes the note
+    base = live[0]
+    ctx, page, errors = _open(live, theme, width)
+    try:
+        status = page.locator('[data-testid="xt-status"]')
+        assert status.inner_text() == "Not connected yet"
+        page.evaluate("window.__sameDocument = true")
+        key = page.request.post(f"{base}/settings/extension/key").json()["key"]
+        r = page.request.get(f"{base}/api/extension/config", headers={"X-Kestrel-Key": key})
+        assert r.ok, r.status
+        # htmx keeps the old class while it settles (so the color transition runs): wait for the
+        # swap to have settled, then judge the words and the tone together.
+        page.wait_for_function(
+            "() => { const el = document.querySelector('[data-testid=\"xt-status\"]');"
+            " return el.innerText.startsWith('Connected')"
+            " && !el.classList.contains('htmx-settling'); }")
+        assert page.evaluate("window.__sameDocument === true"), "the page was reloaded"
+        assert "k-pill--good" in (status.get_attribute("class") or "")
+        _assert_clean(page, ("connected live", theme, width))
+        page.wait_for_timeout(450)  # the pill's color transition has finished, for the picture
+        page.screenshot(path=str(_SHOTS / f"app-settings-extension-live-{theme}-{width}.png"),
+                        full_page=True)
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_status_poll_sends_nothing_while_another_section_is_shown(live):
+    """Codex review 3: once the person moves to another section, the hidden pill's poll still
+    fires on its timer but sends no request; it asks Kestrel again only while it is shown."""
+    ctx, page, errors = _open(live, "light", 1280)
+    try:
+        sent: list[str] = []
+        page.on("request", lambda r: sent.append(r.url)
+                if "/settings/extension/status" in r.url else None)
+        page.evaluate("""() => { window.__xtFired = 0;
+          document.addEventListener('htmx:beforeRequest', e => {
+            if (e.detail && e.detail.elt && e.detail.elt.id === 'xt-status') window.__xtFired++;
+          }, true); }""")
+        page.click('[data-testid="st-nav-computer"]')
+        page.wait_for_selector(f"{SEC}[hidden]", state="attached")
+        sent.clear()
+        page.wait_for_function("() => window.__xtFired >= 2")  # two poll ticks while hidden
+        assert sent == [], sent
+        # Shown again, it asks again on its next tick.
+        with page.expect_request(lambda r: "/settings/extension/status" in r.url):
+            page.click('[data-testid="st-nav-extension"]')
         assert not errors, errors
     finally:
         ctx.close()

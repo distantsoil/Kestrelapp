@@ -24,6 +24,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+import structlog
 from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +38,8 @@ from kestrel.learning.correction_lines import (
 from kestrel.pipeline.tasks import enqueue_once
 from kestrel.queue.queue import RESTART_REFUND_TYPES
 from kestrel.services.run_model import T2_ONLY_KEY
+
+log = structlog.get_logger()
 
 MAX_ROLES = 200
 # Ahead of the normal flow (whose priority is pre_score * 100, at most a few hundred): the
@@ -239,7 +242,32 @@ async def enqueue_rescore(
                 result.already.append(oid)
             continue
         result.queued.append(oid)
+    await _record_tried(session, rows, [*result.queued, *result.already, *result.running])
     return result
+
+
+async def _record_tried(session: AsyncSession, rows: dict, ids: list[int]) -> None:
+    """Every Score again, from any page, is remembered for the profile notice "scored before your
+    proof points" under the current proof-points stamp of the role's track, in the CALLER's
+    session (issue #253, review round 2). The notice reads it after prune has deleted the
+    finished task rows, so a role already tried is not offered again."""
+    from kestrel.services.profile_readiness import changed_at, record_tried
+
+    by_track: dict[str, list[int]] = {}
+    for oid in ids:
+        opp = rows.get(oid)
+        if opp is not None and opp.track:
+            by_track.setdefault(opp.track, []).append(oid)
+    for track, tried in by_track.items():
+        try:
+            stamp = await changed_at(session, track)
+            if stamp:
+                await record_tried(session, track, stamp, tried)
+        except (TypeError, ValueError, AttributeError) as exc:
+            # The notice's bookkeeping never aborts the person's Score again (review round 3):
+            # the tasks staged above stay, and the notice may offer these roles once more.
+            log.warning("rescore_tried_record_failed", track=track,
+                        error_type=type(exc).__name__)
 
 
 def _require_confirmed(

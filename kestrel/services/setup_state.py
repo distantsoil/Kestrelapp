@@ -976,29 +976,46 @@ def _record_hosted_profile() -> None:
         )
 
 
+def run_card_rows(choice: str, *, hosted_ready: bool) -> dict[str, Any]:
+    """THE mapping from a run choice to the rows that store it (#227, D-PRIV-881): the card
+    choice, and `llm.mode` with it. On this computer and Both run the everyday steps here, so the
+    mode is local. Online model is hosted once online models can run (`hosted_ready`); before
+    that the mode row is not named, so it stays as it is. `set_run_mode` writes exactly these
+    rows, and the rows Connect and `kestrel setup --hosted` write take their pair from here
+    (setup.hosted_rows), so no writer can store one row of the pair without the other."""
+    if choice not in CHOICES:
+        raise ValueError(f"unknown run choice {choice!r}; expected one of {', '.join(CHOICES)}")
+    rows: dict[str, Any] = {CHOICE_KEY: choice}
+    if choice != "hosted":
+        rows[MODE_KEY] = "local"
+    elif hosted_ready:
+        rows[MODE_KEY] = "hosted"
+    return rows
+
+
 async def set_run_mode(session: AsyncSession, choice: str, settings: Settings) -> str:
-    """Write the card choice, and `llm.mode`: local for Local and Both; hosted for Hosted only
-    when `hosted_mode_problem` reports none (the same rule as the Settings switch and the CLI),
-    otherwise the mode row is left as it is and the page says hosted applies once step 6 is
-    complete. Returns the message for the page. The caller commits."""
+    """THE writer of the run choice (#227): every page that changes how Kestrel runs calls this
+    (the run card, the Online models switch, Turn off, onboarding and Setup). It writes the rows
+    `run_card_rows` names: the card choice, and `llm.mode`: local for Local and Both; hosted for
+    Hosted only when `hosted_mode_problem` reports none (the same rule as the CLI), otherwise the
+    mode row is left as it is and the page says hosted applies once step 6 is complete. It never
+    writes a consent row. Returns the message for the page. The caller commits."""
     if choice not in CHOICES:
         raise ValueError(f"unknown run choice {choice!r}; expected one of {', '.join(CHOICES)}")
     found = await session.execute(
         select(Setting.key, Setting.value).where(Setting.key.in_((MODE_KEY, CHOICE_KEY))))
     was = run_choice(settings, {k: v for k, v in found.all()})[0]
-    await _set(session, CHOICE_KEY, choice)
+    problem = hosted_mode_problem(settings) if choice == "hosted" else None
+    for key, value in run_card_rows(choice, hosted_ready=problem is None).items():
+        await _set(session, key, value)
     if was == "hosted" and choice != "hosted":
         await _set(session, RECHECK_OWED_KEY, True)  # the old report is from before; check again
     if choice == "local":
-        await _set(session, MODE_KEY, "local")
         return "Kestrel runs on local models. Steps 2 to 5 apply."
     if choice == "both":
-        await _set(session, MODE_KEY, "local")
         return "Local models for daily runs, a hosted set ready to switch to. Steps 2 to 7 apply."
     await asyncio.to_thread(_record_hosted_profile)
-    problem = hosted_mode_problem(settings)
     if problem is None:
-        await _set(session, MODE_KEY, "hosted")
         return "Kestrel runs on hosted models."
     return f"{HOSTED_PENDING} under Settings > This computer: {problem}."
 

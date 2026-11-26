@@ -326,7 +326,8 @@ def bell_unread() -> int:
         try:
             conn.execute("PRAGMA busy_timeout=2000")
             return int(conn.execute(
-                "SELECT count(*) FROM notification WHERE read_at IS NULL").fetchone()[0])
+                "SELECT count(*) FROM notification WHERE read_at IS NULL"
+                " AND dismissed_at IS NULL").fetchone()[0])
         finally:
             conn.close()
     except sqlite3.Error:

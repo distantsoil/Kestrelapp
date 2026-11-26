@@ -273,7 +273,7 @@
         <div class="ob-ideas"><span class="ob-dsm">From your headline:</span>
           <button class="ob-sug" type="button" data-ob-sug="target_titles" data-v="{{ w_headline }}">{{ ui.icon('plus', 'k-ic--sm') }}{{ w_headline }}</button></div>
         {% endif %}
-        <div hx-params="none" hx-target="#title-suggestions"><div id="title-suggestions" hx-get="/profile/title-suggestions" hx-trigger="load" hx-swap="outerHTML"></div></div>
+        <div id="title-suggestions-slot" hx-params="none" hx-target="#title-suggestions"><div id="title-suggestions" hx-get="/profile/title-suggestions" hx-trigger="load" hx-swap="outerHTML"></div></div>
       </div>
       <div class="ob-two">
         <div><div class="ob-sec">Pay minimum</div>

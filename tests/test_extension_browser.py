@@ -517,9 +517,9 @@ def test_nothing_waiting_and_not_running(live, scheme, tmp_path):
     try:
         _features(page, live["port"], waiting=False)
         page.reload()
-        page.wait_for_selector("text=Capture this role")
+        page.wait_for_selector("text=Capture and score now")  # the main button (#269)
         page.click("button[aria-label='More ways to capture']")
-        page.wait_for_selector("text=Capture and score now")
+        page.wait_for_selector("text=Capture this role")
         _shot(page, f"popup-nothing-waiting-{scheme}")
         _features(page, live["port"], waiting=True)
         _store(helper, {"port": 1, "secret": KEY})  # nothing listens there
@@ -531,6 +531,188 @@ def test_nothing_waiting_and_not_running(live, scheme, tmp_path):
     except Exception:
         _failure_artifacts(page, f"popup-nothing-waiting-{scheme}", tmp_path)
         raise
+
+
+FRESH_PATH = "/jobs/301"
+FRESH_TITLE = "Depot Scheduler"
+
+
+def _fresh_posting(live) -> str:
+    """A posting Kestrel does not know yet, on the test board, and the switch that would offer
+    waiting roles turned off, so the popup opens on the capture screen. Each test sets both."""
+    _Board.pages[FRESH_PATH] = _posting_html(f"{FRESH_TITLE} | Sample board", WORDS)
+    return f"http://127.0.0.1:{live['board']}{FRESH_PATH}"
+
+
+def _captured(url: str) -> tuple[int, int | None] | None:
+    """(role id, its queued embed's priority) for the role stored for `url`, or None."""
+    import sqlite3
+
+    from kestrel import paths
+
+    con = sqlite3.connect(str(paths.db_path()))
+    try:
+        row = con.execute("SELECT id FROM opportunity WHERE url = ?", (url,)).fetchone()
+        if row is None:
+            return None
+        task = con.execute(
+            "SELECT priority FROM task WHERE type = 'embed' AND "
+            "json_extract(payload, '$.opportunity_id') = ?", (row[0],)).fetchone()
+        return row[0], (task[0] if task else None)
+    finally:
+        con.close()
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_capture_scores_now_by_default(live, scheme, tmp_path):
+    """Issue #269: the main button is Capture and score now; the menu still offers a plain
+    capture and Paste it in Kestrel instead."""
+    from kestrel.queue.rescore import RESCORE_PRIORITY
+
+    helper, _ = _ext_page(live, "options.html")
+    _store(helper, {"port": live["port"], "secret": KEY})
+    _features(helper, live["port"], waiting=False)
+    url = _fresh_posting(live)
+    tab, page, errors = _popup_for(live, url, scheme, "capture")
+    try:
+        main = page.locator("button.primary.main")
+        main.wait_for()
+        assert main.inner_text().strip() == "Capture and score now"
+        page.click("button[aria-label='More ways to capture']")
+        menu = page.locator(".menu[role='menu']")
+        menu.wait_for()
+        texts = menu.locator("[role='menuitem']").all_inner_texts()
+        items = [t.split("\n")[0].strip() for t in texts]
+        assert items == ["Capture this role", "Paste it in Kestrel instead"], items
+        _no_overlap(page, "capture menu")
+        _shot(page, f"popup-capture-menu-{scheme}")
+        page.keyboard.press("Escape")
+        main.click()
+        page.wait_for_selector("text=Added. It's first in Kestrel's queue.")
+        got = _captured(url)
+        assert got is not None, "the capture stored no role"
+        assert got[1] == RESCORE_PRIORITY, got
+        _no_overlap(page, "captured")
+        _shot(page, f"popup-captured-{scheme}")
+        assert not errors
+    except Exception:
+        _failure_artifacts(page, f"popup-capture-default-{scheme}", tmp_path)
+        raise
+    finally:
+        _features(helper, live["port"], waiting=True)
+        helper.close()
+        tab.close()
+
+
+@pytest.mark.parametrize("plain", [False, True], ids=["score-now", "plain"])
+def test_capture_ends_with_a_link_to_the_role(live, plain, tmp_path):
+    """Issue #270: either capture ends with its result and Open in Kestrel, which opens the role
+    that capture stored, in Kestrel on this computer."""
+    helper, _ = _ext_page(live, "options.html")
+    _store(helper, {"port": live["port"], "secret": KEY})
+    _features(helper, live["port"], waiting=False)
+    url = _fresh_posting(live)
+    tab, page, errors = _popup_for(live, url, "light", "capture link")
+    try:
+        if plain:
+            page.click("button[aria-label='More ways to capture']")
+            page.get_by_role("menuitem", name=re.compile("^Capture this role")).click()
+            page.wait_for_selector("#confirm >> text=Added to Kestrel.")
+        else:
+            page.locator("button.primary.main").click()
+            page.wait_for_selector("#confirm >> text=Added. It's first in Kestrel's queue.")
+        got = _captured(url)
+        assert got is not None, "the capture stored no role"
+        link = page.locator("#confirm").get_by_role("button", name="Open in Kestrel ↗")
+        link.wait_for()
+        with live["ctx"].expect_page() as opened:
+            link.click()
+        role = opened.value
+        want = f"{live['base']}/opportunities/{got[0]}"
+        role.wait_for_url(want, wait_until="commit")
+        assert role.url == want, role.url
+        role.close()
+        _no_overlap(page, "capture link")
+        _shot(page, f"popup-capture-link-{'plain' if plain else 'score-now'}")
+        assert not errors
+    except Exception:
+        _failure_artifacts(page, f"popup-capture-link-{plain}", tmp_path)
+        raise
+    finally:
+        _features(helper, live["port"], waiting=True)
+        helper.close()
+        tab.close()
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_a_refused_capture_says_what_went_wrong(live, scheme, tmp_path):
+    """Issue #270: a capture Kestrel refused names the reason and offers no link."""
+    helper, _ = _ext_page(live, "options.html")
+    _store(helper, {"port": live["port"], "secret": KEY})
+    _features(helper, live["port"], waiting=False)
+    url = _fresh_posting(live)
+    tab, page, errors = _popup_for(live, url, scheme, "capture refused")
+    try:
+        main = page.locator("button.primary.main")
+        main.wait_for()
+        _store(helper, {"secret": "not-the-key"})  # the key changed in Kestrel since setup
+        main.click()
+        page.locator("#confirm [role='alert']").get_by_text(
+            "Kestrel didn't accept that key. Copy it again from Settings, Browser extension."
+        ).wait_for()
+        assert page.locator("#confirm").get_by_role("button", name="Open in Kestrel ↗").count() == 0
+        assert _captured(url) is None
+        _no_overlap(page, "capture refused")
+        _shot(page, f"popup-capture-refused-{scheme}")
+        _store(helper, {"secret": KEY, "port": 1})  # nothing listens there: Kestrel is closed
+        main.click()
+        page.locator("#confirm [role='alert']").get_by_text(
+            "Open Kestrel on this computer, then try again.").wait_for()
+        assert _captured(url) is None
+        _shot(page, f"popup-capture-offline-{scheme}")
+        assert not errors
+    except Exception:
+        _failure_artifacts(page, f"popup-capture-refused-{scheme}", tmp_path)
+        raise
+    finally:
+        _store(helper, {"port": live["port"], "secret": KEY})
+        _features(helper, live["port"], waiting=True)
+        helper.close()
+        tab.close()
+
+
+def _background(live, helper):
+    """The extension's service worker, woken by a message from one of its pages first (a worker
+    that idled out is started again by the message). Waits on the worker, never on time."""
+    helper.evaluate("chrome.runtime.sendMessage({type: 'wake'}).catch(() => null)")
+    mine = f"chrome-extension://{live['id']}/"
+    for sw in live["ctx"].service_workers:
+        if sw.url.startswith(mine):
+            return sw
+    return live["ctx"].wait_for_event(
+        "serviceworker", predicate=lambda w: w.url.startswith(mine), timeout=30_000)
+
+
+def test_right_click_capture_scores_now(live):
+    """Owner, item 66 (2026-11-25, "Yes, score now too"): Capture this page into Kestrel on the
+    right-click menu captures and scores now, like the popup's main button (#269)."""
+    from kestrel.queue.rescore import RESCORE_PRIORITY
+
+    helper, _ = _ext_page(live, "options.html")
+    _store(helper, {"port": live["port"], "secret": KEY})
+    url = _fresh_posting(live)
+    tab = live["ctx"].new_page()
+    tab.goto(url)
+    try:
+        tid = _tab_id(helper, url)
+        sw = _background(live, helper)
+        sw.evaluate("async id => captureFromMenu(await chrome.tabs.get(id))", tid)
+        got = _captured(url)
+        assert got is not None, "the right-click capture stored no role"
+        assert got[1] == RESCORE_PRIORITY, got
+    finally:
+        helper.close()
+        tab.close()
 
 
 def test_pages_cannot_reach_any_other_host(live):

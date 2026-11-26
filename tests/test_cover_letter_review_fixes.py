@@ -14,6 +14,7 @@ Only `LLMClient.complete` and the browser PDF call are faked. Nothing reaches th
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 
@@ -234,7 +235,10 @@ def test_a_draft_cut_short_by_a_quit_resumes_from_its_task_row(ids, monkeypatch)
     real = role_page._make_draft
 
     async def life():
+        drafting = asyncio.Event()
+
         async def hang(opp_id):
+            drafting.set()
             await asyncio.Event().wait()
 
         monkeypatch.setattr(role_page, "_make_draft", hang)
@@ -243,11 +247,15 @@ def test_a_draft_cut_short_by_a_quit_resumes_from_its_task_row(ids, monkeypatch)
             queued = await c.post(GEN.format(ids["strong"]), data={})
             assert "data-watching" in queued.text, "the request only queues the draft"
             worker = asyncio.create_task(role_page.run_letter_drafts())
-            for _ in range(100):
-                await asyncio.sleep(0.1)
-                if any(t.status == "leased" for t in await _poll()):
-                    break
+            # Quit while the draft runs, not while the worker is still between its lease and the
+            # draft: a cancel there leaves a query on the database thread, which answers after
+            # this loop has closed ("Event loop is closed" in the aiosqlite thread, D-TEST-870).
+            waiting = asyncio.create_task(drafting.wait())
+            await asyncio.wait({worker, waiting}, return_when=asyncio.FIRST_COMPLETED)
+            assert drafting.is_set(), f"the worker ended before drafting: {worker.result()!r}"
             worker.cancel()  # the app quits: the worker stops with the loop, the row stays
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker  # its cancel finishes on this loop, before the loop closes
 
     asyncio.run(life())
     (left,) = _tasks()

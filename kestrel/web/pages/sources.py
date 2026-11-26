@@ -506,7 +506,10 @@ async def _panel_ctx(
         for s in sources
     ]
     counts = sv.health_counts(views)
-    on_total = sum(1 for v in views if v.enabled)
+    # The tiles' ring pool: the sources that are on plus a search the runner paused after three
+    # failed checks - it is graded Needs you (issue 256), so the rings count it too. The
+    # header's on/paused split keeps its own meaning below.
+    tile_pool = sum(1 for v in views if v.enabled or v.health == "b")
     # Pre-rendered JSON for each row's edit form, built here so the template needs no filter.
     config_text = {s.id: json.dumps(s.config or {}, indent=2) for s in sources}
     ctx = {
@@ -515,13 +518,13 @@ async def _panel_ctx(
         "views": views,
         "groups": _groups(track, views),
         "paused": [v for v in views if not v.enabled],
-        "n_on": on_total,
-        "n_paused": len(views) - on_total,
+        "n_on": sum(1 for v in views if v.enabled),
+        "n_paused": sum(1 for v in views if not v.enabled),
         "health": [
             {"key": k, "n": counts[k], "label": sv.HEALTH[k][0], "sub": sub,
-             **sv.ring(counts[k], on_total)}
+             **sv.ring(counts[k], tile_pool)}
             for k, sub in (("g", "Working normally"), ("w", "A site asked Kestrel to wait"),
-                           ("b", "Address moved or removed"))
+                           ("b", sv.NEEDS_YOU_SUB))
         ],
         "type_options": [("", "All types")] + [(k, t) for k, t, _d in sv.GROUPS[track]],
         "origins": sv.ORIGINS,

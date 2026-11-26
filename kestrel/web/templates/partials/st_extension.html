@@ -18,8 +18,7 @@
   </ol>
 </div>
 
-{% if xt_connected %}<span class="k-pill k-pill--good st-xstat" role="status" data-testid="xt-status"><i class="st-xdot" aria-hidden="true"></i>Connected{% if xt_seen %} · {{ xt_seen }}{% endif %}</span>
-{% else %}<span class="k-pill st-xstat" role="status" data-testid="xt-status"><i class="st-xdot" aria-hidden="true"></i>Not connected yet</span>{% endif %}
+{% include "partials/st_xt_status.html" %}
 
 <section class="k-card st-card" id="st-xt-add" data-testid="xt-add">
   <header class="k-sec-head st-head"><span class="st-xnum" aria-hidden="true">1</span><div class="k-grow"><h3>Add it to your browser</h3></div></header>

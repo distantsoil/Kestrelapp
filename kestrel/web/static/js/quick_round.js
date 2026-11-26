@@ -51,6 +51,7 @@
     });
     var front = S.cards[S.idx];
     if (front) front.setAttribute('tabindex', '0');
+    markExcerptTabs();
     drawPips();
   }
 
@@ -67,9 +68,30 @@
     full.hidden = !on;
     full.tabIndex = on ? 0 : -1;
     if (on) full.scrollTop = 0;
+    /* The excerpt comes back on Less: re-mark its tab stop here, because a resize while the
+       text was open marked the hidden excerpt -1 and layout() does not run on Less (issue 252
+       review). */
+    var ex = c.querySelector('.qr-desc__excerpt');
+    if (ex) ex.tabIndex = !on && ex.scrollHeight > ex.clientHeight + 1 ? 0 : -1;
+    if (!on) {
+      /* The close transitions move the title and the open row, which change the excerpt's room
+         as they settle, so the sync read above can lie mid-flight; re-mark at rest. With motion
+         off no transition runs and the sync read is the truth. */
+      c.addEventListener('transitionend', markExcerptTabs, { once: true });
+    }
     /* The name is the visible word (More, Less: label in name); aria-expanded carries the state. */
     b.setAttribute('aria-expanded', on ? 'true' : 'false');
     b.firstElementChild.textContent = on ? 'Less' : 'More';
+  }
+
+  /* The collapsed excerpt is a keyboard scroll region only while it overflows (issue 252): a
+     tab stop when text waits behind the cap, no dead stop when it does not. */
+  function markExcerptTabs() {
+    if (!S) return;
+    S.cards.forEach(function (c) {
+      var ex = c.querySelector('.qr-desc__excerpt');
+      if (ex) ex.tabIndex = ex.scrollHeight > ex.clientHeight + 1 ? 0 : -1;
+    });
   }
 
   /* The pips and the count only: safe while a card is flying out. */
@@ -314,10 +336,11 @@
     if (!S || e.defaultPrevented) return;
     var tag = e.target && e.target.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-    /* Up and Down scroll the posting while focus is inside the open text (D-UI-332); every
-       other arrow, and focus anywhere else, keeps its round meaning. */
+    /* Up and Down scroll the posting while focus is inside the open text (D-UI-332), and inside
+       the collapsed excerpt (issue 252); every other arrow, and focus anywhere else, keeps its
+       round meaning. */
     if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && e.target.closest &&
-        e.target.closest('.qr-desc__full')) return;
+        e.target.closest('.qr-desc__full, .qr-desc__excerpt')) return;
     if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'z' || e.key === 'Z')) {
       if (roundOn()) { e.preventDefault(); undo(); }
       return;
@@ -334,8 +357,9 @@
     if (!S || S.busy || reduced() || !roundOn() || (e.button !== undefined && e.button > 0)) return;
     var c = e.target.closest && e.target.closest('.qr-card.is-front');
     if (!c || e.target.closest('a, .qr-more')) return;
-    /* Inside the open text the pointer scrolls and selects; it never swipes the card. */
-    if (e.target.closest('.qr-desc__full')) return;
+    /* Inside the text, open or collapsed (issue 252), the pointer scrolls and selects; it never
+       swipes the card. */
+    if (e.target.closest('.qr-desc__full, .qr-desc__excerpt')) return;
     drag = { c: c, sx: e.clientX, sy: e.clientY, dx: 0, dy: 0, id: e.pointerId };
     try { c.setPointerCapture(e.pointerId); } catch (err) { /* a synthetic pointer */ }
     c.classList.add('is-drag');
@@ -363,6 +387,10 @@
       if (!stage) { S = null; return; }
       S = { cards: cards(), idx: 0, hist: [], seen: [], busy: false };
       if (S.cards.length) layout();
+      /* A resize changes which excerpts overflow, so it re-marks their tab stops (issue 252). */
+      if (typeof ResizeObserver === 'function' && stage) {
+        ctx.observe(new ResizeObserver(markExcerptTabs)).observe(stage);
+      }
       ctx.on(doc, 'click', onClick);
       ctx.on(doc, 'keydown', onKeyDown);
       ctx.on(doc, 'pointerdown', onPointerDown);

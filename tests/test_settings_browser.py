@@ -210,7 +210,7 @@ def test_the_scene_manager_previews_and_access_asks_first(live):
         page.wait_for_selector('#st-mg-scenes.is-open .st-mgrow')
         assert len(page.query_selector_all('#st-mg-scenes .st-mgrow')) == 14
         page.click('#st-mg-scenes .st-mgrow:nth-child(3) .st-mgname')
-        assert page.query_selector('#st-mg-scenes #st-mg-band svg')
+        assert page.query_selector('#st-mg-scenes .k-scene svg')
         box = page.evaluate("""() => { const b = document.querySelector('#st-mg-scenes')
             .getBoundingClientRect(); return {t: b.top, bt: b.bottom, h: innerHeight}; }""")
         assert abs((box["t"] + box["bt"]) / 2 - box["h"] / 2) < 6  # vertically centered
@@ -222,6 +222,33 @@ def test_the_scene_manager_previews_and_access_asks_first(live):
         assert page.is_disabled('#st-access-go')
         page.check('#st-access-ack')
         assert not page.is_disabled('#st-access-go')
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_touches_manager_previews_after_the_scenes_manager_was_open(live):
+    """Issue 254: the touches preview renders in its own slide-over even after the scenes
+    manager drew its preview: the two managers never share one band id, so a render meant for
+    the visible manager can never land in the hidden one."""
+    ctx, page, errors = _page(live, "dark", 1280, "#preferences")
+    try:
+        page.wait_for_selector('[data-testid="st-manage-scenes"]')
+        page.click('[data-testid="st-manage-scenes"]')
+        page.wait_for_selector('#st-mg-scenes.is-open .st-mgrow')
+        page.keyboard.press("Escape")
+        page.wait_for_selector('[data-testid="st-manage-touches"]:visible')
+        page.click('[data-testid="st-manage-touches"]')
+        page.wait_for_selector('#st-mg-touches.is-open .st-mgrow')
+        # mgDraw renders the band in the same tick it opens: it is there or it never will be.
+        band = '#st-mg-touches-body .k-scene'
+        assert page.get_attribute(band, 'data-rendered'), (
+            "the visible touches preview never rendered after the scenes manager was open")
+        assert len(page.query_selector_all(band + ' .k-scene__art')) == 2  # scene + touch
+        assert page.query_selector('[id="st-mg-band"]') is None  # no shared band id
+        # Replay re-renders the visible band, not the hidden one.
+        page.click('#st-mg-touches-body [data-mgreplay]')
+        assert page.get_attribute(band, 'data-rendered')
         assert not errors, errors
     finally:
         ctx.close()

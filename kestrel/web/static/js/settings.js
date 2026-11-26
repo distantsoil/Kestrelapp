@@ -199,6 +199,16 @@
     settle(t);
   }
 
+  // An element that polls (data-st-poll, the extension's status pill) asks Kestrel only while
+  // its section is shown: a poll that fires while the section is hidden sends nothing (Codex
+  // review of #265). htmx keeps its timer, so the next tick after the section is shown asks again.
+  function onPollRequest(e) {
+    var elt = e.detail && e.detail.elt;
+    if (!elt || !elt.hasAttribute || !elt.hasAttribute('data-st-poll')) return;
+    var sec = elt.closest('[data-st-sec]');
+    if (sec && sec.hidden) e.preventDefault();
+  }
+
   function show(sec, find) {
     var changed = current !== sec || !shown;
     shown = true;
@@ -777,9 +787,12 @@
       x.classList.toggle('is-on', on); x.setAttribute('aria-checked', on ? 'true' : 'false');
     });
   }
+  var prefsTag = null;  // the #st-prefs-data node whose load last owned the html attribute
   function initPrefs() {
     var tag = $('#st-prefs-data');
     if (!tag) return;
+    var fresh = tag !== prefsTag;
+    prefsTag = tag;
     try { D = JSON.parse(tag.textContent); } catch (e) { return; }
     S.scene = D.scene; S.daily = D.daily; S.rot = D.rotation.slice(); S.anim = D.animate;
     S.season = D.touches; S.order = D.order.slice(); S.sound = D.sound;
@@ -792,8 +805,13 @@
       b.classList.toggle('is-on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
     applyTextSize(D.textSize);
-    doc.documentElement.classList.toggle('st-rm', !!D.reduceMotion);
-    doc.documentElement.setAttribute('data-reduce-motion', D.reduceMotion ? '1' : '0');
+    /* The pane's own load owns the html attribute (it brings a fresh snapshot): a status poll
+       swaps in without it and must not rewrite the attribute from the stale one it did not
+       bring - the Reduce motion switch reset itself on every /status/rail poll (D-UI-913). */
+    if (fresh) {
+      doc.documentElement.classList.toggle('st-rm', !!D.reduceMotion);
+      doc.documentElement.setAttribute('data-reduce-motion', D.reduceMotion ? '1' : '0');
+    }
     syncSummary();
   }
   function sceneName(id) { var s = sceneById(id); return s ? s.name : id; }
@@ -893,9 +911,11 @@
       '<div class="st-mgct"><span>' + esc(count) + '</span>' + acts + '</div><div class="st-mglist">' + rows + '</div></div>' +
       '<div class="st-mgcard st-mgpv"><h4>' + esc(cur.name) + '</h4><p class="st-mgsub">' + esc(cur.sub + touchArt) + '</p>' +
       '<div class="st-mgart"><div class="st-mgttl" aria-hidden="true">Today<small>' + esc(S.todayLabel || '') + '</small></div>' +
-      '<div class="k-scene" id="st-mg-band" data-scene="' + (sc ? esc(cur.id) : esc(effective())) + '" data-touch="' + (sc ? '' : esc(cur.id)) + '" data-animate="' + (S.anim ? 1 : 0) + '"></div></div>' +
+      '<div class="k-scene" id="st-mg-band-' + mg.kind + '" data-scene="' + (sc ? esc(cur.id) : esc(effective())) + '" data-touch="' + (sc ? '' : esc(cur.id)) + '" data-animate="' + (S.anim ? 1 : 0) + '"></div></div>' +
       '<div class="st-mgfoot"><span class="k-pill k-pill--info">Preview only</span><small>Previewing does not change your choices.</small></div><div class="st-mgfoot">' + useBtn + '</div></div></div>';
-    var band = $('#st-mg-band');
+    /* The band is looked up inside the body just written: the two managers each have their own
+       band (issue 254), so a render for the visible one can never land in the hidden one. */
+    var band = body.querySelector('.k-scene');
     if (band && root.KSceneBand) root.KSceneBand.render(band);
   }
   function mgMsg(text) {
@@ -919,7 +939,11 @@
     if (tab) { mg.tab = tab.getAttribute('data-mgtab'); mg.sel = null; mgDraw(); return; }
     var row = t.closest('[data-mgrow]');
     if (row) { mg.sel = row.getAttribute('data-mgrow'); mgDraw(); return; }
-    if (t.closest('[data-mgreplay]')) { var b = $('#st-mg-band'); if (b) { b.removeAttribute('data-rendered'); root.KSceneBand.render(b); } return; }
+    if (t.closest('[data-mgreplay]')) {
+      var body = t.closest('.st-mgbody'), b = body && body.querySelector('.k-scene');
+      if (b) { b.removeAttribute('data-rendered'); root.KSceneBand.render(b); }
+      return;
+    }
     if (t.closest('[data-mguse]')) { useScene(mg.sel); return; }
     var all = t.closest('[data-mgall]'), clr = t.closest('[data-mgclr]');
     if (all || clr) {
@@ -1041,6 +1065,7 @@
       mg = { kind: null, tab: 'nature', sel: null, msg: '', msgT: 0 };
       ctx.on(doc, 'k-toast', onToastUndo, true);
       ctx.on(doc, 'htmx:load', onSettleLoad);
+      ctx.on(doc, 'htmx:beforeRequest', onPollRequest);
       unsettled = [];
       FLUSH_ON.forEach(function (type) { ctx.on(doc, type, flushSettle, true); });
       ctx.on(doc, 'change', onChange);

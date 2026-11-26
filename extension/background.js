@@ -63,7 +63,8 @@ async function flash(tabId, ok, message) {
   }, FLASH_MS);
 }
 
-// Capture from the right-click menu: the page the person right-clicked, once.
+// Capture from the right-click menu: the page the person right-clicked, once. It scores now, like
+// the popup's main button (owner, 2026-11-25).
 async function captureFromMenu(tab) {
   if (!tab || !tab.id) return;
   if (Api.isLinkedIn(tab.url || "")) {
@@ -72,7 +73,8 @@ async function captureFromMenu(tab) {
   try {
     const page = await Api.readTab(tab.id);
     const r = await Api.call("/api/opportunities/ingest", {
-      method: "POST", force: true, body: { url: page.url, text: page.text, title: page.title },
+      method: "POST", force: true,
+      body: { url: page.url, text: page.text, title: page.title, score_now: true },
     });
     if (r.offline) return flash(tab.id, false, "Open Kestrel on this computer, then try again.");
     if (r.status === 403) return flash(tab.id, false, "Set up the extension: click its icon.");

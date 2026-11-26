@@ -66,9 +66,9 @@
       rows.forEach(function (r) { var ok = matches(r); r.hidden = !ok; if (ok) shown += 1; });
       var cnt = $('.src-cnt', g);
       if (cnt && key !== 'sug') cnt.textContent = String(shown);
-      // Suggestions step aside while filtering; an empty group hides, Paused hides under a health filter.
-      var hide = (key === 'sug' && on) || (on && key !== 'sug' && shown === 0) ||
-                 (key === 'paused' && !!state.health);
+      // Suggestions step aside while filtering; an empty group hides (Paused included: a paused
+      // row can carry a health, a search the runner paused after three failed checks does).
+      var hide = (key === 'sug' && on) || (on && key !== 'sug' && shown === 0);
       g.hidden = hide;
       if (!hide && key !== 'sug') seen += shown;
       var open = !collapsed.has(key) || (on && shown > 0);

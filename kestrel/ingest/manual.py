@@ -94,6 +94,10 @@ async def manual_ingest(
         raw=origin,
     )
     res = await normalize_and_store(session, raw, source=source)
+    if res.action == "new" and not res.suppressed:
+        # The caller can tell a role this capture created from one Kestrel already had (the
+        # extension's capture notice is for a new role only, issue #267).
+        session.info["manual_ingest_new"] = res.opportunity.id
     if res.enqueue_embed:
         session.add(Task(type="embed", payload={"opportunity_id": res.opportunity.id}))
     await session.commit()

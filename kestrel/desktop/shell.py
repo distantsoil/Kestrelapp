@@ -68,6 +68,9 @@ _last_status: dict[str, Any] = {}  # the poller's last /api/status, for the macO
 # window loop to join). Then a quit must stop() the icon to return the main thread; with a window
 # the icon shares pywebview's loop and stop() would end that loop under the window instead.
 _tray_owns_loop = False
+_mac_delegate: Any = None  # the installed NSApplication delegate (macOS only; set by install)
+_terminate_started = False  # the delegate owns the termination once; a later request waits
+_exit_clean_logged = False  # kestrel_exit_clean is written once per process, not per caller
 
 ERROR_ALREADY_EXISTS = 183
 MUTEX_NAME = "Local\\Kestrel"  # Local\ not Global\ (Global needs a privilege, blocks a 2nd user)
@@ -253,12 +256,118 @@ def window_visible() -> bool:
 def show_window() -> None:
     global _hidden
     if window is not None:
+        if IS_MACOS:
+            # Queued before the show: an app-level hide (the Dock bounce's) hides every
+            # window of the app, and a show cannot make a window of a hidden app key.
+            _unhide_app()
         window.show()
         _hidden = False
         try:
             window.restore()
         except Exception:  # not every backend implements restore(); hide/show is the contract
             pass
+
+
+def _unhide_app() -> None:
+    """Undo NSApp.hide_ (macOS only): the Dock bounce hides a frontmost app, and until the
+    app is unhidden no window.show() is visible. Like every AppKit call here, unhide_ runs
+    on the main thread. Off macOS there is no app hide and no AppKit import."""
+    if not IS_MACOS:
+        return
+    import importlib
+
+    appkit = importlib.import_module("AppKit")
+
+    def unhide() -> None:
+        app = appkit.NSApplication.sharedApplication()
+        if app.isHidden():
+            app.unhide_(None)
+
+    _on_tray_thread(unhide)
+
+
+# ------------------------------------------------------------------- macOS app delegate (#278)
+def _mac_app_delegate_class(superclass: Any, terminate_cancel: Any, terminate_later: Any,
+                            yes: Any) -> Any:
+    """Kestrel's NSApplication delegate class, over pywebview's own. The AppKit pieces (the
+    superclass and the constants) arrive as arguments: the real ones exist on macOS only,
+    and a Windows or Linux test builds the class from fakes without importing any of them."""
+    class _KestrelAppDelegate(superclass):
+        def applicationShouldTerminate_(self, app):
+            # Cmd-Q, the app menu's Quit and the Dock's Quit land here. pywebview's own
+            # delegate answers them by closing every window, and with close-to-tray on our
+            # closing handler hides the window and cancels the quit, so the app never left.
+            # Own the termination once, synchronously, before any thread: a second Cmd-Q, or
+            # a request while a tray-Quit drain is running, starts nothing and replies
+            # nothing (the running drain ends the process through _finish_quit). Starting
+            # the thread unconditionally and replying at once when do_quit would no-op could
+            # make AppKit exit before the server released its leases (F8).
+            global _terminate_started
+            if not _terminate_started and not _quitting:
+                _terminate_started = True
+                threading.Thread(target=_quit_after_terminate, args=(app,), name="mac-quit",
+                                 daemon=True).start()
+            # Later, not Cancel: Cancel answers a logout's Quit with a refusal and blocks
+            # the logout. Later makes macOS wait for the drain; the queued reply (and
+            # Kestrel's own exit through _finish_quit) lets it proceed.
+            return terminate_later
+
+        def applicationShouldHandleReopen_hasVisibleWindows_(self, app, has_visible_windows):
+            # A Dock click with the window closed to the tray: without a reopen handler,
+            # macOS does nothing and the window stays hidden.
+            show_window()
+            return yes
+
+    return _KestrelAppDelegate
+
+
+def _quit_after_terminate(app: Any) -> None:
+    """The terminate hook's thread: begin the quit atomically, run the whole clean exit,
+    and only then queue the terminate reply. After a True reply AppKit exits the process
+    and run() never returns (confirmed on the Mac: the reply let it exit before the drain
+    had finished and _finish_quit never ran), so the clean exit cannot wait for run() to
+    return; a quit another path began (its owner replies for nobody) ends the process
+    through _finish_quit on the main thread."""
+    if _try_begin_quit():
+        _finish_quit(joined=True)  # the drain's window was already waited by the overlay
+        _reply_terminate(app)
+
+
+def _reply_terminate(app: Any) -> None:
+    """replyToApplicationShouldTerminate_(True) on the main thread: AppKit needs it there
+    after an applicationShouldTerminate_ answered Later."""
+    if IS_MACOS and app is not None:
+        _on_tray_thread(lambda: app.replyToApplicationShouldTerminate_(True))
+
+
+def _install_mac_app_delegate() -> None:
+    """Put Kestrel's delegate where pywebview keeps its shared NSApplication delegate.
+
+    macOS only, on the main thread: importing pywebview's cocoa module creates NSApplication
+    (its sharedApplication() call runs at the class body), so from that line on NSApp exists.
+    pywebview installs its own delegate only when that slot is None (cocoa.py _shared_app_
+    delegate) and clears the slot when the last window closes, so both states are covered:
+    the slot is assigned outright (a window created later reuses ours instead of building
+    pywebview's), and when NSApplication is already up the delegate is set on it directly,
+    replacing pywebview's own."""
+    from webview.platforms.cocoa import BrowserView
+
+    global _mac_delegate
+    if _mac_delegate is None:
+        # pywebview's cocoa module imports AppKit and Foundation at its top, so both sit in
+        # sys.modules now. Read them there: the same bare imports live inside frame.py's
+        # traffic-lights path, and a direct import would be a missing-import finding on the
+        # Windows type check, where the modules resolve only on macOS.
+        appkit = sys.modules["AppKit"]
+        foundation = sys.modules["Foundation"]
+        cls = _mac_app_delegate_class(
+            BrowserView.AppDelegate, appkit.NSTerminateCancel, appkit.NSTerminateLater,
+            foundation.YES
+        )
+        _mac_delegate = cls.alloc().init()
+    BrowserView._shared_app_delegate = _mac_delegate
+    if getattr(BrowserView, "app", None) is not None:
+        BrowserView.app.setDelegate_(_mac_delegate)
 
 
 def on_closing():
@@ -342,6 +451,42 @@ def _post_mac_notice(title: str, body: str) -> None:
         log.info("tray_notified", title=title, path=path.value)
     except (OSError, subprocess.SubprocessError) as exc:  # osascript exists and then fails
         log.warning("tray_notify_failed", error=f"{type(exc).__name__}: {exc}")
+        return
+    if path in (mac_notify.Path.DENIED, mac_notify.Path.UNDECIDED, mac_notify.Path.OSASCRIPT,
+                mac_notify.Path.NONE):
+        # No banner showed: DENIED, UNDECIDED and NONE show nothing, and OSASCRIPT may show
+        # nothing either ("handed to macOS through the old osascript path (macOS may show
+        # nothing there)", mac_notify's docstring). Bounce the Dock icon once instead
+        # (owner item 59: "Bounce the Dock icon once"), so a closed-to-tray session is not
+        # completely silent. Logged for the Mac checker; AppKit skips a bounce on an active
+        # app, which _request_dock_bounce answers by hiding first.
+        log.info("dock_bounce_requested", path=path.value)
+        _bounce_dock_once()
+
+
+def _request_dock_bounce() -> None:
+    """The AppKit request itself: the informational kind bounces the Dock icon once and
+    stops; the critical kind repeats until answered and is never wanted here. AppKit ignores
+    the request on an active app (its documented rule), and the close-to-tray notice fires
+    while Kestrel IS the active app, so an active app hides first -- the next app comes
+    forward and the bounce is seen. show_window unhides again. AppKit is imported through
+    importlib at run time so no Windows or Linux line imports it."""
+    import importlib
+
+    appkit = importlib.import_module("AppKit")
+    app = appkit.NSApplication.sharedApplication()
+    if app.isActive():
+        app.hide_(None)
+    app.requestUserAttention_(appkit.NSInformationalRequest)
+
+
+def _bounce_dock_once() -> None:
+    """Bounce the Dock icon once (macOS): the close-to-tray notice never showed, so this is
+    the last thing left to tell the operator where the app went (owner item 59: "Bounce the
+    Dock icon once"). AppKit calls belong on the main thread, the same way tray changes go
+    there; off macOS there is no Dock and the call is skipped."""
+    if IS_MACOS:
+        _on_tray_thread(_request_dock_bounce)
 
 
 def _notify(title: str, body: str) -> None:
@@ -396,14 +541,28 @@ def _cancel_start() -> None:
     log.info("startup_cancel_requested")
 
 
-def do_quit() -> None:
-    """The one place a real quit happens. Never a hard kill mid-drain; only after the drain window
-    has passed does _finish_quit end a process whose server will not stop (D-UI-17)."""
-    if _quitting:
-        return
-    _begin_quit()
+_quit_lock = threading.Lock()  # the quit's one check-and-set: no two-read window (r3)
+
+
+def _try_begin_quit() -> bool:
+    """Begin the quit exactly once, atomically: True when this call owns the quit (it ran
+    _begin_quit and the closing overlay), False when a quit was already running and its
+    owner does both. The check and the set share one lock, so a quit beginning between
+    another path's check and its own call is neither begun twice nor answered early."""
+    with _quit_lock:
+        if _quitting:
+            return False
+        _begin_quit()
     if window is not None:
         _close_with_overlay()
+    return True
+
+
+def do_quit() -> None:
+    """The one place a real quit happens. Never a hard kill mid-drain; only after the drain window
+    has passed does _finish_quit end a process whose server will not stop (D-UI-17). The quit is
+    begun once, atomically; _quit_after_terminate acts on _try_begin_quit's ownership result."""
+    _try_begin_quit()
 
 
 CLOSING_MIN_S = 0.6  # the closing screen stays at least this long, so it reads as a step
@@ -414,14 +573,29 @@ def _close_with_overlay() -> None:
     stopped within a second and its leases released), then the window goes. The window never
     vanishes before shutdown is done; QUIT_JOIN_S is only the hard ceiling."""
     started = time.monotonic()
-    if window is not None and _started and window_visible():
-        with __import__("contextlib").suppress(Exception):
-            _post_to_app("closing")
-    if server_thread is not None:
-        server_thread.join(timeout=QUIT_JOIN_S)
-    rest = CLOSING_MIN_S - (time.monotonic() - started)
-    if rest > 0 and window_visible():
-        time.sleep(rest)
+    try:
+        if window is not None and _started and window_visible():
+            with __import__("contextlib").suppress(Exception):
+                _post_to_app("closing")
+        if _app_channel is not None:
+            # After the closing post, never before it: the page's poll must have seen
+            # 'closing' before the waits end, or it stops with no events and the closing
+            # screen never shows (the real-Mac regression). Runs even when the window is
+            # hidden -- an invisible page must still stop asking, it just never saw the
+            # screen.
+            _app_channel.end_waits()
+        if server_thread is not None:
+            server_thread.join(timeout=QUIT_JOIN_S)
+        rest = CLOSING_MIN_S - (time.monotonic() - started)
+        if rest > 0 and window_visible():
+            time.sleep(rest)
+    except (RuntimeError, OSError) as exc:
+        # A failure in the overlay's wait must not abort the quit: _quitting is already set
+        # (and do_quit would no-op every later Quit), so the window would sit there forever
+        # with the app half-closed. The overlay is presentation; log what failed and close.
+        # These two are the only realistic escapes here (join refuses, sleep is interrupted);
+        # KeyboardInterrupt passes on purpose, and the overlay post is suppressed above.
+        log.warning("closing_overlay_failed", error=f"{type(exc).__name__}: {exc}")
     if window is not None:
         window.destroy()  # the only destroy() in the program; unblocks webview.start()
 
@@ -1910,6 +2084,10 @@ def _run_window(webview: Any, *, busy: bool) -> int:
         window.events.shown += _maximize_restored
     if IS_MACOS:
         window.events.shown += lambda: frame.show_traffic_lights(window)
+        # Cmd-Q, the app menu's Quit and the Dock's Quit go to NSApplication's delegate, not
+        # to the window's closing event. Install ours on this (main) thread, before
+        # webview.start builds the window and pywebview can install its own (#278).
+        _install_mac_app_delegate()
         start_tray()  # the icon joins the window's Cocoa loop, built on the main thread
     log.info("webview_start")
     webview.start(_boot, (busy,))  # blocks until window.destroy()
@@ -1945,8 +2123,11 @@ def _run_window(webview: Any, *, busy: bool) -> int:
 QUIT_JOIN_S = 45.0
 
 
-def _finish_quit() -> int:
-    if server_thread is not None:
+def _finish_quit(joined: bool = False) -> int:
+    """End the process cleanly once the drain window has passed. `joined` says the caller
+    has already waited that window (the terminate thread's overlay did), so the join here
+    only confirms it and a stuck server force-exits without a second full wait."""
+    if server_thread is not None and not joined:
         server_thread.join(timeout=QUIT_JOIN_S)
     with __import__("contextlib").suppress(OSError):
         paths.runtime_json().unlink()
@@ -1958,7 +2139,13 @@ def _finish_quit() -> int:
         log.warning("quit_forced_after_drain_timeout", waited_s=QUIT_JOIN_S)
         logging.shutdown()
         os._exit(0)
-    log.info("kestrel_exit_clean")
+    global _exit_clean_logged
+    with _quit_lock:
+        if not _exit_clean_logged:
+            # The terminate thread and the main-thread tail can both reach this line (the run
+            # loop may stop before the queued reply): the exit is logged once per process.
+            _exit_clean_logged = True
+            log.info("kestrel_exit_clean")
     return 0
 
 

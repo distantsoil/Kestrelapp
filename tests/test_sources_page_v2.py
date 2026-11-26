@@ -13,15 +13,22 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from kestrel import paths
 from kestrel.db import migrate
-from kestrel.db.engine import forget_engine, get_sessionmaker, reset_engine
+from kestrel.db.engine import (
+    forget_engine,
+    get_sessionmaker,
+    make_async_engine,
+    reset_engine,
+)
 from kestrel.db.models import ScrapeRun, Source
 from kestrel.ingest.board_lookup import candidate_slugs
 from kestrel.ingest.generated import rebuild_generated_sources
 from kestrel.services import profile_edit as pe
 from kestrel.services import tracks
+from tests import clock_seed
 from tests.page_source import as_written
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -102,6 +109,249 @@ async def _build(enable: bool | None = None) -> None:
 
 def _without_details(html: str) -> str:
     return re.sub(r"<details.*?</details>", "", html, flags=re.S)
+
+
+# ------------------------------------------------------------------------------ the failing count
+
+
+def test_a_search_the_runner_paused_still_shows_as_failing_on_the_page(monkeypatch):
+    """Issue 256: the menu counts a search the runner switched off after three failed checks
+    (analytics.today.failing_sources: it failed and is still on, OR the runner switched it off
+    after three), so the Sources page must grade that row Needs you, not a plain Paused row the
+    tiles never mention."""
+    from kestrel.web import routes_control
+
+    async def _up(*a, **k):  # the rail's Ollama probe: not under test here
+        return {"up": True, "loaded": []}
+
+    monkeypatch.setattr(routes_control, "_probe_ollama", _up, raising=False)
+    _profile()
+    _run(_build(enable=True))
+
+    async def _fail_three():
+        from datetime import UTC, datetime
+
+        async with get_sessionmaker()() as s:
+            src = (await s.execute(select(Source))).scalars().first()
+            src.enabled = False  # the runner's own step after three consecutive failures
+            src.consecutive_failures = 3
+            s.add(ScrapeRun(source_id=src.id, status="failed",
+                            error="Site asked us to slow down.", started_at=datetime.now(UTC)))
+            await s.commit()
+
+    _run(_fail_three())
+
+    with _client() as c:
+        rail = c.get("/status/rail")
+        assert "1 search failing · see Sources" in rail.text
+        page = c.get("/sources")
+        body = _without_details(page.text)
+        assert "Needs you" in body, "the Sources page must grade the failing search"
+        n_need = re.search(
+            r'data-testid="health-b".*?data-testid="health-n">(\d+)', body, re.S)
+        assert n_need and int(n_need.group(1)) == 1
+        assert not re.search(r'k-pill[^>]*>\s*Paused', body), (
+            "the failing row's pill must say Needs you, not Paused")
+
+
+def test_a_runner_paused_row_whose_last_check_is_partial_still_counts(monkeypatch):
+    """D-UI-904 review defect: the runner stores the check that trips the auto-off as partial
+    (ingest/runner.py:269), the page grades that row Needs you in build_view without _health,
+    and the rail's _health judge read Slowed down and dropped the row the tile still counted.
+    The menu now reads the page's own grade, so the rail count and the tile agree."""
+    from kestrel.web import routes_control
+
+    async def _up(*a, **k):  # the rail's Ollama probe: not under test here
+        return {"up": True, "loaded": []}
+
+    monkeypatch.setattr(routes_control, "_probe_ollama", _up, raising=False)
+    _profile()
+    _run(_build(enable=True))
+    from datetime import UTC, datetime
+
+    async def _auto_pause():
+        async with get_sessionmaker()() as s:
+            src = (await s.execute(select(Source))).scalars().first()
+            src.enabled = False  # the runner's own step after the third failed check
+            src.consecutive_failures = 3
+            s.add(ScrapeRun(source_id=src.id, status="partial",
+                            error="AdapterError: HTTP 429 Too Many Requests",
+                            counts={"fetched": 3, "new": 0, "reseen": 0, "errors": 3},
+                            started_at=datetime.now(UTC).isoformat()))
+            await s.commit()
+
+    _run(_auto_pause())
+
+    with _client() as c:
+        rail = c.get("/status/rail")
+        assert "1 search failing · see Sources" in rail.text, (
+            "the auto-paused row's last check is partial: the rail must still count it")
+        page = c.get("/sources")
+        body = _without_details(page.text)
+        n_need = re.search(
+            r'data-testid="health-b".*?data-testid="health-n">(\d+)', body, re.S)
+        assert n_need and int(n_need.group(1)) == 1
+
+
+def test_the_rail_count_and_the_needs_you_tile_agree_in_every_state(monkeypatch):
+    """D-UI-904 review: the sweep. Five of the nine states count as failing, and the rail's
+    number must equal the Needs you tile in all of them: a failed run, a refused search, a key
+    problem, a runner-paused row (last check partial or failed), a user-paused row, a waited
+    partial with and without a code, and a retired origin."""
+    from kestrel.ingest.adapters.jobspy import NO_BOARDS_KEY
+    from kestrel.web import routes_control
+
+    async def _up(*a, **k):  # the rail's Ollama probe: not under test here
+        return {"up": True, "loaded": []}
+
+    monkeypatch.setattr(routes_control, "_probe_ollama", _up, raising=False)
+    _profile()
+    _run(_build(enable=True))
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+
+    STATES = [  # (name, kind, config, origin, enabled, failures, last run)
+        ("Sweep failing run", "greenhouse", {}, "custom", True, 1,
+         ("failed", "AdapterError: HTTP 500", {})),
+        ("Sweep refused", "jobspy", {NO_BOARDS_KEY: "no boards found"}, "custom", True, 1,
+         ("partial", "SourceConfigError: no boards", {})),
+        ("Sweep key problem", "usajobs", {}, "custom", True, 1,
+         ("partial", "The USAJOBS API key and email are missing.", {})),
+        ("Sweep auto-paused partial", "lever", {}, "custom", False, 3,
+         ("partial", "AdapterError: HTTP 429 Too Many Requests", {"errors": 2})),
+        ("Sweep auto-paused failed", "ashby", {}, "custom", False, 3,
+         ("failed", "AdapterError: HTTP 500", {})),
+        ("Sweep user-paused", "smartrecruiters", {}, "custom", False, 0, None),
+        ("Sweep waited with code", "workable", {}, "custom", True, 1,
+         ("partial", "AdapterError: HTTP 429 Too Many Requests",
+          {"error_code": "SRC-002", "errors": 2})),
+        ("Sweep waited without code", "workday", {}, "custom", True, 1,
+         ("partial", "AdapterError: HTTP 503", {"errors": 2})),
+        ("Sweep retired", "greenhouse", {}, "retired", False, 5,
+         ("failed", "AdapterError: HTTP 500", {})),
+    ]
+
+    async def _seed_states():
+        engine = make_async_engine(paths.db_path())
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        async with sm() as s:
+            for i, (name, kind, config, origin, enabled, failures, run) in enumerate(STATES):
+                src = Source(track="employment", kind=kind, name=name, config=config,
+                             origin=origin, enabled=enabled, cadence_hours=24,
+                             consecutive_failures=failures)
+                s.add(src)
+                await s.flush()
+                if run is not None:
+                    status, error, counts = run
+                    s.add(ScrapeRun(source_id=src.id, status=status, error=error, counts=counts,
+                                    started_at=clock_seed.ago(
+                                        now, horizon=timedelta(days=1),
+                                        hours=len(STATES) - i).isoformat()))
+            await s.commit()
+        await engine.dispose()
+        forget_engine()
+
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(1) as ex:  # the TestClient owns this thread's event loop
+        ex.submit(asyncio.run, _seed_states()).result()
+
+    with _client() as c:
+        rail = c.get("/status/rail")
+        counted = re.search(r"(\d+) search(?:es)? failing", rail.text)
+        page = c.get("/sources")
+        body = _without_details(page.text)
+        n_need = re.search(
+            r'data-testid="health-b".*?data-testid="health-n">(\d+)', body, re.S)
+        assert counted and n_need, (rail.text[:200], )
+        assert int(counted.group(1)) == int(n_need.group(1)) == 5, (
+            counted.group(1), n_need.group(1))
+        # The row names: the five counted ones sit on the page as Needs you.
+        for name in ("Sweep failing run", "Sweep refused", "Sweep key problem",
+                     "Sweep auto-paused partial", "Sweep auto-paused failed"):
+            assert name in body, name
+
+
+def test_a_partial_check_that_stored_nothing_stops_counting_as_failing(monkeypatch):
+    """Issue 256 scope add, owner item 64 (option A): a search that is only waiting stops
+    counting as failing in the menu (Sources unchanged). A partial run that stored nothing
+    raises the runner's failure counter (runner.py: stored == 0 and errors -> failures += 1),
+    which the menu used to count while the page graded the row Slowed down; the rail count and
+    the Sources tile now read one judge, so a waited search says nothing in the menu and the
+    page keeps saying Slowed down."""
+    from kestrel.web import routes_control
+
+    async def _up(*a, **k):  # the rail's Ollama probe: not under test here
+        return {"up": True, "loaded": []}
+
+    monkeypatch.setattr(routes_control, "_probe_ollama", _up, raising=False)
+    _profile()
+    _run(_build(enable=True))
+    from datetime import UTC, datetime
+
+    async def _waited():
+        async with get_sessionmaker()() as s:
+            src = (await s.execute(select(Source))).scalars().first()
+            src.enabled = True
+            src.consecutive_failures = 1  # the runner's own counter after a nothing-stored check
+            s.add(ScrapeRun(source_id=src.id, status="partial",
+                            error="AdapterError: HTTP 429 Too Many Requests",
+                            counts={"fetched": 3, "new": 0, "reseen": 0, "errors": 3},
+                            started_at=datetime.now(UTC).isoformat()))
+            await s.commit()
+
+    _run(_waited())
+
+    with _client() as c:
+        rail = c.get("/status/rail")
+        assert "search failing" not in rail.text, (
+            "a search that is only waiting stops counting as failing (owner item 64)")
+        page = c.get("/sources")
+        body = _without_details(page.text)
+        n_need = re.search(
+            r'data-testid="health-b".*?data-testid="health-n">(\d+)', body, re.S)
+        assert n_need and int(n_need.group(1)) == 0
+        n_slow = re.search(
+            r'data-testid="health-w".*?data-testid="health-n">(\d+)', body, re.S)
+        assert n_slow and int(n_slow.group(1)) == 1, (
+            "Sources is unchanged: the waited row stays Slowed down")
+
+
+def test_a_failed_check_still_counts_as_failing_after_the_wait_rule(monkeypatch):
+    """The wait rule's other half: a search whose last check FAILED (not waited) still counts
+    in the menu, and the Sources tile agrees."""
+    from kestrel.web import routes_control
+
+    async def _up(*a, **k):  # the rail's Ollama probe: not under test here
+        return {"up": True, "loaded": []}
+
+    monkeypatch.setattr(routes_control, "_probe_ollama", _up, raising=False)
+    _profile()
+    _run(_build(enable=True))
+    from datetime import UTC, datetime
+
+    async def _failed():
+        async with get_sessionmaker()() as s:
+            src = (await s.execute(select(Source))).scalars().first()
+            src.enabled = True
+            src.consecutive_failures = 1
+            s.add(ScrapeRun(source_id=src.id, status="failed",
+                            error="AdapterError: HTTP 404 Not Found",
+                            counts={}, started_at=datetime.now(UTC).isoformat()))
+            await s.commit()
+
+    _run(_failed())
+
+    with _client() as c:
+        rail = c.get("/status/rail")
+        assert "1 search failing · see Sources" in rail.text
+        page = c.get("/sources")
+        body = _without_details(page.text)
+        n_need = re.search(
+            r'data-testid="health-b".*?data-testid="health-n">(\d+)', body, re.S)
+        assert n_need and int(n_need.group(1)) == 1
 
 
 # ------------------------------------------------------------------------------ your searches

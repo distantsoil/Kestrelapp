@@ -65,8 +65,10 @@ label.lbl { display: block; font-weight: 700; margin: 0 0 4px; }
 .done-mark svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2.5; }
 .confirm { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--good-ink); animation: k-view var(--dur-2) var(--ease); }
 /* Role summary */
-.ring { --pct: 0; width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--brand) calc(var(--pct) * 1%), var(--soft) 0); flex: none; }
-.ring > span { width: 50px; height: 50px; border-radius: 50%; background: var(--paper); display: grid; place-items: center; text-align: center; line-height: 1.05; }
+/* Issue #271: the inner circle is wide enough for the score and "out of 5" to sit inside it
+   with room to spare (they crossed the edge at 64/50 px). */
+.ring { --pct: 0; width: 70px; height: 70px; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--brand) calc(var(--pct) * 1%), var(--soft) 0); flex: none; }
+.ring > span { width: 58px; height: 58px; border-radius: 50%; background: var(--paper); display: grid; place-content: center; text-align: center; line-height: 1; }
 .ring b { font-size: var(--fs-lg); } .ring small { font-size: 10px; color: var(--muted); }
 .scoreline { display: flex; gap: 12px; align-items: center; margin: 10px 0; }
 .chip { display: inline-block; padding: 2px 9px; border-radius: var(--r-pill); font-size: var(--fs-sm); font-weight: 700; background: var(--soft); color: var(--ink); }

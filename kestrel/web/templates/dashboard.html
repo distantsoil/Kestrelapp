@@ -30,7 +30,7 @@
   {% if first_break %}{% include "partials/first_run_break.html" %}{% endif %}
 
   {% if readiness.show_notice or rescoring %}
-  <div class="sf-notice" role="status" data-testid="thin-profile-notice" data-next-step="{{ readiness.next_step }}">
+  <div class="sf-notice k-leave" role="status" data-testid="thin-profile-notice" data-next-step="{{ readiness.next_step }}">
     {% set back = 'today' %}{% include "partials/profile_next_step.html" %}
   </div>
   {% endif %}

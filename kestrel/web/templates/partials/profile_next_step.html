@@ -2,7 +2,8 @@
    `readiness` is kestrel.services.profile_readiness.Readiness; `back` is where Score again returns.
    `ask` (kestrel.web.score_again_ask.ask_context) is set when scoring would go to an online model:
    the same ask-first panel the other online actions use, in place; nothing is queued until it is
-   confirmed. The forms swap this block in place; without script they redirect back. #}
+   confirmed. The forms swap this block in place; without script they redirect back. Dismiss
+   fades the whole notice out (.k-leave) and removes it. #}
 {% import "partials/online_ask.html" as online_ask %}
 {% from "partials/correction_lines.html" import correction_lines %}
 {% if rescoring == 'confirm' and ask %}
@@ -31,6 +32,15 @@
     <input type="hidden" name="back" value="{{ back }}">
   <input type="hidden" name="tab" value="{{ tab|default('') }}">
     <button class="k-btn k-btn--sm" type="submit" data-testid="score-again-go">Score again</button>
+  </form>
+  {# Dismiss (issue #253): hidden until the proof points change again; nothing is queued. #}
+  <form class="k-form-inline" method="post" action="/api/profile/score-again/dismiss"
+        hx-post="/api/profile/score-again/dismiss" hx-target="closest [data-testid=thin-profile-notice]" hx-swap="outerHTML swap:200ms">
+    <input type="hidden" name="track" value="{{ track }}">
+    <input type="hidden" name="back" value="{{ back }}">
+    <input type="hidden" name="tab" value="{{ tab|default('') }}">
+    <input type="hidden" name="stamp" value="{{ readiness.stamp }}">
+    <button class="k-btn k-btn--sm" type="submit" data-testid="score-again-dismiss">Dismiss</button>
   </form>
   {% else %}
   <a class="k-link" href="{{ readiness.link_href }}" data-testid="next-step-link">{{ readiness.link_label }}</a>

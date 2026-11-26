@@ -38,7 +38,7 @@ async def _unread(s) -> int:
         await s.execute(
             select(func.count())
             .select_from(Notification)
-            .where(Notification.read_at.is_(None))
+            .where(Notification.read_at.is_(None), Notification.dismissed_at.is_(None))
         )
     ).scalar_one()
 
@@ -62,8 +62,12 @@ async def _tracks_of(s, rows: list[Notification]) -> tuple[dict[int, str], dict[
 
 async def _panel_ctx(s, tab: str) -> dict:
     now = datetime.now(UTC)
+    # The Dismissed tab lists the dismissed items; All and Needs attention never do (#255).
+    dismissed = (Notification.dismissed_at.is_not(None) if tab == "dismissed"
+                 else Notification.dismissed_at.is_(None))
     rows = list(
-        (await s.execute(select(Notification).order_by(Notification.created_at.desc()).limit(20)))
+        (await s.execute(select(Notification).where(dismissed)
+                         .order_by(Notification.created_at.desc()).limit(20)))
         .scalars()
         .all()
     )
@@ -84,6 +88,11 @@ async def _panel_ctx(s, tab: str) -> dict:
         from kestrel.web.pages.updates import download_link
 
         download = download_link(await updater.load_state(s))
+    # Confidential mode applies when a row is shown, whatever it was when the row was written:
+    # a title or body naming the current employer shows its placeholder (Codex review 1).
+    from kestrel.web.redact import confidential, redact_text
+
+    conf, mapping = await confidential(s)
     items = []
     for n in rows:
         draft = by_pursuit.get(n.pursuit_id) or by_opp.get(n.opportunity_id)
@@ -92,8 +101,8 @@ async def _panel_ctx(s, tab: str) -> dict:
         items.append({
             "id": n.id,
             "kind": n.kind,
-            "title": n.title,
-            "body": n.body,
+            "title": redact_text(n.title, mapping, enabled=conf),
+            "body": redact_text(n.body, mapping, enabled=conf),
             "unread": not n.read_at,
             "unresolved": attention,
             "severity_word": word,
@@ -112,10 +121,19 @@ async def _panel_ctx(s, tab: str) -> dict:
         shown = [i for i in items if i["unresolved"]]
     groups = [(g, [i for i in shown if i["group"] == g]) for g in ("Today", "Yesterday", "Earlier")]
     unread = await _unread(s)
+    if tab == "dismissed":
+        attention_n = (await s.execute(
+            select(Notification.severity).where(Notification.dismissed_at.is_(None))
+            .order_by(Notification.created_at.desc()).limit(20)
+        )).scalars().all()
+        attention_n = sum(1 for sev in attention_n if nv.human_severity(sev)[2])
+    else:
+        attention_n = sum(1 for i in items if i["unresolved"])
     return {
         "tab": tab,
+        "dismissed_empty": nv.NOTIF_DISMISSED_EMPTY,
         "groups": [(g, xs) for g, xs in groups if xs],
-        "attention_n": sum(1 for i in items if i["unresolved"]),
+        "attention_n": attention_n,
         "unread": unread,
         "bell_label": _bell_label(unread),
         "count": len(shown),
@@ -150,7 +168,20 @@ async def notifications_list(request: Request, tab: str = "all"):
     return _panel(request, ctx)
 
 
-_ACTIONS = ("read", "unread")
+_ACTIONS = ("read", "unread", "dismiss", "restore")
+
+
+@router.post("/notifications/captured/claim", response_class=HTMLResponse)
+async def capture_notice_claim():
+    """Show a waiting extension capture notice (issue #267): the page whose rail saw one claims
+    it here, once, and the answer raises the toast (HX-Trigger k-toast). A POST, so a GET
+    never marks a notice shown (Codex review 4). Nothing waiting: an empty answer."""
+    from kestrel.services import capture_notice
+
+    async with sessionmaker()() as s:
+        toast = await capture_notice.claim(s)
+    headers = {"HX-Trigger": json.dumps({"k-toast": toast})} if toast else {}
+    return HTMLResponse("", headers=headers)
 
 
 @router.post("/notifications/read-all", response_class=HTMLResponse)
@@ -174,8 +205,9 @@ async def notifications_read_all(request: Request):
 
 @router.post("/notifications/{note_id}/{action}", response_class=HTMLResponse)
 async def notification_action(request: Request, note_id: int, action: str, tab: str = "all"):
-    """Mark as read or unread. The answer is the panel again. An unknown id or action changes
-    nothing."""
+    """Mark as read or unread, Dismiss or Restore (#255). The answer is the panel again. Dismiss
+    also marks the item read (it was seen); it is kept, never deleted, and Restore brings it back
+    to All. An unknown id or action changes nothing."""
     async with sessionmaker()() as s:
         n = await s.get(Notification, note_id) if action in _ACTIONS else None
         if n is not None:
@@ -183,6 +215,17 @@ async def notification_action(request: Request, note_id: int, action: str, tab: 
                 n.read_at = n.read_at or utcnow_iso()
             elif action == "unread":
                 n.read_at = None
+            elif action == "dismiss":
+                n.dismissed_at = n.dismissed_at or utcnow_iso()
+                n.read_at = n.read_at or n.dismissed_at
+                if not n.delivered_channels:
+                    # Seen in the bell before any pop-up: handled for good, so a Restore never
+                    # sends a late one (review round 2).
+                    from kestrel.services.delivery import _SUPPRESSED
+
+                    n.delivered_channels = list(_SUPPRESSED)
+            elif action == "restore":
+                n.dismissed_at = None
             await s.commit()
         ctx = await _panel_ctx(s, _tab(tab))
     return _panel(request, ctx)

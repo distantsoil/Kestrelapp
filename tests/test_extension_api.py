@@ -656,6 +656,47 @@ def test_last_seen_records_the_browser_family_not_the_user_agent(family):
     assert _UAS[family] not in json.dumps(seen)
 
 
+def test_a_note_that_was_never_saved_does_not_hold_back_the_next_one():
+    """Issue #265: the once-a-minute limit counts a note only once it is saved. A note whose
+    commit never happened (a busy database) must not stop the next call from writing one."""
+    from kestrel.services import extension as ext
+
+    ext.reset_seen_throttle()
+
+    async def unsaved(s):
+        wrote = await ext.note_seen(s, _UAS["Chrome"])
+        await s.rollback()  # the commit never happened
+        return wrote
+
+    assert _with_session(unsaved) is True
+    assert _setting("extension.last_seen") is None
+
+    async def saved(s):
+        wrote = await ext.note_seen(s, _UAS["Chrome"])
+        await s.commit()
+        return wrote
+
+    assert _with_session(saved) is True
+    assert _setting("extension.last_seen") is not None
+
+
+def test_a_saved_note_still_holds_the_limit_for_a_minute():
+    """The other side of the limit: after a keyed call has saved its note, the next note inside
+    the minute is not written."""
+    from kestrel.services import extension as ext
+
+    ext.reset_seen_throttle()
+    _store_key()
+    with _client() as c:
+        assert c.get("/api/extension/config", headers=_headers()).status_code == 200
+    assert _setting("extension.last_seen") is not None
+
+    async def again(s):
+        return await ext.note_seen(s, _UAS["Chrome"])
+
+    assert _with_session(again) is False
+
+
 # ------------------------------------------------------------------ changed existing routes
 
 

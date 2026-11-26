@@ -149,7 +149,7 @@ patterns = [
   "kestrel/web/today_view.py",
   "kestrel/web/pages/dashboard.py",
 ]
-files = ["test_today_browser.py", "test_model_codes_browser.py"]
+files = ["test_today_browser.py", "test_model_codes_browser.py", "test_score_again_dismiss_browser.py"]
 
 # ---- Analytics -------------------------------------------------------------------------------
 [[rule]]
@@ -206,7 +206,7 @@ patterns = [
 files = [
   "test_role_browser.py", "test_cover_letter_browser.py", "test_rescoring_browser.py",
   "test_not_scored_browser.py", "test_research_jobs_browser.py",
-  "test_extension_origin_browser.py",
+  "test_extension_origin_browser.py", "test_score_ring_fit_browser.py",
 ]
 
 [[rule]]
@@ -382,7 +382,7 @@ files = [
 patterns = [
   "kestrel/web/pages/extension_api.py",
 ]
-files = ["test_extension_browser.py"]
+files = ["test_extension_browser.py", "test_extension_ring_fit_browser.py"]
 
 [[rule]]
 patterns = [
@@ -489,7 +489,8 @@ patterns = [
   "kestrel/web/pages/runs_*.py",
   "kestrel/web/unscored.py",
 ]
-files = ["test_runs_browser.py", "test_unscored_browser.py", "test_error_codes_browser.py"]
+files = ["test_runs_browser.py", "test_unscored_browser.py", "test_error_codes_browser.py",
+         "test_run_detail_bodies_browser.py"]
 
 # ---- Sources -----------------------------------------------------------------------------------
 [[rule]]
@@ -566,3 +567,27 @@ patterns = [
   "kestrel/web/install_id_view.py",
 ]
 files = ["test_install_id_browser.py", "test_help_about_browser.py", "test_settings_browser.py"]
+
+# ---- The extension capture notice (issue #267): a toast on any open page, from the rail poll ----
+[[rule]]
+patterns = [
+  "kestrel/services/capture_notice.py",
+]
+files = ["test_capture_notice_browser.py"]
+
+# ---- The bell panel and its notifications (issues #253 and #255): the panel's fit in the window,
+# Dismiss and Restore, and the Today notice's Dismiss. components.css holds the panel's styles. --
+[[rule]]
+patterns = [
+  "kestrel/web/notifications_view.py",
+  "kestrel/web/pages/chrome.py",
+  "kestrel/web/templates/partials/notifications_*.html",
+  "kestrel/web/static/css/components.css",
+]
+files = ["test_bell_panel_fit_browser.py", "test_notification_dismiss_browser.py"]
+
+[[rule]]
+patterns = [
+  "kestrel/web/templates/partials/profile_next_step.html",
+]
+files = ["test_score_again_dismiss_browser.py"]

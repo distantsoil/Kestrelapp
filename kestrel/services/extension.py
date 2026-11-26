@@ -33,9 +33,14 @@ FEATURE_PREFIX = "extension."
 LAST_SEEN_KEY = "extension.last_seen"
 LAST_SEEN_EVERY_S = 60  # write the note at most once a minute
 
-# The store pages, empty until the listings exist (scope 4.5). While empty the app's buttons open
-# the Help page that explains loading the extension by hand.
-STORE_URLS: dict[str, str] = {"chrome": "", "firefox": ""}
+# The store pages (scope 4.5). A listing that is not live yet stays empty, and its button opens the
+# Help page that explains loading the extension by hand. The Chrome listing is live (D-EXT-960);
+# the value is the exact listing URL with no query, pinned by tests/test_settings_extension.py.
+STORE_URLS: dict[str, str] = {
+    "chrome": ("https://chromewebstore.google.com/detail/kestrel-capture/"
+               "fdnolbohdjgelmfbhkbedlbjckfebaib"),
+    "firefox": "",
+}
 
 # ---------------------------------------------------------------------------- check pages
 # Scope section 5: a page under this many words, or with any of these phrases, is a check page or
@@ -213,9 +218,10 @@ def _now() -> float:
 
 async def note_seen(session: AsyncSession, user_agent: str | None) -> bool:
     """Record when the extension last called and from which browser family, at most once a
-    minute. Returns True when it wrote. The caller commits."""
-    now = _now()
-    if now - _last_write["at"] < LAST_SEEN_EVERY_S:
+    minute. Returns True when it wrote. The caller commits, then calls seen_saved(): the minute
+    is counted from a note that was saved, so a commit that failed (a busy database) never holds
+    back the next call's note (issue #265)."""
+    if _now() - _last_write["at"] < LAST_SEEN_EVERY_S:
         return False
     value = {"at": utcnow_iso(), "browser": browser_family(user_agent)}
     row = await session.get(Setting, LAST_SEEN_KEY)
@@ -223,8 +229,12 @@ async def note_seen(session: AsyncSession, user_agent: str | None) -> bool:
         session.add(Setting(key=LAST_SEEN_KEY, value=value))
     else:
         row.value = value
-    _last_write["at"] = now
     return True
+
+
+def seen_saved() -> None:
+    """The note note_seen wrote is committed: start the once-a-minute limit from now."""
+    _last_write["at"] = _now()
 
 
 def reset_seen_throttle() -> None:

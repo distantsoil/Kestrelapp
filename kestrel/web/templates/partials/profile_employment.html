@@ -20,7 +20,7 @@
           <button type="button" class="k-btn k-btn--sm" data-pf-sugg-toggle aria-expanded="false" aria-controls="pf-sugg-panel"
                   data-testid="title-suggest-toggle">{{ ui.icon('spark', 'k-ic--sm') }}Suggest titles</button>
           <div class="pf-sugg__panel" id="pf-sugg-panel" role="region" aria-label="Suggested titles">
-            <div class="pf-sugg__clip">
+            <div class="pf-sugg__clip" id="title-suggestions-slot">
               <div id="title-suggestions" hx-get="/profile/title-suggestions" hx-trigger="load" hx-target="this" hx-swap="outerHTML"></div>
             </div>
           </div>

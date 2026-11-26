@@ -73,6 +73,7 @@ async def require_key(request: Request) -> None:
         async with sessionmaker()() as s:
             if await ext.note_seen(s, request.headers.get("user-agent")):
                 await s.commit()
+                ext.seen_saved()
     except SQLAlchemyError as exc:  # the note is best effort; the request still answers
         log.warning("extension_last_seen_failed", error=str(exc))
 

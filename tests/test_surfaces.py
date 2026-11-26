@@ -209,7 +209,7 @@ def test_bell_panel_tabs_groups_human_words_and_actions():
     ids = _notes()
     body = client.get("/notifications/list").text
     assert 'data-testid="notifications-panel"' in body
-    for label in ("All", "Needs attention", "Dismissed"):  # Dismissed is not recorded yet
+    for label in ("All", "Needs attention", "Dismissed"):
         assert label in body
     assert "Today" in body and "Earlier" in body
     # A human severity, never the raw word; a plain relative time, never a raw stamp.
@@ -221,7 +221,9 @@ def test_bell_panel_tabs_groups_human_words_and_actions():
     # A due follow-up opens Applications; there is no Draft follow-up (D-UI-148).
     assert "Open in Applications" in body and "Draft follow-up" not in body
     assert 'href="/pursuits"' in body and "Open Sources" in body
-    assert 'data-testid="notif-tab-dismissed"' in body and "disabled" in body and "—" not in body
+    # The Dismissed tab is recorded now (#255, D-UI-906): a live tab that loads the dismissed list.
+    assert 'data-testid="notif-tab-dismissed"' in body and "—" not in body
+    assert 'hx-get="/notifications/list?tab=dismissed"' in body
     # The unresolved problem is badged and listed under Needs attention.
     attention = client.get("/notifications/list?tab=attention").text
     assert "Unresolved" in attention and "Harbor board stopped" in attention

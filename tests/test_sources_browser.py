@@ -12,6 +12,7 @@ import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from kestrel import paths
@@ -168,6 +169,58 @@ def _page(live, theme: str, width: int):
     page.wait_for_selector('[data-testid="source-row"]')
     wait_for_layout(page)
     return ctx, page, errors
+
+
+def test_the_needs_you_filter_keeps_a_paused_failing_row_visible(live):
+    """Issue 256 review defect: the Needs you tile counts a search the runner paused after
+    three failed checks (D-UI-902), but the Paused group hid whole under any health filter, so
+    pressing the tile hid the very row it counted and showed No sources match. The paused group
+    filters like every other group: visible while it holds a matching row."""
+    # the live fixture has already run _seed()
+
+    def pause_one():
+        """The runner's own step after three consecutive failures, applied to one row."""
+        import asyncio
+
+        async def go():
+            engine = make_async_engine(paths.db_path())
+            sm = async_sessionmaker(engine, expire_on_commit=False)
+            now = datetime.now(UTC)
+            async with sm() as s:
+                src = (await s.execute(
+                    select(Source).where(Source.name == "Remote roles"))).scalars().one()
+                src.enabled = False
+                src.consecutive_failures = 3
+                s.add(ScrapeRun(source_id=src.id, status="failed",
+                                error="AdapterError: HTTP 500", started_at=now.isoformat()))
+                await s.commit()
+            await engine.dispose()
+            forget_engine()
+
+        asyncio.run(go())
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(1) as ex:  # the browser plugin owns this thread's event loop
+        ex.submit(pause_one).result()
+    ctx, page, errors = _page(live, "light", 1280)
+    try:
+        row = page.locator(".src-row").filter(has_text="Remote roles")
+        none = page.locator('[data-testid="src-none"]')
+        # The tile: the paused row stays visible, the empty note stays hidden.
+        page.click('[data-src-health="b"]')
+        assert row.is_visible(), "the Needs you tile hid the paused failing row"
+        assert none.is_hidden()
+        # The dropdown filter finds it too.
+        page.select_option("#src-fhealth", "")
+        page.select_option("#src-fhealth", "b")
+        assert row.is_visible() and none.is_hidden()
+        # A filter no row meets still empties the page (the general rule intact).
+        page.click('[data-src-health="w"]')
+        assert not row.is_visible() and none.is_visible()
+        assert not errors, errors
+    finally:
+        ctx.close()
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])

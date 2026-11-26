@@ -8,6 +8,7 @@ exists; Make a new key replaces it and refreshes auth's cached key."""
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
@@ -138,15 +139,80 @@ def test_the_help_cards_say_the_exact_words():
         "Open it in your browser, then use Read in the extension to fill it in.")
 
 
-def test_the_store_buttons_open_help_while_there_is_no_listing():
+# The Chrome listing is live; Firefox stays empty until it is approved (D-EXT-960). The exact
+# string is pinned: a query, another host or another path is a different link and must fail here.
+CHROME_LISTING = ("https://chromewebstore.google.com/detail/kestrel-capture/"
+                  "fdnolbohdjgelmfbhkbedlbjckfebaib")
+
+
+def _pins_the_listings(urls: dict[str, str]) -> None:
+    assert urls == {"chrome": CHROME_LISTING, "firefox": ""}
+
+
+def _store_anchor(frag: str, browser: str) -> str:
+    return frag.split(f'data-testid="xt-get-{browser}"')[0].rsplit("<a", 1)[1]
+
+
+def test_the_store_urls_are_exactly_the_chrome_listing_and_no_firefox():
     from kestrel.services import extension as ext
 
+    assert ext.STORE_URLS == {"chrome": CHROME_LISTING, "firefox": ""}
+    assert ext.STORE_URLS["chrome"] == (
+        "https://chromewebstore.google.com/detail/kestrel-capture/"
+        "fdnolbohdjgelmfbhkbedlbjckfebaib")
+
+
+@pytest.mark.parametrize("chrome", [
+    CHROME_LISTING + "?hl=en",
+    CHROME_LISTING + "?utm_source=kestrel",
+    CHROME_LISTING + "/",
+    CHROME_LISTING.replace("https://", "http://"),
+    CHROME_LISTING.replace("chromewebstore.google.com", "chrome.google.com/webstore"),
+    CHROME_LISTING.replace("chromewebstore.google.com", "chromewebstore.example.test"),
+    "",
+])
+def test_a_store_url_with_a_query_or_another_host_fails_the_pin(chrome):
+    with pytest.raises(AssertionError):
+        _pins_the_listings({"chrome": chrome, "firefox": ""})
+
+
+def test_a_firefox_url_before_its_approval_fails_the_pin():
+    with pytest.raises(AssertionError):
+        _pins_the_listings({"chrome": CHROME_LISTING,
+                            "firefox": "https://addons.mozilla.org/firefox/addon/kestrel/"})
+
+
+def test_chrome_opens_its_listing_outside_and_firefox_still_opens_help():
+    from kestrel.services import extension as ext
+
+    _pins_the_listings(ext.STORE_URLS)
+    with _client() as c:
+        frag = c.get("/settings/section/extension").text
+    chrome = _store_anchor(frag, "chrome")
+    firefox = _store_anchor(frag, "firefox")
+    assert f'href="{CHROME_LISTING}"' in chrome
+    assert 'target="_blank"' in chrome and 'rel="noopener noreferrer"' in chrome
+    assert re.search(r"\son[a-z]+\s*=", chrome, re.IGNORECASE) is None  # no inline handler
+    assert frag.count("chromewebstore.google.com") == 1
+    assert 'href="/help"' in firefox
+    assert "target=" not in firefox and "rel=" not in firefox
+    assert "k-btn--primary" in chrome and "k-btn--primary" not in firefox
+    assert "Edge, Brave and Arc use the Chrome version." in frag
+
+
+def test_the_store_buttons_open_help_while_there_is_no_listing(monkeypatch):
+    from kestrel.services import extension as ext
+
+    monkeypatch.setitem(ext.STORE_URLS, "chrome", "")
+    monkeypatch.setitem(ext.STORE_URLS, "firefox", "")
     assert ext.STORE_URLS == {"chrome": "", "firefox": ""}
     with _client() as c:
         frag = c.get("/settings/section/extension").text
-    chrome = frag.split('data-testid="xt-get-chrome"')[0].rsplit("<a", 1)[1]
-    firefox = frag.split('data-testid="xt-get-firefox"')[0].rsplit("<a", 1)[1]
+    chrome = _store_anchor(frag, "chrome")
+    firefox = _store_anchor(frag, "firefox")
     assert 'href="/help"' in chrome and 'href="/help"' in firefox
+    assert "target=" not in chrome and "target=" not in firefox
+    assert "chromewebstore" not in frag
     assert "k-btn--primary" in chrome and "k-btn--primary" not in firefox
 
 
@@ -156,7 +222,7 @@ def test_a_listed_store_page_is_used_and_opens_outside(monkeypatch):
     monkeypatch.setitem(ext.STORE_URLS, "chrome", "https://store.example.test/kestrel")
     with _client() as c:
         frag = c.get("/settings/section/extension").text
-    chrome = frag.split('data-testid="xt-get-chrome"')[0].rsplit("<a", 1)[1]
+    chrome = _store_anchor(frag, "chrome")
     assert 'href="https://store.example.test/kestrel"' in chrome and 'rel="noopener' in chrome
 
 
@@ -191,6 +257,29 @@ def test_connected_names_the_browser_and_how_long_ago(monkeypatch):
     status = frag.split('data-testid="xt-status"', 1)[1].split("</span>", 1)[0]
     assert "Connected · Chrome · used 2 minutes ago" in status
     assert "k-pill--good" in frag.split('data-testid="xt-status"', 1)[0].rsplit("<span", 1)[1]
+
+
+def test_the_status_poll_answers_204_until_the_pill_would_change(monkeypatch):
+    """Issue #265: the pill's poll leaves an unchanged pill alone (204) and returns the new pill,
+    with the value it now shows, once the extension has called."""
+    from kestrel.web.pages import settings_extension as page
+
+    now = datetime(2026, 3, 4, 10, 0, tzinfo=UTC)
+    monkeypatch.setattr(page, "_now", lambda tz=None: now)
+    with _client() as c:
+        frag = c.get("/settings/section/extension").text
+        shown = frag.split("/settings/extension/status?shown=", 1)[1].split('"', 1)[0]
+        assert shown == "n"
+        same = c.get(f"/settings/extension/status?shown={shown}")
+        assert same.status_code == 204 and same.text == ""
+        at = (now - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+        _put("extension.last_seen", f'{{"at": "{at}", "browser": "Chrome"}}')
+        moved = c.get(f"/settings/extension/status?shown={shown}")
+        assert moved.status_code == 200
+        assert "Connected · Chrome · used 2 minutes ago" in moved.text
+        assert 'id="xt-status"' in moved.text and "k-pill--good" in moved.text
+        now_shown = moved.text.split("/settings/extension/status?shown=", 1)[1].split('"', 1)[0]
+        assert c.get(f"/settings/extension/status?shown={now_shown}").status_code == 204
 
 
 # ------------------------------------------------------------------------- the switches

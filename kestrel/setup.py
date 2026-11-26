@@ -670,6 +670,11 @@ def embed_rows(profile: str | None) -> dict[str, Any]:
     return {"llm.tiers.embed.backend": backend, "llm.tiers.embed.model": model}
 
 
+# What the --dry-run line says of the run card rows `hosted_rows` writes (#227). Wording to be
+# confirmed by the owner before merge.
+RUN_CARD_ROWS_WRITTEN = "setup.run_choice=hosted, llm.mode=hosted"
+
+
 def hosted_rows(
     backend_name: str,
     backend: Any,
@@ -687,7 +692,11 @@ def hosted_rows(
     under `llm.tiers`. The local tier set is otherwise never touched, so switching back to local
     later needs nothing rebuilt; the one exception is `profile` hosted_only, whose embed tier
     moves to the in-process engine (embed_rows), because that machine has no Ollama to fall
-    back to."""
+    back to. The switch is the run card's Online model choice, so `llm.mode` comes with
+    `setup.run_choice` from the one mapping of a choice to its rows (#227); a caller that does
+    not switch drops both (config.RUN_CARD_KEYS)."""
+    from kestrel.services.setup_state import run_card_rows
+
     rows: dict[str, Any] = {
         "llm.hosted_mode.enabled": True,
         "llm.hosted_mode.acknowledged_at": now,
@@ -697,7 +706,8 @@ def hosted_rows(
             terms if terms is not None else HostedMode().disclosure_terms()
         ),
         "llm.hosted_mode.free_only": free_only,
-        "llm.mode": "hosted",
+        # These rows turn online models on with the tiers assigned, so hosted can run.
+        **run_card_rows("hosted", hosted_ready=True),
         # How each picked model takes JSON and its context window, from the list it was picked
         # from, so the request builder never guesses a strict schema for a model that lacks one
         # (D-UI-48). _write_rows merges this into the stored map.
@@ -814,7 +824,7 @@ def step_hosted(st: SetupState) -> bool:
         embed = embed_rows(st.profile)
         st.would(
             "write setting rows: llm.hosted_mode.enabled, llm.hosted_mode.acknowledged_at, "
-            f"llm.mode=hosted, llm.hosted_tiers.<tier>.backend and .model for {routed} "
+            f"{RUN_CARD_ROWS_WRITTEN}, llm.hosted_tiers.<tier>.backend and .model for {routed} "
             "(frontier under llm.tiers)"
             + (
                 f", llm.tiers.embed -> {embed['llm.tiers.embed.backend']}/"

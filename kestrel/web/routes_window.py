@@ -63,4 +63,4 @@ async def window_events(request: Request, after: int = -1) -> JSONResponse:
     if channel is None or not desktop_bridge.desktop_window(request):
         return _not_found()
     seq, events = await asyncio.to_thread(channel.after, after, EVENTS_WAIT_S)
-    return JSONResponse({"seq": seq, "events": events})
+    return JSONResponse({"seq": seq, "events": events, "ending": channel.ending})

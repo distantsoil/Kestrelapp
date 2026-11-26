@@ -86,6 +86,7 @@ def test_failed_health_check_stops_the_server_and_releases_the_lock(monkeypatch)
 
     monkeypatch.setattr(shell, "server", None)
     monkeypatch.setattr(shell, "server_thread", None)
+    monkeypatch.setattr(shell, "window", None)  # no window from an earlier test on this worker
     monkeypatch.setattr(shell, "_configure_logging", lambda: None)
     monkeypatch.setattr(shell, "acquire_single_instance", lambda: True)
     monkeypatch.setattr(shell, "start_server", _start_server)

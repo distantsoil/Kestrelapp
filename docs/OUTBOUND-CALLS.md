@@ -109,8 +109,8 @@ Embeddings never go online; they run inside Kestrel.
 
 Kestrel's site, the source repository and its changelog, the donation page, the projects Kestrel
 builds on, the key sign-up pages (USAJobs, Adzuna, OpenRouter, OpenModel, Anthropic, OpenAI), the
-providers' privacy pages, Ollama's download page, SAM.gov, the "Suggest a board" page, and each
-role's posting and company site.
+providers' privacy pages, Ollama's download page, SAM.gov, the "Suggest a board" page, the
+browser extension's Chrome Web Store listing, and each role's posting and company site.
 
 ## Outside Kestrel's code
 
@@ -151,6 +151,7 @@ installer). `{*}` stands for a part that comes from the person, a posting or a s
 - `apply.workable.com`: call. Workable company boards.
 - `boards-api.greenhouse.io`: call. Greenhouse company boards.
 - `careers.example.com`: reference. An example address.
+- `chromewebstore.google.com`: link. The Kestrel Capture listing on the Chrome Web Store, opened in the person's browser only when they click Get it for Chrome in Settings > Browser extension. Kestrel itself sends nothing and makes no request to it; the browser sends its normal page request.
 - `console.openmodel.ai`: link. OpenModel key page.
 - `data.usajobs.gov`: call. USAJobs search, the person's own key.
 - `developer.adzuna.com`: link. Adzuna key sign-up.

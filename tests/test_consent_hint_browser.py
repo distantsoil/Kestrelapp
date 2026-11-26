@@ -87,6 +87,43 @@ def test_title_suggestions_panel(live, monkeypatch, theme, width):  # noqa: F811
         ctx.close()
 
 
+def test_the_suggest_answer_survives_a_poll_that_lands_while_it_is_on_its_way(live, monkeypatch):  # noqa: F811
+    """The suggestions section refreshes itself every 5 s by replacing itself. Suggest targets
+    the section by id, resolved when it is pressed; a refresh that replaced the section while the
+    request was on its way left the answer (its note, "Queued...") swapped into the old, detached
+    section, so nothing showed (the wave-3 gate failure at test_title_suggestions_panel)."""
+    from playwright.sync_api import expect
+
+    from kestrel.web.pages import profile
+
+    monkeypatch.setattr(profile, "_suggest_route", AsyncMock(return_value=dict(ROUTE)))
+    ctx, page, errors = _open(live, "employment", "light", 1280)
+    try:
+        held = []
+
+        def hold_the_answer(route):  # the server acts now; its answer reaches the page later
+            held.append((route, route.fetch()))
+
+        page.route("**/title-suggestions/refresh", hold_the_answer)
+        page.click('[data-testid="title-suggest-toggle"]')
+        panel = page.locator('[data-testid="title-suggest-online"]')
+        panel.locator('[data-consent-box]').check()
+        page.evaluate("window.__sugg = document.getElementById('title-suggestions')")
+        with page.expect_request("**/title-suggestions/refresh"):
+            panel.get_by_role("button", name="Suggest", exact=True).click()
+        # The pass is queued, so the section's own 5 s refresh finds it changed and replaces the
+        # section while the answer is still held.
+        page.wait_for_function(
+            "() => document.getElementById('title-suggestions') !== window.__sugg")
+        assert len(held) == 1
+        route, answer = held[0]
+        route.fulfill(response=answer)
+        expect(page.locator('[data-testid="title-suggestions-note"]')).to_be_visible()
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
 @pytest.mark.parametrize(("theme", "width"), LOOKS)
 def test_story_build_panel(live, monkeypatch, theme, width):  # noqa: F811
     from kestrel.services import online_consent

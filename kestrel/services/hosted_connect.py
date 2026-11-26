@@ -18,7 +18,7 @@ import httpx
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kestrel.config import Settings
+from kestrel.config import RUN_CARD_KEYS, Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting
 from kestrel.errors import classify_model_failure, is_model_failure
@@ -251,7 +251,10 @@ async def _connect_provider(
     except ValueError as exc:
         return _refused(provider, "rows_refused", f"{saved}{exc}.", label=label)
     if not switch:
-        rows.pop("llm.mode")
+        # Not switching: neither run card row is written, so the choice and the mode stay
+        # together as they are (#227; with the switch both come from the one mapping).
+        for k in RUN_CARD_KEYS:
+            rows.pop(k, None)
     if standing_consent:
         # Consent is written only by the form that showed the disclosure and had it ticked.
         for k in CONSENT_ROWS:

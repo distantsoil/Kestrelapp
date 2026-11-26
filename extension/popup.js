@@ -246,27 +246,51 @@
     try {
       page = await Api.readTab(state.tab.id);
     } catch (e) {
+      if (button) button.disabled = false;
       return confirmLine(null, "Kestrel couldn't read this page.");
     }
     const r = await Api.call("/api/opportunities/ingest", { method: "POST", force: true,
       body: { url: page.url, text: page.text, title: page.title, score_now: Boolean(scoreNow) } });
-    if (!r.ok) return confirmLine(null, "Kestrel couldn't add this page.");
+    if (!r.ok) {
+      // Say what went wrong (issue #270), and leave the button so the person can try again.
+      if (button) button.disabled = false;
+      return confirmLine(null, refusal(r));
+    }
+    const id = r.body && Number.isInteger(r.body.id) ? r.body.id : null;
     const fresh = r.body && r.body.stage === "new";
     chrome.runtime.sendMessage({ type: "flash", tabId: state.tab.id, ok: true, message: "Added to Kestrel." });
-    if (!fresh) return confirmLine(true, "Already in Kestrel.");
-    return confirmLine(true, scoreNow ? "Added. It's first in Kestrel's queue." : "Added to Kestrel.");
+    // Either way the capture ends with a way to the role it stored (issue #270).
+    const text = !fresh ? "Already in Kestrel."
+      : scoreNow ? "Added. It's first in Kestrel's queue." : "Added to Kestrel.";
+    return confirmLine(true, text, id);
   }
 
-  function confirmLine(ok, text) {
+  // Why Kestrel did not take a capture, from what the request returned (issue #270).
+  function refusal(r) {
+    if (r.offline) return "Open Kestrel on this computer, then try again.";
+    if (r.status === 403) return "Kestrel didn't accept that key. Copy it again from Settings, Browser extension.";
+    if (r.status === 422 && r.body && r.body.error === "linkedin") {
+      return "Kestrel doesn't read LinkedIn pages. Paste the posting in Kestrel instead.";
+    }
+    return "Kestrel couldn't add this page.";
+  }
+
+  function confirmLine(ok, text, roleId) {
     const spot = document.getElementById("confirm");
     if (!spot) return;
-    spot.replaceChildren(ok ? h("p", { class: "confirm" }, icon("check"), text)
-      : h("div", { class: "box warn", role: "alert", text }));
+    const open = ok && Number.isInteger(roleId)
+      ? h("button", { class: "link", type: "button", text: "Open in Kestrel ↗",
+        onclick: () => openKestrel(`/opportunities/${roleId}`) })
+      : null;
+    // The link sits on its own line under the result, never squeezed beside it.
+    if (ok) spot.replaceChildren(h("p", { class: "confirm" }, icon("check"), text), open || "");
+    else spot.replaceChildren(h("div", { class: "box warn", role: "alert", text }));
   }
 
   function captureBlock() {
-    const main = h("button", { class: "primary main", type: "button", text: "Capture this role",
-      onclick: (e) => capture(false, e.currentTarget) });
+    // Capture and score now is the main action (issue #269); a plain capture waits for the next run.
+    const main = h("button", { class: "primary main", type: "button", text: "Capture and score now",
+      onclick: (e) => capture(true, e.currentTarget) });
     const arrow = h("button", { class: "primary arrow", type: "button", "aria-label": "More ways to capture",
       "aria-haspopup": "menu", "data-menu": "capture" }, icon("down"));
     const wrap = h("div", { class: "wrap-rel" }, h("div", { class: "split" }, main, arrow));
@@ -274,8 +298,8 @@
       if (wrap.querySelector(".menu")) return closeMenus();
       closeMenus();
       const menu = h("div", { class: "menu", role: "menu" },
-        h("button", { role: "menuitem", type: "button", onclick: () => { closeMenus(); capture(true, main); } },
-          "Capture and score now", h("small", { text: "Puts it first in Kestrel's queue." })),
+        h("button", { role: "menuitem", type: "button", onclick: () => { closeMenus(); capture(false, main); } },
+          "Capture this role", h("small", { text: "New roles are scored in Kestrel's next run." })),
         h("button", { role: "menuitem", type: "button", onclick: () => openKestrel("/pipeline") },
           "Paste it in Kestrel instead", h("small", { text: "For pages the extension can't read well." })));
       menu.style.setProperty("right", "0");
@@ -287,7 +311,6 @@
   function viewNothingWaiting() {
     const body = h("div", { class: "body" },
       captureBlock(),
-      h("p", { class: "muted", text: "New roles are scored in Kestrel's next run." }),
       h("div", { id: "confirm" }));
     show(h("section", { class: "view" }, header(), body));
   }

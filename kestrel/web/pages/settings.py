@@ -784,6 +784,8 @@ async def _mode_cards(session: AsyncSession, settings: Settings) -> dict:
     (settings resolved with mode local, since under mode hosted `tiers` is already overlaid);
     the Hosted card reads the hosted assignments."""
     from kestrel.config import hosted_mode_problem
+    from kestrel.llm.client import tier_credit_hold
+    from kestrel.pipeline._shared import tier_is_hosted
 
     local = await load_settings_with_db(session, mode="local")
     local_models = {
@@ -807,6 +809,41 @@ async def _mode_cards(session: AsyncSession, settings: Settings) -> dict:
         "hosted_models": {r.tier: r.model for r in hosted_rows},
         "hosted_providers": sorted(providers),
         "assignment_rows": assignments,
+        # The steps whose calls go to an online service NOW, by the rules the client itself
+        # applies before a request (the step's backend is external and the one send gate is
+        # open; the provider is not held as out of credit, D-PRIV-893), never by the mode row:
+        # a step whose own stored row names an online backend sends on a local run too
+        # (D-PRIV-889). Deeper reads is not listed: it asks first for each one.
+        "steps_sending": [
+            t for t in prov.HOSTED_TIERS
+            if t != prov.FRONTIER_TIER and tier_is_hosted(settings, t)
+            and tier_credit_hold(settings, t) is None
+        ],
+        # The backend each step's OWN row names in the local tier set, for every step the
+        # per-step table shows (local_backends above covers only the three on the Local card):
+        # a row from before the Local and Online choice is seen on any of them, held or
+        # sending (D-PRIV-891).
+        "own_backends": {
+            t: local.llm.tiers[t].backend
+            for t in prov.HOSTED_TIERS
+            if t != prov.FRONTIER_TIER and t in local.llm.tiers
+        },
+        # The steps a LOCAL run would send through their own row: the same two rules of the
+        # client's, asked of the local resolution (the row's backend is external and the gate
+        # is open; that provider is not held as out of credit). The row's warning and the
+        # status line's sentence are claims about a local run, so they read this list and not
+        # steps_sending, which says what the stored mode's route does now (D-PRIV-895).
+        "local_run_sending": [
+            t for t in prov.HOSTED_TIERS
+            if t != prov.FRONTIER_TIER and tier_is_hosted(local, t)
+            and tier_credit_hold(local, t) is None
+        ],
+        # The model beside it, for the warning that names such a row on any step (D-PRIV-892).
+        "own_models": {
+            t: local.llm.tiers[t].model
+            for t in prov.HOSTED_TIERS
+            if t != prov.FRONTIER_TIER and t in local.llm.tiers
+        },
     }
 
 
@@ -1175,8 +1212,14 @@ async def hosted_balance_toggle(request: Request):
 @router.post("/settings/hosted/mode", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def hosted_mode_toggle(request: Request):
     """Turn Hosted mode on (only with the disclosure acknowledged; writes enabled AND
-    acknowledged_at) or off (clears enabled; the acknowledgement stays as a record). No other
-    row changes: which tiers go hosted is the per-tier table's job."""
+    acknowledged_at) or off (clears enabled; the acknowledgement stays as a record). Which tiers
+    go hosted is the per-tier table's job. The run choice is never written here by hand (#227):
+    off goes through its one writer (setup_state.set_run_mode), and on only completes an Online
+    model choice the person already made on the run card (apply_pending_hosted_mode), so both
+    pages read the same rows the moment this answers."""
+    from kestrel.services import setup_state
+    from kestrel.web.pages.setup import _rows as _card_rows
+
     form = await request.form()
     action = str(form.get("action") or "")
     async with sessionmaker()() as s:
@@ -1197,6 +1240,12 @@ async def hosted_mode_toggle(request: Request):
                 s, "llm.hosted_mode.acknowledged_terms",
                 settings.llm.hosted_mode.disclosure_terms(),
             )
+            # Online model chosen on the run card before this tick: its mode row is written
+            # now, in this transaction, not by whichever page is opened next (D-PRIV-882). With
+            # any other choice stored nothing more is written: this never chooses for the person.
+            await s.flush()
+            await setup_state.apply_pending_hosted_mode(
+                s, await load_settings_with_db(s), await _card_rows(s))
             msg = (
                 f"Disclosure acknowledged ({now}). Switch to hosted models above once tier1 and "
                 "tier2 have hosted assignments; a hosted send happens only on a hosted run. "
@@ -1204,11 +1253,8 @@ async def hosted_mode_toggle(request: Request):
             )
         elif action == "off":
             await _set(s, "llm.hosted_mode.enabled", False)
-            await _set(s, "llm.mode", "local")
             # The off switch is the person's run choice too (Settings > This computer reads it).
-            from kestrel.services.setup_state import CHOICE_KEY
-
-            await _set(s, CHOICE_KEY, "local")
+            await setup_state.set_run_mode(s, "local", settings)
             msg = (
                 "Hosted mode is off and Kestrel is back on local models. Your hosted "
                 "assignments are kept; they are not used until you turn it back on."
@@ -1224,18 +1270,38 @@ async def hosted_mode_toggle(request: Request):
 
 @router.post("/settings/hosted/switch", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def hosted_switch(request: Request):
-    """The Local / Hosted switch: write `llm.mode`. "hosted" is refused, with what is missing,
-    until the disclosure is acknowledged and tier1 and tier2 have hosted assignments
+    """The Local / Hosted switch. "hosted" is refused, with what is missing, until the
+    disclosure is acknowledged and tier1 and tier2 have hosted assignments
     (config.hosted_mode_problem, the same rule the CLI and Run now apply). The local tier set
-    is never touched by either choice, so switching back costs nothing."""
+    is never touched by either choice, so switching back costs nothing.
+
+    It is the run card's choice said from this page, so it is stored by the card's one writer
+    (setup_state.set_run_mode, #227): hosted is the Online model choice, local is On this
+    computer. A stored Both already runs the everyday steps on this computer, so local leaves it
+    Both (D-PRIV-880). The rows are checked as written before the commit, like the card's own
+    (settings_computer._written_refusal): online models switched off in between stores nothing."""
     from kestrel.config import MODES, hosted_mode_problem
+    from kestrel.services import setup_state
+    from kestrel.web.pages import settings_computer
+    from kestrel.web.pages.setup import _rows as _card_rows
 
     form = await request.form()
     mode = str(form.get("mode") or "")
+    tier = str(form.get("tier") or "")
     async with sessionmaker()() as s:
         settings = await load_settings_with_db(s)
         if mode not in MODES:
             ctx = await _hosted_ctx(s, settings, message="Unknown mode.", ok=False)
+            return _hosted_partial(request, ctx)
+        if tier:
+            # The fix button of ONE warning (D-PRIV-893): it takes away the row that warning
+            # names and nothing else. The run choice, the mode and every other step's row stay
+            # as they are; a step with no such row is left alone.
+            moved, stuck = await _unroute_legacy_external_tiers(s, only=tier)
+            await s.commit()
+            settings = await load_settings_with_db(s)
+            ctx = await _hosted_ctx(
+                s, settings, ok=not stuck, message=_row_moved_message(moved, stuck))
             return _hosted_partial(request, ctx)
         if mode == "hosted":
             problem = hosted_mode_problem(settings)
@@ -1244,7 +1310,17 @@ async def hosted_switch(request: Request):
                     s, settings, ok=False, message=f"Still on local models: {problem}."
                 )
                 return _hosted_partial(request, ctx)
-        await _set(s, "llm.mode", mode)
+        stored = (await _card_rows(s)).get(setup_state.CHOICE_KEY)
+        choice = "both" if mode == "local" and stored == "both" else mode
+        await setup_state.set_run_mode(s, choice, settings)
+        why = await settings_computer._written_refusal(s)
+        if why is not None:
+            await s.rollback()
+            settings = await load_settings_with_db(s)
+            ctx = await _hosted_ctx(
+                s, settings, ok=False, message=f"Still on local models: {why}"
+            )
+            return _hosted_partial(request, ctx)
         moved: list[str] = []
         stuck: list[str] = []
         if mode == "local":
@@ -1273,7 +1349,30 @@ async def hosted_switch(request: Request):
     return _hosted_partial(request, ctx)
 
 
-async def _unroute_legacy_external_tiers(s: AsyncSession) -> tuple[list[str], list[str]]:
+ROW_MOVED_BACK = (
+    "Moved back to the local model: {rows} (a setting row from before the Local/Hosted switch "
+    "pointed the local tier set at a hosted backend; it was removed)."
+)
+ROW_STILL_HOSTED = (
+    "Still on a hosted backend: {rows} (named in settings.yml itself; edit it or pick a local "
+    "backend there)."
+)
+
+
+def _row_moved_message(moved: list[str], stuck: list[str]) -> str:
+    """What one warning's fix button answers: a cut of the switch's own sentence, without the
+    claims that the run changed and that nothing sends on a local run (D-PRIV-893)."""
+    parts = []
+    if moved:
+        parts.append(ROW_MOVED_BACK.format(rows=", ".join(moved)))
+    if stuck:
+        parts.append(ROW_STILL_HOSTED.format(rows=", ".join(stuck)))
+    return " ".join(parts)
+
+
+async def _unroute_legacy_external_tiers(
+    s: AsyncSession, only: str | None = None
+) -> tuple[list[str], list[str]]:
     """Rows written before D-HOSTED-2 named the effective tier directly (`llm.tiers.<tier>.backend
     = frontier`), so a plain `llm.mode = local` left that tier sending. Drop those override rows so
     the YAML (the profile's local model) applies again; the frontier tier is hosted by design and is
@@ -1284,6 +1383,8 @@ async def _unroute_legacy_external_tiers(s: AsyncSession) -> tuple[list[str], li
         for r in prov.tier_status(local)
         if r.external and r.tier != prov.FRONTIER_TIER
     ]
+    if only is not None:  # one warning's button: that step's row, when it is such a row
+        legacy = [t for t in legacy if t == only]
     for tier in legacy:
         await _unset(s, f"llm.tiers.{tier}.backend")
         await _unset(s, f"llm.tiers.{tier}.model")

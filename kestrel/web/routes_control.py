@@ -15,13 +15,14 @@ import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
 from kestrel import __version__, netloc
 from kestrel.analytics.progress import scoring_progress
 from kestrel.analytics.run_summary import rail_line, run_summary
-from kestrel.analytics.today import failing_sources, latest_scan
+from kestrel.analytics.today import failing_source_rows, latest_scan
 from kestrel.config import MODES, HostedModeError, Settings
 from kestrel.db.models import (
     Opportunity,
@@ -642,11 +643,10 @@ async def _scan_row(s: AsyncSession) -> dict[str, Any]:
             select(func.count()).select_from(Opportunity).where(Opportunity.first_seen_at >= since)
         )
     ).scalar_one()
-    failing = (
-        await s.execute(
-            select(func.count()).select_from(Source).where(*failing_sources())
-        )
-    ).scalar_one()
+    # The Sources page's own health read judges the failing rows (D-UI-904, owner item 64): a
+    # search that is only waiting (its last check stored nothing and it carries a wait state)
+    # stops counting; a failed run, a refused search or a key problem still does.
+    failing = len(await failing_source_rows(s))
     if failing:
         # A failed search must be visible without opening Sources (D-UI-33).
         return {"state": "bad",
@@ -945,11 +945,22 @@ async def status():
 
 @router.get("/status/rail", response_class=HTMLResponse)
 async def status_rail(request: Request):
-    """The sidebar status rail: four rows with a state dot each, polled by HTMX every 10 s."""
+    """The sidebar status rail: four rows with a state dot each, polled by HTMX every 10 s. Every
+    page makes this poll, so it also says whether an extension capture notice is waiting (issue
+    #267): it only reads, and renders a hidden element whose POST claims the notice and shows
+    it (pages/chrome.py). A GET never writes."""
+    from kestrel.services import capture_notice
+
     async with sessionmaker()() as s:
         payload = await _status_payload(s)
+        try:
+            waiting = await capture_notice.pending(s) is not None
+        except SQLAlchemyError as exc:  # a busy database costs the notice, never the rail
+            log.warning("capture_notice_read_failed", error=type(exc).__name__)
+            waiting = False
     return templates().TemplateResponse(
-        request, "partials/status_rail.html", {**payload, "readout": readout(payload)}
+        request, "partials/status_rail.html",
+        {**payload, "readout": readout(payload), "capture_waiting": waiting},
     )
 
 
