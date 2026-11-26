@@ -3,6 +3,7 @@
   POST /settings/extension/key       Copy key: the connection key, made first if there is none
   POST /settings/extension/key/new   Make a new key (it replaces the old one)
   POST /settings/extension/features  one of the three switches, {key, on}
+  GET  /settings/extension/status    the connection pill, polled so it follows the extension
 
 The connection key is the one shared key (`server.shared_secret`, kestrel.web.auth.SETTING_KEY)
 that Access from other devices also uses. Copy key never turns that access on and never replaces
@@ -53,7 +54,8 @@ FEATURE_TEXT: dict[str, tuple[str, str, str]] = {
                       "The toolbar icon will show a count.",
                       "The toolbar icon will no longer show a count."),
 }
-# While a store listing is empty its button opens Help, which explains loading it by hand.
+# While a store listing is empty (Firefox until it is approved) its button opens Help, which
+# explains loading it by hand; a live listing's button opens the store page (D-EXT-960).
 HELP_HREF = "/help"
 NEW_KEY_SAID = "New key made. Paste it into the extension again."
 NOT_SAVED = "Could not save that. Try again."
@@ -85,9 +87,13 @@ async def extension_ctx(request: Request, *, note: str | None = None, ok: bool =
         on = await ext.features(s)
         seen = await ext.last_seen(s)
         has_key = await _stored_key(s) is not None
+    seen_line = _seen_line(seen, _now(UTC))
     return {
-        "xt_seen": _seen_line(seen, _now(UTC)),
+        "xt_seen": seen_line,
         "xt_connected": seen is not None,
+        # What the pill shows, as one value: the pill sends it back and is redrawn only when the
+        # answer differs (issue #265).
+        "xt_shown": f"c:{seen_line or ''}" if seen is not None else "n",
         "xt_features": [(name, FEATURE_TEXT[name][0], on[name]) for name in ext.FEATURES],
         "xt_store": {k: (v or HELP_HREF) for k, v in ext.STORE_URLS.items()},
         "xt_store_live": {k: bool(v) for k, v in ext.STORE_URLS.items()},
@@ -100,6 +106,16 @@ async def extension_ctx(request: Request, *, note: str | None = None, ok: bool =
 def _key_card(request: Request, ctx: dict, headers: dict | None = None) -> HTMLResponse:
     return templates().TemplateResponse(request, "partials/st_xt_key.html", ctx,
                                         headers=headers or {})
+
+
+@router.get("/settings/extension/status", response_class=HTMLResponse)
+async def status(request: Request, shown: str = "") -> Response:
+    """The connection pill, for its own poll (issue #265): Settings opened before the extension
+    first called turns to Connected without a reload. 204 while the pill would not change."""
+    ctx = await extension_ctx(request)
+    if shown == ctx["xt_shown"]:
+        return Response(status_code=204)
+    return templates().TemplateResponse(request, "partials/st_xt_status.html", ctx)
 
 
 @router.post("/settings/extension/key", dependencies=[LOCAL_ONLY])

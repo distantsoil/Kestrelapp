@@ -36,7 +36,9 @@
               <td>{{ r.scrape.status }}{% if r.code %}<span class="rn-code rn-code--cell" data-testid="rn-code">Code {{ r.code }}</span>{% endif %}</td>
               <td><small>{{ date_display(r.scrape.started_at, 'raw') }}</small></td>
               <td><small>{{ date_display(r.scrape.finished_at, 'raw') or '-' }}</small></td>
-              <td><small>{{ r.scrape.counts | run_counts }}</small>{% if r.scrape.counts | run_model_label %}<br><small data-testid="run-model-used">on {{ r.scrape.counts | run_model_label }}</small>{% endif %}</td>
+              <td><small>{{ r.scrape.counts | run_counts }}</small>{% if r.scrape.counts | run_model_label %}<br><small data-testid="run-model-used">on {{ r.scrape.counts | run_model_label }}</small>{% endif %}
+                {% if r.bodies %}<div class="rn-bodies" data-testid="run-bodies"><small>{{ bodies_label }}{% for b in r.bodies %} <span data-testid="run-body-share" data-state="{{ b.state }}">{{ b.label }} {{ b.text }}{{ ';' if not loop.last }}</span>{% endfor %}</small>
+                {% for b in r.bodies if b.warn %}<p class="rn-note is-warn" data-testid="run-body-warning">{{ b.warn }}</p>{% endfor %}</div>{% endif %}</td>
             </tr>
           {% endfor %}
           </tbody>

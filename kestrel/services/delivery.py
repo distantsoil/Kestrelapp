@@ -232,7 +232,8 @@ async def deliver_pending(
 
     if quiet:
         # A kind the operator turned off is not counted as held: it would never be shown anyway.
-        result.held = sum(1 for note in pending if _enabled_for(settings, note))
+        result.held = sum(1 for note in pending
+                          if not note.dismissed_at and _enabled_for(settings, note))
         if result.held:
             report = log.debug if _hold_logged else log.info
             report("notify_held_quiet_hours", held=result.held)
@@ -241,7 +242,12 @@ async def deliver_pending(
 
     deliverable = []
     for note in pending:
-        if _enabled_for(settings, note):
+        if note.dismissed_at:
+            # Dismissed in the bell before it was delivered (#255): handled, never shown, so a
+            # later Restore does not send a late pop-up either.
+            note.delivered_channels = list(_SUPPRESSED)
+            result.suppressed += 1
+        elif _enabled_for(settings, note):
             deliverable.append(note)
         else:
             note.delivered_channels = list(_SUPPRESSED)  # handled, but never shown

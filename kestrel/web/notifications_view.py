@@ -9,7 +9,9 @@ from typing import Any
 
 from kestrel.services.updater import DOWNLOAD_PAGE
 
-TABS = ("all", "attention")
+TABS = ("all", "attention", "dismissed")
+# The Dismissed tab with nothing in it (issue #255; owner approved, item 67).
+NOTIF_DISMISSED_EMPTY = "No dismissed notifications."
 
 # A raw severity is never shown (D-UI-94): (word, pill tone, needs attention?).
 SEVERITY: dict[str, tuple[str, str, bool]] = {
@@ -54,6 +56,7 @@ def context_action(
         "high_score": worth,
         "roles_need_retry": ("Open Needs another try", "/quarantine", False),
         "strong_match": ("Go to job detail", role, False),
+        "role_captured": ("Go to job detail", role, False),
         "run_finished": ("View run details", "/runs", False),
         "run_done": ("View run details", "/runs", False),
         "scan_done": ("Go to results", "/opportunities?new_today=1", False),

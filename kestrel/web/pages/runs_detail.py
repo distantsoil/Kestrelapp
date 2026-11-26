@@ -55,11 +55,16 @@ _RETRY_STAGE = {2: "t1_pass"}
 # handle_t2 runs from any stage, built exactly as rescore.py builds it (rescore + requested_at);
 # requested_at also skips a score that finished since the click.
 _TIER1_RETRY_EXTRA = {"rescore": True}
+# Issue #182 scope B: the line before a search's per-board share of new roles with no description
+# (owner sign-off asked for, 2026-11-25). The Sources drawer says "in the last run".
+RUN_BODIES_LABEL = "No description in this run:"
 
 
 async def _scrape_runs_during(session: AsyncSession, run: Run, limit: int = 50) -> list[dict]:
+    from kestrel.web.source_view import body_lines
+
     stmt = (
-        select(ScrapeRun, Source.name)
+        select(ScrapeRun, Source)
         .join(Source, Source.id == ScrapeRun.source_id, isouter=True)
         .where(ScrapeRun.started_at >= run.started_at)
     )
@@ -67,9 +72,13 @@ async def _scrape_runs_during(session: AsyncSession, run: Run, limit: int = 50) 
         stmt = stmt.where(ScrapeRun.started_at <= run.finished_at)
     stmt = stmt.order_by(ScrapeRun.started_at.desc()).limit(limit)
     rows = (await session.execute(stmt)).all()
-    return [{"scrape": sr, "source_name": name,
+    # The per-board share of new roles with no description (#182 B): the Sources drawer's own
+    # reading (source_view.body_lines rebuilds each entry from our schema), for this run.
+    return [{"scrape": sr, "source_name": src.name if src is not None else None,
+             # A deleted source reads as "This source" (a transient row, never added).
+             "bodies": body_lines(src if src is not None else Source(name=None), sr.counts),
              "code": failure_code.stored_code(sr.counts)
-             if sr.status in ("failed", "partial") else None} for sr, name in rows]
+             if sr.status in ("failed", "partial") else None} for sr, src in rows]
 
 
 async def _evaluations_during(session: AsyncSession, run: Run, limit: int = 100) -> list[dict]:
@@ -100,6 +109,7 @@ async def _run_context(request: Request, session: AsyncSession, run: Run) -> dic
         "scrape_runs": await _scrape_runs_during(session, run),
         "evaluations": await _evaluations_during(session, run),
         "quarantined_count": activity["quarantined"],
+        "bodies_label": RUN_BODIES_LABEL,
     }
 
 

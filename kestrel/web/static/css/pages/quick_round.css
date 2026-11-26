@@ -62,8 +62,10 @@
      label and tooltip) instead of running over the facts and the answer buttons. */
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3;
   overflow: hidden; flex: none; }
-.qr-facts { list-style: none; padding: 0; margin: auto 0 0; display: grid; gap: 10px;
-  font-size: 15px; }
+/* Two columns where the card has room (issue 252): four stacked rows ate the vertical space the
+   description needs; windows too narrow for a column pair fall back to one below. */
+.qr-facts { list-style: none; padding: 0; margin: auto 0 0; display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 18px; font-size: 15px; }
 .qr-facts li { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .qr-facts .k-ic { width: 17px; height: 17px; color: var(--muted); flex: none; fill: none;
   stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -74,9 +76,13 @@
 .qr-desc { margin-top: 12px; min-height: 0; flex: 0 1 auto; display: flex; flex-direction: column;
   gap: 6px; overflow: hidden; }
 .qr-card.is-open .qr-desc { flex: 1 1 auto; }
+/* The collapsed excerpt is a capped scroll area, not a mid-line cut (issue 252): the box takes
+   the room the card has and scrolls for the rest, and the pointer and the keyboard select and
+   scroll it like the open text. More still opens the whole posting. */
 .qr-desc__excerpt { margin: 0; font-size: var(--fs-md); line-height: 1.45; color: var(--ink);
-  overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }
+  overflow-wrap: anywhere; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
+  user-select: text; cursor: auto; }
+.qr-desc__excerpt:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
 .qr-nodesc { margin: 12px 0 0; font-size: var(--fs-md); line-height: 1.45; color: var(--muted);
   overflow-wrap: anywhere; }
 .qr-more { align-self: flex-start; flex: none; font: inherit; font-size: var(--fs-md); font-weight: 600;
@@ -206,6 +212,10 @@
   .qr-title { font-size: 22px; }
   .qr-card { padding: 20px 20px 18px; }
 }
+/* Below this a column pair would clip a fact's own words (issue 252): one column. The kwin
+   container measures the whole window, rail included (68px collapsed), and the criterion is a
+   177px column (D-UI-900): 2 x 177 + 18 gap + 68 rail + 16 page + 40 card = 500. */
+@container kwin (max-width: 499px) { .qr-facts { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 700px) {
   .qr-actl kbd, .qr-foot kbd { display: none; }
 }

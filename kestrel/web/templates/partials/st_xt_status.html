@@ -1,0 +1,6 @@
+{# The connection pill (issue #265). It asks Kestrel again every few seconds, so it follows the
+   extension's first call without a reload. While nothing changed the answer is 204, which htmx
+   leaves alone, so an unchanged pill is never redrawn; the id is kept, so htmx settles the class
+   change and the pill's own color transition runs (settings.css .st-xstat). #}
+<span id="xt-status" class="k-pill{% if xt_connected %} k-pill--good{% endif %} st-xstat" role="status" data-testid="xt-status" data-st-poll
+      hx-get="/settings/extension/status?shown={{ xt_shown | urlencode }}" hx-trigger="every 5s" hx-swap="outerHTML"><i class="st-xdot" aria-hidden="true"></i>{% if xt_connected %}Connected{% if xt_seen %} · {{ xt_seen }}{% endif %}{% else %}Not connected yet{% endif %}</span>

@@ -12,11 +12,21 @@
 {% set has_provider = hosted_models.get('tier1') or hosted_models.get('tier2') %}
 {% set online_on = hosted_mode.active %}
 {% set paused = hosted_mode.enabled and hosted_mode.acknowledged_at and not hosted_mode.acknowledgement_current %}
-{% set runs_online = online_on and mode == 'hosted' %}
 {# On but held: On this computer is chosen, so the one send gate (setup_state.online_send_held,
    D-PRIV-798) refuses every send; the picture and status line say so (#224 r2). #}
 {% set held = online_on and send_held %}
 {% set sending = online_on and not send_held %}
+{# Where Kestrel runs is said from what each step's call does now (steps_sending: the step's
+   backend is online and the gate is open, the client's own rule; #227, D-PRIV-883, D-PRIV-889),
+   never from the mode row: a mode row left on hosted while On this computer is chosen does not
+   read as online, and a step whose own row is online reads as sending on a local run too. #}
+{% set runs_online = steps_sending|length > 0 %}
+{# The owner's words (2026-11-25), held once: what the page says wherever scoring does not go
+   online. A deeper read has its own per-role confirmation and is not held by the run choice or
+   the switch, so no line here says "nothing is sent" (D-PRIV-886, D-PRIV-887). #}
+{% set deeper_confirm = 'A deeper read is sent only if you confirm it for that role.' %}
+{% set local_says = 'Scoring stays on this computer. ' ~ deeper_confirm %}
+{% set held_lead = 'On this computer is chosen under Settings > This computer.' %}
 {% set ack_date = date_display(hosted_mode.acknowledged_at) if hosted_mode.acknowledged_at else '' %}
 {% set names = {'tier1': 'Quick screen', 'tier2': 'Full review', 'tier3': 'Research and drafts', 'docsel': 'Document selection', 'trigger': 'Signals', 'frontier': 'Deeper reads'} %}
 {% set shorts = {'tier1': 'Screen', 'tier2': 'Review', 'tier3': 'Research', 'docsel': 'Documents', 'trigger': 'Signals', 'frontier': 'Deeper'} %}
@@ -42,15 +52,20 @@
     <span class="k-pill {{ 'k-pill--info' if runs_online else '' }}" data-testid="hosted-run-mode">{{ ui.icon('cloud' if runs_online else 'laptop') }}{{ 'Kestrel runs on online models' if runs_online else 'Kestrel runs on local models' }}</span>
     <span class="k-pill" data-testid="hosted-provider-chip">{% if hosted_models %}{{ hosted_providers|join(' and ') }}{% if free_only %}, free models only{% endif %}{% else %}Not configured yet{% endif %}</span>
   </div>
-  {% if hosted_problem and hosted_models and not runs_online %}<p class="ho-note ho-note--warn" data-testid="hosted-problem"><span>Cannot switch yet: {{ hosted_problem }}. <a href="/settings/hosted/review" data-testid="hosted-problem-link">Open Settings &gt; Online models</a></span></p>{% endif %}
+  {% if hosted_problem and hosted_models %}<p class="ho-note ho-note--warn" data-testid="hosted-problem"><span>Cannot switch yet: {{ hosted_problem }}. <a href="/settings/hosted/review" data-testid="hosted-problem-link">Open Settings &gt; Online models</a></span></p>{% endif %}
 
   {# A local-set step whose own row names an online backend (written before the Local and Online
      choice) sends even on a local run; say so while it is there. #}
-  {% set legacy = local_models|dictsort|selectattr(0, 'in', local_backends)|list %}
-  {% for t, m in legacy if local_backends[t] in hosted_backends %}<div class="ho-note ho-note--warn ho-legacy" data-testid="hosted-legacy-row">{{ ui.icon('alert') }}<p class="ho-legacy__text">{{ names.get(t, t) }} (<span class="mono">{{ t }}</span>) is set to <span class="mono">{{ local_backends[t] }}/{{ m }}</span>, an online backend, so it sends even on a local run. A setting row from before the Local and Online choice does this.</p>
-    {# The existing route the removed Run Kestrel on switch posted; mode=local drops these rows
-       (_unroute_legacy_external_tiers) and writes llm.mode=local, never the run card (#224 r2). #}
-    {% if loop.first %}<form hx-post="/settings/hosted/switch" hx-target="#hosted-panel" hx-swap="outerHTML" class="ho-legacy__fix" data-testid="hosted-legacy-fix"><input type="hidden" name="mode" value="local"><button class="k-btn k-btn--sm" type="submit">{{ 'Move it back to the local model' if mode != 'hosted' else 'Run on local models and move it back' }}</button></form>{% endif %}</div>{% endfor %}
+  {% set legacy = own_models|dictsort|selectattr(0, 'in', own_backends)|list %}
+  {# The warning is a claim about a LOCAL run, so it says a step sends from the local-run fact
+     (local_run_sending: the row's own backend, the gate, and that provider not held as out of
+     credit; D-PRIV-894, D-PRIV-895). The chip says what the step's call does now. #}
+  {% set old_rows_sending = [] %}
+  {% for t, m in legacy if own_backends[t] in hosted_backends %}{% if t in local_run_sending %}{% set _ = old_rows_sending.append(t) %}{% endif %}<div class="ho-note ho-note--warn ho-legacy" data-testid="hosted-legacy-row">{{ ui.icon('alert') }}<p class="ho-legacy__text">{{ names.get(t, t) }} (<span class="mono">{{ t }}</span>) is set to <span class="mono">{{ own_backends[t] }}/{{ m }}</span>, an online backend{% if t in local_run_sending %}, so it sends even on a local run{% endif %}. A setting row from before the Local and Online choice does this.</p>
+    {# Each warning has its own button: it posts the step it names to the existing route, which
+       takes away that step's row (_unroute_legacy_external_tiers) and nothing else: not another
+       step's row, not the mode, not the run card (#224 r2, D-PRIV-893). #}
+    <form hx-post="/settings/hosted/switch" hx-target="#hosted-panel" hx-swap="outerHTML" class="ho-legacy__fix" data-testid="hosted-legacy-fix"><input type="hidden" name="mode" value="local"><input type="hidden" name="tier" value="{{ t }}"><button class="k-btn k-btn--sm" type="submit">Move it back to the local model</button></form></div>{% endfor %}
 
   {% call lo.fence(request) %}
   {# ------------------------------------------------------------- 2. What leaves this machine #}
@@ -62,20 +77,22 @@
         {{ ui.icon('chevd', 'ho-chev') }}
       </summary>
       <div class="ho-body">
-        <figure class="ho-flow{{ ' is-on' if sending else '' }}" data-testid="hosted-flow">
-          {% set flow_note = 'Held' if held else 'Paused' if paused else ('Off until you connect' if not has_provider else 'Off until you turn it on') %}
-          {% set flow_label = 'Your computer sends text over HTTPS, under your own key, to the provider you choose. ' ~ ('Sending now.' if sending else ('Held: On this computer is chosen under Settings > This computer, so nothing is sent.' if held else flow_note ~ '.')) %}
+        <figure class="ho-flow{{ ' is-on' if runs_online else '' }}" data-testid="hosted-flow">
+          {# Lit only where scoring runs online. On, a send allowed and scoring on this computer: unlit
+             with no note on it; the label's sentence says why (owner, 2026-11-25, D-PRIV-888). #}
+          {% set flow_note = 'Held' if held else 'Paused' if paused else '' if sending else ('Off until you connect' if not has_provider else 'Off until you turn it on') %}
+          {% set flow_label = 'Your computer sends text over HTTPS, under your own key, to the provider you choose. ' ~ ('Sending now.' if runs_online else (local_says if sending else ('Held: ' ~ held_lead ~ ' ' ~ local_says if held else flow_note ~ '.'))) %}
           <svg class="ho-flow__wide" viewBox="0 0 640 116" role="img" aria-label="{{ flow_label }}">
             <rect class="ho-f-box" x="1" y="14" width="170" height="88" rx="12"></rect>
             <g class="ho-f-ic" transform="translate(66 28)"><rect x="4" y="2" width="32" height="22" rx="3"></rect><path d="M0 30h40"></path></g>
             <text class="ho-f-t" x="86" y="76" text-anchor="middle">Your computer</text>
             <text class="ho-f-s" x="86" y="97" text-anchor="middle">or your network</text>
-            {% if sending %}
+            {% if runs_online %}
             <path class="ho-f-line ho-f-line--on" d="M186 58H446"></path>
             <path class="ho-f-arrow" d="M440 51l10 7-10 7"></path>
             {% else %}
             <path class="ho-f-line" d="M186 58H250M382 58H446"></path>
-            <text class="ho-f-note" x="316" y="30" text-anchor="middle" data-testid="hosted-flow-note">{{ flow_note }}</text>
+            {% if flow_note %}<text class="ho-f-note" x="316" y="30" text-anchor="middle" data-testid="hosted-flow-note">{{ flow_note }}</text>{% endif %}
             {% endif %}
             <rect class="ho-f-pill" x="258" y="40" width="116" height="36" rx="18"></rect>
             <g class="ho-f-lock" transform="translate(272 49)"><rect x="1" y="7" width="14" height="10" rx="2"></rect><path d="M4 7V4a4 4 0 0 1 8 0v3"></path></g>
@@ -91,12 +108,12 @@
             <g class="ho-f-ic" transform="translate(130 10)"><rect x="4" y="2" width="32" height="22" rx="3"></rect><path d="M0 30h40"></path></g>
             <text class="ho-f-t" x="150" y="62" text-anchor="middle">Your computer</text>
             <text class="ho-f-s" x="150" y="81" text-anchor="middle">or your network</text>
-            {% if sending %}
+            {% if runs_online %}
             <path class="ho-f-line ho-f-line--on" d="M150 96V206"></path>
             <path class="ho-f-arrow" d="M143 200l7 10 7-10"></path>
             {% else %}
             <path class="ho-f-line" d="M150 96V120M150 174V206"></path>
-            <text class="ho-f-note" x="168" y="112">{{ flow_note }}</text>
+            {% if flow_note %}<text class="ho-f-note" x="168" y="112">{{ flow_note }}</text>{% endif %}
             {% endif %}
             <rect class="ho-f-pill" x="92" y="129" width="116" height="36" rx="18"></rect>
             <g class="ho-f-lock" transform="translate(106 138)"><rect x="1" y="7" width="14" height="10" rx="2"></rect><path d="M4 7V4a4 4 0 0 1 8 0v3"></path></g>
@@ -107,7 +124,7 @@
             <text class="ho-f-s" x="150" y="291" text-anchor="middle">on the internet</text>
           </svg>
           <ul class="ho-facts">
-            <li>{{ ui.icon('check') }}<span>Nothing is sent until you turn online models on.</span></li>
+            <li>{{ ui.icon('check') }}<span>Scoring stays on this computer until you turn online models on.</span></li>
             <li>{{ ui.icon('check') }}<span>Deeper reads ask you first, every time.</span></li>
             <li>{{ ui.icon('check') }}<span>Turn it off any time. Kestrel goes back to local models.</span></li>
           </ul>
@@ -118,7 +135,7 @@
     </details>
 
     <p class="ho-status" data-testid="hosted-ack-status"><b>Status: {% if online_on %}acknowledged {{ ack_date }}{% elif hosted_mode.acknowledged_at and not hosted_mode.acknowledgement_current %}the disclosure above changed since you accepted it on {{ ack_date }}, so online sends are paused until you read it and accept it again here{% elif hosted_mode.enabled %}set on but not acknowledged, so off{% elif hosted_mode.acknowledgement_current %}accepted {{ ack_date }}, online models are off{% else %}not acknowledged{% endif %}.</b>
-      {% if held %}On this computer is chosen under Settings &gt; This computer, so nothing is sent until you choose Online model or Both there.{% elif online_on %}Online sends happen only on an online run: the choice on Settings &gt; This computer, a Run now choice, or the CLI flag.{% else %}Until you turn online models on, every step runs on this machine and nothing leaves it.{% endif %}</p>
+      {% if held %}{{ held_lead }} {{ local_says }} Choose Online model or Both there to use online models for scoring.{% elif online_on %}{% if not old_rows_sending %}Online sends happen only on an online run: the choice on Settings &gt; This computer, a Run now choice, or the CLI flag. {% endif %}{{ deeper_confirm }}{% else %}Every step runs on this machine. {{ deeper_confirm }}{% endif %}</p>
 
     {% if online_on %}
     <div class="ho-foot" data-testid="hosted-turn-off">
@@ -185,7 +202,11 @@
     {% set cols = ['ho-c1', 'ho-c2', 'ho-c3', 'ho-c4', 'ho-c5', 'ho-c6'] %}
     {% set rows_of = {'online': 'ho-r1', 'net': 'ho-r2', 'here': 'ho-r3'} %}
     {% set lanes_of = {'online': [], 'net': [], 'here': []} %}
-    {% for r in assignment_rows %}{% set lb = local_backends.get(r.tier, 'local') or 'local' %}{% set lane = 'online' if r.external else ('net' if lb.startswith('lan_') else 'here') %}{% set _ = lanes.update({r.tier: lane}) %}{% set _ = lanes_of[lane].append(r.tier) %}{% endfor %}
+    {# A step is set to an online service by its online assignment or by its own stored row (a row
+   from before the Local and Online choice, or one that sends now): one fact for its lane, its
+   chip and its icon, so they cannot part (D-PRIV-890). #}
+{% set set_online = {} %}
+{% for r in assignment_rows %}{% set lb = local_backends.get(r.tier, 'local') or 'local' %}{% set _ = set_online.update({r.tier: (r.external or r.tier in steps_sending or own_backends.get(r.tier) in hosted_backends) and true or false}) %}{% set lane = 'online' if set_online[r.tier] else ('net' if lb.startswith('lan_') else 'here') %}{% set _ = lanes.update({r.tier: lane}) %}{% set _ = lanes_of[lane].append(r.tier) %}{% endfor %}
     <div class="ho-lanes" aria-hidden="true" data-testid="hosted-lanes">
       <span class="ho-lane ho-r1">Online</span><span class="ho-lane ho-r2">Your network</span><span class="ho-lane ho-r3">This computer</span>
       {% for r in assignment_rows %}<span class="ho-node {{ cols[loop.index0] }} {{ rows_of[lanes[r.tier]] }}"><span class="ho-nd"></span><span class="ho-nl">{{ shorts.get(r.tier, r.tier) }}</span></span>{% endfor %}
@@ -203,7 +224,7 @@
         <div class="ho-tier" data-tier="{{ r.tier }}">
           <div class="ho-tier__name"><b>{{ names.get(r.tier, r.tier) }}</b> <span class="mono k-muted">{{ r.tier }}</span>
             <span class="k-muted ho-small ho-block">Sends {{ tier_sends.get(r.tier, '') }}</span>
-            <span class="ho-where{{ ' ho-where--on' if r.external else '' }}">{{ ui.icon('cloud' if r.external else ('network' if lanes[r.tier] == 'net' else 'laptop')) }}{% if not r.external %}no online assignment; stays local{% if local_hints.get(r.tier) %} · profile model <span class="mono">{{ local_hints.get(r.tier) }}</span>{% endif %}{% elif r.tier == 'frontier' %}online, asks first for each one{% elif r.in_use %}online, sending{% else %}assigned, used on an online run{% endif %}</span>
+            {% set step_sends = r.tier != 'frontier' and r.tier in steps_sending %}<span class="ho-where{{ ' ho-where--on' if set_online[r.tier] else '' }}">{{ ui.icon('cloud' if set_online[r.tier] else ('network' if lanes[r.tier] == 'net' else 'laptop')) }}{% if step_sends %}online, sending{% elif not set_online[r.tier] %}no online assignment; stays local{% if local_hints.get(r.tier) %} · profile model <span class="mono">{{ local_hints.get(r.tier) }}</span>{% endif %}{% elif r.tier == 'frontier' %}online, asks first for each one{% else %}assigned, used on an online run{% endif %}</span>
             {% if r.external and not r.key_present %}<span class="ho-note ho-note--warn ho-block">No key saved: <a href="#hosted-keys">add it above</a></span>{% endif %}
           </div>
           <label class="ho-field ho-tier__be"><span class="sr-only">{{ names.get(r.tier, r.tier) }} runs on</span>

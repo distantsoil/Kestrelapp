@@ -790,6 +790,23 @@ def _describe_all(text: str) -> None:
     _t(qf.run, go)
 
 
+def _title_all(title: str) -> None:
+    from sqlalchemy import update
+
+    from kestrel.db.models import Opportunity
+
+    async def go(s):
+        await s.execute(update(Opportunity).values(title=title))
+        await s.commit()
+
+    _t(qf.run, go)
+
+
+# An invented title that wraps to three lines at the card's width (issue 252's shape: a long
+# title takes the room the description needs, at the window heights where the stage shrinks).
+_THREE_LINE_TITLE = "Head of Plant Operations and Maintenance, Senior Manager (remote)"
+
+
 def _geometry(page):
     return page.evaluate("""() => {
         const r = e => { const b = e.getBoundingClientRect();
@@ -1022,6 +1039,188 @@ def test_scrolling_or_dragging_inside_the_open_text_never_swipes_the_card(live):
         page.mouse.up()
         _count_is(page, 2)
         _wait_answers(4)
+        assert not errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_the_collapsed_excerpt_scrolls_instead_of_cutting_the_text_off(live, theme):
+    """Issue 252: the collapsed excerpt is a capped scroll area, never a mid-line cut whose rest
+    is unreachable. At the window heights where the stage shrinks and a long title takes the
+    room, the wheel reads the tail, the end of the text is reachable, and More still opens the
+    whole posting."""
+    _describe_all(_long_posting())
+    _title_all(_THREE_LINE_TITLE)
+    ctx, page, errors = _round(live, theme=theme, width=1024, height=700)
+    try:
+        ex = page.locator(".qr-card.is-front .qr-desc__excerpt")
+        assert ex.evaluate("e => getComputedStyle(e).overflowY") in ("auto", "scroll")
+        assert ex.evaluate("e => e.scrollHeight > e.clientHeight + 1")
+        box = ex.bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.mouse.wheel(0, 600)
+        page.wait_for_function(
+            "() => document.querySelector('.qr-card.is-front .qr-desc__excerpt').scrollTop > 0")
+        # Scrolled to the end, nothing of the excerpt is left out of reach.
+        page.evaluate(
+            "() => { const e = document.querySelector('.qr-card.is-front .qr-desc__excerpt');"
+            " e.scrollTop = e.scrollHeight; }")
+        assert ex.evaluate("e => Math.ceil(e.scrollTop + e.clientHeight) >= e.scrollHeight - 1")
+        # The More control keeps the whole text (issue 252 request).
+        page.click(".qr-card.is-front .qr-more")
+        full = page.locator(".qr-card.is-front .qr-desc__full")
+        assert full.is_visible() and full.evaluate(
+            "f => getComputedStyle(f).overflowY") in ("auto", "scroll")
+        assert not errors
+    finally:
+        ctx.close()
+
+
+def test_dragging_inside_the_collapsed_excerpt_selects_it_and_never_swipes(live):
+    """Issue 252: the collapsed excerpt is text (selectable), like the open one: a press and a
+    sideways move inside it selects and never answers or moves the card."""
+    _describe_all(_long_posting())
+    ctx, page, errors = _round(live)
+    try:
+        ex = page.locator(".qr-card.is-front .qr-desc__excerpt")
+        box = ex.bounding_box()
+        x, y = box["x"] + 20, box["y"] + 12  # inside the first line of text
+        page.mouse.move(x, y)
+        page.mouse.down()
+        page.mouse.move(x + 200, y, steps=12)
+        page.wait_for_function("() => String(getSelection()).length > 0")
+        page.mouse.up()
+        page.wait_for_timeout(400)  # a swiped card would have flown out and saved by now
+        assert page.locator(".qr-card.is-front .qr-desc__excerpt").count() == 1
+        assert _count_text(page) == "1 of 10" and len(_answers()) == 3
+        assert not errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("size, rows", [((1280, 900), 2), ((420, 800), 4)])
+def test_the_facts_take_two_columns_where_the_card_has_room(live, size, rows):
+    """Issue 252: the facts condense to two columns when the card has room, which gives the
+    description the vertical space; the narrowest window keeps one column (container fallback)."""
+    _describe_all(_long_posting())
+    ctx, page, errors = _round(live, width=size[0], height=size[1])
+    try:
+        tops = page.evaluate(
+            "() => Array.from(document.querySelectorAll('.qr-card.is-front .qr-facts li'))"
+            ".map(li => Math.round(li.getBoundingClientRect().top))")
+        assert len(tops) == 4 and len(set(tops)) == rows
+        assert not errors
+    finally:
+        ctx.close()
+
+
+def test_the_collapsed_excerpt_is_a_keyboard_scroll_region_only_while_it_overflows(live):
+    """Issue 252: an overflowing collapsed excerpt takes a tab stop and Up, Down scroll it
+    instead of answering; a short one is not a dead tab stop."""
+    ctx, page, errors = _round(live)  # the seed's own short descriptions
+    try:
+        short = page.locator(".qr-card.is-front .qr-desc__excerpt")
+        assert short.get_attribute("tabindex") == "-1"
+        assert short.evaluate("e => e.scrollHeight <= e.clientHeight + 1")
+        assert not errors
+    finally:
+        ctx.close()
+    _describe_all(_long_posting())
+    _title_all(_THREE_LINE_TITLE)  # a three-line title: the excerpt overflows at this height
+    ctx, page, errors = _round(live, width=1024, height=700)
+    try:
+        ex = page.locator(".qr-card.is-front .qr-desc__excerpt")
+        assert ex.get_attribute("tabindex") == "0"
+        ex.focus()
+        before = ex.evaluate("e => e.scrollTop")
+        page.keyboard.press("ArrowDown")
+        page.wait_for_function(
+            "b => document.querySelector('.qr-card.is-front .qr-desc__excerpt').scrollTop > b",
+            arg=before)
+        assert len(_answers()) == 3 and _count_text(page) == "1 of 10"
+        assert not errors
+    finally:
+        ctx.close()
+
+
+def test_the_excerpt_regains_its_tab_stop_after_more_a_resize_and_less(live):
+    """Issue 252 review: the excerpt's tab stop is re-marked when Less shows it again. A window
+    resize while the text is open marks the hidden excerpt -1; without a re-mark a now
+    overflowing excerpt keeps that stale -1 and the keyboard cannot reach it."""
+    _describe_all(_long_posting())
+    _title_all(_THREE_LINE_TITLE)
+    ctx, page, errors = _round(live, width=1024, height=700)
+    try:
+        ex = page.locator(".qr-card.is-front .qr-desc__excerpt")
+        assert ex.get_attribute("tabindex") == "0"
+        page.click(".qr-card.is-front .qr-more")  # open: the excerpt hides
+        page.set_viewport_size({"width": 900, "height": 620})  # tighter while it is hidden
+        page.click(".qr-card.is-front .qr-more")  # Less: the excerpt shows again, overflowing
+        page.wait_for_function(
+            "() => document.querySelector('.qr-card.is-front .qr-desc__excerpt')"
+            ".getAttribute('tabindex') == '0'")
+        assert ex.get_attribute("tabindex") == "0"
+        ex.focus()
+        before = ex.evaluate("e => e.scrollTop")
+        page.keyboard.press("ArrowDown")
+        page.wait_for_function(
+            "b => document.querySelector('.qr-card.is-front .qr-desc__excerpt').scrollTop > b",
+            arg=before)
+        assert len(_answers()) == 3 and _count_text(page) == "1 of 10"
+        assert not errors
+    finally:
+        ctx.close()
+
+
+def test_the_focus_ring_of_the_excerpt_is_painted_inside_its_own_box(live):
+    """Issue 252 review: the excerpt's focus ring is drawn inside its box (the description's
+    parent clips at its edge), so a keyboard user sees the ring; a screenshot proves it."""
+    _describe_all(_long_posting())
+    _title_all(_THREE_LINE_TITLE)
+    ctx, page, errors = _round(live, width=1024, height=700)
+    try:
+        page.locator(".qr-card.is-front").focus()
+        page.keyboard.press("Tab")  # into the excerpt, the way a keyboard user arrives
+        assert page.evaluate(
+            "() => document.activeElement &&"
+            " document.activeElement.classList.contains('qr-desc__excerpt')")
+        ex = page.locator(".qr-card.is-front .qr-desc__excerpt")
+        assert ex.evaluate("e => getComputedStyle(e).outlineStyle") != "none"
+        assert ex.evaluate("e => parseFloat(getComputedStyle(e).outlineOffset)") <= 0
+        page.screenshot(path=str(
+            Path(os.environ.get("KESTREL_QR_SHOTS", "/tmp")) / "ring" / "excerpt-ring.png"))
+        assert not errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("size", [(420, 800), (657, 693), (1024, 700), (1280, 900)])
+def test_the_collapsed_excerpt_is_never_squeezed_below_one_line(live, size):
+    """Issue 252 review: the description box keeps at least one full line at every reviewed
+    size (the base squeezed it to 0 at 1024x700 and cut it mid-line at the others)."""
+    _describe_all(_long_posting())
+    ctx, page, errors = _round(live, width=size[0], height=size[1])
+    try:
+        ex = page.locator(".qr-card.is-front .qr-desc__excerpt")
+        lh = ex.evaluate("e => parseFloat(getComputedStyle(e).lineHeight)")
+        assert ex.evaluate("e => e.clientHeight") >= lh - 1, (size, lh)
+        assert not errors
+    finally:
+        ctx.close()
+
+
+def test_the_facts_stay_one_column_while_a_column_pair_would_clip_a_fact(live):
+    """Issue 252 review: the kwin container measures the whole window including the 68px rail,
+    so at container widths 481 to 499 a column pair falls below the 177px criterion of D-UI-900;
+    those windows keep one column."""
+    _describe_all(_long_posting())
+    ctx, page, errors = _round(live, width=490, height=900)
+    try:
+        tops = page.evaluate(
+            "() => Array.from(document.querySelectorAll('.qr-card.is-front .qr-facts li'))"
+            ".map(li => Math.round(li.getBoundingClientRect().top))")
+        assert len(tops) == 4 and len(set(tops)) == 4
         assert not errors
     finally:
         ctx.close()

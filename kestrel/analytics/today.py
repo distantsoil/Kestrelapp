@@ -861,6 +861,26 @@ def failing_sources() -> tuple:
     )
 
 
+async def failing_source_rows(session: AsyncSession) -> list[Source]:
+    """The sources the rail's failing count and the Today ask name, graded by the Sources page's
+    own health read (D-UI-904, owner item 64: "Menu: a search that is only waiting stops
+    counting as failing (Sources unchanged)"). failing_sources() selects the candidates; the
+    page's _health judges each, so the rail count, the ask and the Needs you tile can never
+    disagree again (KF-064: one function both call): a partial check that stored nothing only
+    waited (Slowed down, its code's own words say when it retries) and does not count; a failed
+    run, a refused search or a key problem still does."""
+    rows = list(
+        (await session.execute(select(Source).where(*failing_sources()))).scalars().all()
+    )
+    if not rows:
+        return []
+    from kestrel.web.pages.sources import _recent_runs
+    from kestrel.web.source_view import grade
+
+    latest = await _recent_runs(session, rows, n=1)
+    return [src for src in rows if grade(src, latest.get(src.id, []), None)[0] == "b"]
+
+
 async def system_asks(
     session: AsyncSession, settings, track: str | None = None
 ) -> list[dict[str, Any]]:
@@ -874,9 +894,9 @@ async def system_asks(
     tracks = (track,) if track else TRACKS
     asks: list[dict[str, Any]] = []
 
-    failing = (
-        await session.execute(select(Source).where(*failing_sources()).order_by(Source.id))
-    ).scalars().all()
+    # The same rows the rail counts, judged by the Sources page's own health read (D-UI-904):
+    # a search that is only waiting stops being an ask.
+    failing = await failing_source_rows(session)
     if failing:
         # A search that fails must say so where the operator starts the day (D-UI-33).
         first = failing[0]

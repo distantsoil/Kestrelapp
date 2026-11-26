@@ -109,11 +109,22 @@ def test_an_app_page_calls_the_window_and_hears_its_events(window_app):
     assert r.status_code == 200 and r.json() == {"value": {"os": "linux", "maximized": True}}
     client.post("/api/window/call/window_start_drag", json={"args": [12, 34]})
     assert api.calls == [("window_info",), ("window_start_drag", 12, 34)]
-    assert client.get("/api/window/events?after=-1").json() == {"seq": 0, "events": []}
+    assert client.get("/api/window/events?after=-1").json() == {
+        "seq": 0, "events": [], "ending": False}
     channel.post("state", True)
     channel.post("closing")
     assert client.get("/api/window/events?after=0").json() == {
-        "seq": 2, "events": [["state", [True]], ["closing", []]]}
+        "seq": 2, "events": [["state", [True]], ["closing", []]], "ending": False}
+
+
+def test_the_events_answer_tells_the_page_shutdown_has_begun(window_app):
+    # r5: after end_waits the answer returns at once, so the answer itself must tell the
+    # page to stop asking; otherwise the page re-polls in a tight loop for the whole
+    # closing screen (up to the drain's whole window).
+    client, api, channel = window_app
+    assert client.get("/api/window/events?after=-1").json()["ending"] is False
+    channel.end_waits()
+    assert client.get("/api/window/events?after=-1").json()["ending"] is True
 
 
 def test_an_app_page_cannot_reach_anything_else(window_app):

@@ -271,9 +271,26 @@ async def opportunities_ingest(request: Request):
                 .values(priority=RESCORE_PRIORITY)
             )
             await s.commit()
-    if opp is None:
-        return JSONResponse({"error": "nothing to ingest"}, status_code=400)
-    return {"id": opp.id, "title": opp.title, "stage": opp.stage, "track": opp.track}
+        if opp is None:
+            return JSONResponse({"error": "nothing to ingest"}, status_code=400)
+        # The answer, read now as plain values: nothing after this point can expire them.
+        answer = {"id": opp.id, "title": opp.title, "stage": opp.stage, "track": opp.track}
+        notify = key_ok and s.info.get("manual_ingest_new") == opp.id
+    if notify:
+        # Role received and being scored (issue #267): a bell row, in its own session after the
+        # role is stored, so a failure here is logged and never changes the capture's answer.
+        from sqlalchemy.exc import SQLAlchemyError
+
+        from kestrel.services import capture_notice
+
+        try:
+            async with sessionmaker()() as s:
+                await capture_notice.record(s, answer["id"], answer["title"])
+                await s.commit()
+        except SQLAlchemyError as exc:
+            structlog.get_logger(__name__).warning(
+                "capture_notice_failed", opp_id=answer["id"], error=type(exc).__name__)
+    return answer
 
 
 @router.get("/api/opportunities")

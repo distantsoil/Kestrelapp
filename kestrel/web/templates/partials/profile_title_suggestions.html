@@ -5,6 +5,10 @@
 {% import "partials/online_ask.html" as online_ask %}
 {# "Suggest" until a pass has been asked for or has run; "Suggest again" after. #}
 {% set suggest_label = 'Suggest again' if (suggestions or last or pending) else 'Suggest' %}
+{# The section refreshes itself every 5 s by replacing itself. Its buttons target the slot that
+   holds it, which a refresh never replaces: a target resolved when a button is pressed must not
+   be the section, or a refresh while the answer is on its way leaves the answer (its note) in
+   the old, detached section and nothing shows (D-UI-935). #}
 <section id="title-suggestions" class="k-card pf-sugg__box" data-testid="title-suggestions"
      hx-get="/profile/title-suggestions?version={{ version }}" hx-trigger="every 5s" hx-target="this" hx-swap="outerHTML" hx-params="none">
   <header class="k-sec-head">
@@ -14,7 +18,7 @@
     <div class="k-sec-head__actions">
       {% if not (route and route.online) %}
       <button class="k-btn k-btn--sm" type="button" data-testid="title-suggest-again" hx-post="/title-suggestions/refresh" hx-params="none"
-              hx-target="#title-suggestions" hx-swap="outerHTML" {% if pending %}disabled{% endif %}>{{ suggest_label }}</button>
+              hx-target="#title-suggestions-slot" hx-swap="innerHTML" {% if pending %}disabled{% endif %}>{{ suggest_label }}</button>
       {% endif %}
     </div>
   </header>
@@ -29,9 +33,9 @@
       <div class="pf-list__row">
         <b>{{ s.title }}</b>
         <button class="k-btn k-btn--sm k-btn--primary" type="button" data-testid="title-accept" hx-post="/title-suggestions/{{ s.id }}/accept" hx-params="none"
-                hx-target="#title-suggestions" hx-swap="outerHTML">Accept</button>
+                hx-target="#title-suggestions-slot" hx-swap="innerHTML">Accept</button>
         <button class="k-btn k-btn--sm" type="button" data-testid="title-dismiss" hx-post="/title-suggestions/{{ s.id }}/dismiss" hx-params="none"
-                hx-target="#title-suggestions" hx-swap="outerHTML">Dismiss</button>
+                hx-target="#title-suggestions-slot" hx-swap="innerHTML">Dismiss</button>
       </div>
       <details data-testid="title-why">
         <summary class="pf-hint">Why</summary>
@@ -58,7 +62,7 @@
     {{ online_ask.ask(route, 'title-suggest', 'suggest titles') }}
     <button class="k-btn k-btn--sm" type="button" data-consent-send data-testid="title-suggest-again" hx-post="/title-suggestions/refresh"
             hx-include="closest [data-testid='title-suggest-online']" hx-params="confirmed,model,dest"
-            hx-target="#title-suggestions" hx-swap="outerHTML" {% if pending %}disabled{% endif %}>{{ suggest_label }}</button>
+            hx-target="#title-suggestions-slot" hx-swap="innerHTML" {% if pending %}disabled{% endif %}>{{ suggest_label }}</button>
   </div>
   {% endif %}
   {% if note %}<p class="pf-msg" role="status" data-testid="title-suggestions-note">{{ note }}</p>{% endif %}

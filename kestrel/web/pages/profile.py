@@ -259,6 +259,34 @@ async def score_again(request: Request):
     )
 
 
+@router.post("/api/profile/score-again/dismiss")
+async def score_again_dismiss(request: Request):
+    """Dismiss the Score again notice on a track until the proof points change again (issue #253).
+    Nothing is queued or sent. In place, the answer is an empty notice the page fades out;
+    without script it redirects back the way Score again does (the path is never built from the
+    form's text)."""
+    from fastapi.responses import HTMLResponse, RedirectResponse
+
+    from kestrel.services.profile_readiness import dismiss_score_again
+    from kestrel.web.deps import sessionmaker
+
+    form = await request.form()
+    track = str(form.get("track") or "employment")
+    if track not in pe.TRACKS:
+        track = "employment"
+    back = "profile" if str(form.get("back")) == "profile" else "today"
+    tab = str(form.get("tab") or "")
+    tab = tab if tab in _TAB_KEYS else "about"
+    async with sessionmaker()() as s:
+        if await dismiss_score_again(s, track, str(form.get("stamp") or "")):
+            await s.commit()
+    if request.headers.get("HX-Request"):
+        return HTMLResponse("")
+    target = "/?" + urlencode({"track": track}) if back == "today" else (
+        "/profile?" + urlencode({"tab": tab, "track": track}))
+    return RedirectResponse(target, status_code=303)
+
+
 async def _queue_recheck(tracks: list[str]) -> int:
     """After a save: queue the Tier 0 re-check when the rules' inputs changed and return how many
     set-aside roles it will look at again. Never fails the save."""

@@ -34,7 +34,7 @@
   </div>
 
   {% if readiness.show_notice or rescoring %}
-  <div class="pf-note pf-note--warn" data-testid="thin-profile-notice" data-next-step="{{ readiness.next_step }}">
+  <div class="pf-note pf-note--warn k-leave" data-testid="thin-profile-notice" data-next-step="{{ readiness.next_step }}">
     {% set back = 'profile' %}{% include "partials/profile_next_step.html" %}
   </div>
   {% endif %}

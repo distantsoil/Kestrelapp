@@ -42,6 +42,9 @@ def shell(monkeypatch):
     monkeypatch.setattr(sh, "server", None)
     monkeypatch.setattr(sh, "server_thread", None)
     monkeypatch.setattr(sh, "icon", None)
+    # The fake window a test installs must not outlive it: a later test on this worker would
+    # drive it from the splash and warn splash_update_failed (D-CI-601).
+    monkeypatch.setattr(sh, "window", None)
     monkeypatch.setattr(sh.time, "sleep", lambda _s: None)
     monkeypatch.setattr(sh, "_boot_guard", threading.Lock())
     yield sh

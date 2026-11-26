@@ -419,6 +419,8 @@ class Notification(Base):
     created_at: Mapped[str] = mapped_column(String, default=utcnow_iso, index=True)
     read_at: Mapped[str | None] = mapped_column(String, nullable=True)
     delivered_channels: Mapped[list | None] = mapped_column(JSON, default=list)
+    # Migration 0042 (issue #255, D-UI-906): set by Dismiss in the bell panel, cleared by Restore.
+    dismissed_at: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 # ============================================================================ Modules 1: Documents

@@ -7,8 +7,11 @@ stored state does.
 2. With On this computer chosen and online models on, every send is held (D-PRIV-798,
    `setup_state.online_send_held`), so the diagram does not move or say "Sending now." and the
    status line does not say a Run now choice sends.
-3. While online models are off nothing leaves this machine: the page does not claim a deeper read
-   does (the deeper-read route refuses while off).
+3. While online models are off every step runs on this machine, and the page says so in the
+   owner's words: a deeper read is sent only if the person confirms it for that role. A confirmed
+   deeper read is sent whether online models are on or off (D-PRIV-887; nothing refuses it on
+   that ground), so the page never says "nothing leaves it", and the two older clauses about a
+   deeper read stay gone.
 
 Invariant: these are words and one form on an existing route; nothing new is sent, the run card
 choice is never written by the legacy control, and a page view writes nothing. Invented data only.
@@ -111,8 +114,11 @@ def test_legacy_row_warning_offers_the_existing_switch_route() -> None:
         form = _legacy_form(html)
         assert 'hx-post="/settings/hosted/switch"' in form
         names = re.findall(r'name="([^"]+)"', form)
-        assert names == ["mode"]
+        # The button names the step whose row it takes away (D-PRIV-893): it used to post the
+        # mode alone, which removed every such row at once.
+        assert names == ["mode", "tier"]
         assert re.search(r'name="mode" value="local"', form)
+        assert re.search(r'name="tier" value="tier1"', form)
         assert "<button" in form and 'type="submit"' in form
         assert "frontier/" + LEGACY_MODEL in _text(html)
 
@@ -133,9 +139,21 @@ def test_pressing_it_removes_the_row_and_keeps_the_run_choice() -> None:
     assert 'data-testid="hosted-legacy-row"' not in client.get("/settings/hosted").text
 
 
-def test_on_an_online_run_the_control_says_it_switches_to_local() -> None:
-    form = _legacy_form(_legacy("hosted", "hosted").get("/settings/hosted/review").text)
-    assert "local" in _text(form).lower() and "run" in _text(form).lower()
+def test_on_an_online_run_the_control_moves_the_row_back_and_keeps_the_run_online() -> None:
+    """It used to say "Run on local models and move it back" here and switch the run too. A
+    warning's button takes away the row it names and never changes how Kestrel runs
+    (D-PRIV-893), so the label is the plain one and the press leaves the run choice alone."""
+    client = _legacy("hosted", "hosted")
+    form = _legacy_form(client.get("/settings/hosted/review").text)
+    assert _text(form) == "Move it back to the local model"
+    before = _stored()
+    r = client.post("/settings/hosted/switch", data={"mode": "local", "tier": "tier1"})
+    assert r.status_code == 200
+    after = _stored()
+    assert "llm.tiers.tier1.backend" not in after and "llm.tiers.tier1.model" not in after
+    for k in ("setup.run_choice", "llm.mode", "llm.hosted_mode.enabled"):
+        assert after[k] == before[k], k
+    assert after["setup.run_choice"] == "hosted" and after["llm.mode"] == "hosted"
 
 
 def test_a_page_view_with_a_legacy_row_writes_nothing() -> None:
@@ -170,8 +188,8 @@ def test_not_held_the_diagram_still_moves_and_says_sending() -> None:
     assert "Run now" in _status(html)
 
 
-# ----------------------------------------------------------------- item 3: off says nothing leaves
-def test_off_the_page_never_says_a_deeper_read_leaves() -> None:
+# ------------------------------------------- item 3: off says where the steps run (D-PRIV-887)
+def test_off_the_page_says_every_step_runs_here_and_a_deeper_read_needs_its_confirmation() -> None:
     off = {
         "llm.hosted_mode.enabled": False,
         "llm.hosted_mode.acknowledged_at": ACK,
@@ -184,5 +202,8 @@ def test_off_the_page_never_says_a_deeper_read_leaves() -> None:
             text = _text(html)
             assert "the only thing that leaves it" not in text
             assert "deeper read you preview and confirm" not in text
-            assert "Nothing is sent until you turn online models on." in text
-            assert "nothing leaves it" in _status(html)
+            assert "Scoring stays on this computer until you turn online models on." in text
+            # Owner, 2026-11-25: the off line says where the steps run and that a deeper read
+            # goes only on its own confirmation (it is sent on that confirmation, on or off).
+            assert ("Every step runs on this machine. A deeper read is sent only if you confirm "
+                    "it for that role.") in unescape(_status(html))

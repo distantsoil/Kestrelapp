@@ -129,17 +129,79 @@ def test_reduced_motion_turns_the_confirmation_off(live, path, prefix):
         ctx.close()
 
 
+def _seed_reduce_motion(on: bool) -> None:
+    """The stored pref the app's own switch writes, so the server renders that state and the
+    rail poll's snapshot agrees with it. The browser tests own this thread's event loop, so the
+    database write runs on a worker thread (as tests.quick_fixtures does)."""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.services import ui_state
+
+    async def _go():
+        async with get_sessionmaker()() as s:
+            await ui_state.set_value(s, "ui.reduce_motion", on)
+            await s.commit()
+
+    with ThreadPoolExecutor(1) as ex:
+        ex.submit(asyncio.run, _go()).result()
+
+
 @pytest.mark.parametrize("path,prefix", PAGES)
 def test_the_apps_reduce_motion_switch_turns_the_confirmation_off(live, path, prefix):
-    ctx, page, _ = _open(live, path, prefix)
+    """The app's Reduce motion switch is ON (stored, so the page renders reduced): the copy
+    confirmation keeps its words and loses its pulse. The stored pref and the page's derived
+    state agree, so the status rail's poll cannot flip either (issue: the switch reset itself)."""
+    _seed_reduce_motion(True)
+    ctx, page, errors = _open(live, path, prefix)
     try:
-        page.evaluate("document.documentElement.setAttribute('data-reduce-motion', '1')")
+        assert page.evaluate(
+            "document.documentElement.getAttribute('data-reduce-motion')") == "1"
         btn = page.locator(f'[data-testid="{prefix}-iid-copy"]')
         btn.click()
         page.wait_for_function(
             "el => el.classList.contains('is-copied')", arg=btn.element_handle())
         assert btn.evaluate("el => getComputedStyle(el).animationName") == "none"
+        assert btn.evaluate("el => el.getAnimations().length") == 0
         assert btn.inner_text() == "Copied"  # the words stay; only the pulse is off
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_real_reduce_motion_switch_survives_the_status_rail_poll(live):
+    """The app's Reduce motion switch stays on across the sidebar's own status poll: the poll
+    re-ran initPrefs, which rewrote data-reduce-motion from the stale server-rendered snapshot,
+    so the switch reset itself and the confirmation's pulse came back until reload. Wait on the
+    poll's own response (never a sleep) and assert the attribute and the animation."""
+    _seed_reduce_motion(False)  # the stored pref starts off; the test turns the REAL switch on
+    ctx, page, errors = _open(live, "/settings#data", "st")
+    try:
+        assert page.evaluate(
+            "document.documentElement.getAttribute('data-reduce-motion')") == "0"
+        page.evaluate("location.hash = '#preferences'")
+        page.wait_for_selector(
+            '#st-sec-preferences:not([hidden]) [data-st-key="ui.reduce_motion"]')
+        page.click('[data-st-key="ui.reduce_motion"] + .k-switch__track')
+        page.wait_for_selector('.k-toast:has-text("Motion reduced.")')
+        assert page.evaluate(
+            "document.documentElement.getAttribute('data-reduce-motion')") == "1"
+        # Past one whole status poll (it runs on its own cadence): the switch stays on.
+        with page.expect_response(lambda r: "/status/rail" in r.url, timeout=20000):
+            pass
+        assert page.evaluate(
+            "document.documentElement.getAttribute('data-reduce-motion')") == "1"
+        assert page.evaluate("document.documentElement.classList.contains('st-rm')")
+        # The derived state agrees: the copy confirmation stays animation-free.
+        page.evaluate("location.hash = '#data'")
+        page.wait_for_selector('[data-testid="st-iid-copy"]', state="visible")
+        btn = page.locator('[data-testid="st-iid-copy"]')
+        btn.click()
+        page.wait_for_function(
+            "el => el.classList.contains('is-copied')", arg=btn.element_handle())
+        assert btn.evaluate("el => getComputedStyle(el).animationName") == "none"
+        assert errors == []
     finally:
         ctx.close()
 

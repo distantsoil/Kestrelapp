@@ -452,6 +452,11 @@ html.k-leaving .k-win { transform: scale(.97); opacity: 0; transition: transform
   .k-win { grid-template-columns: minmax(0, 1fr); }
   .side { display: none; }
   .k-tools { padding: 12px 16px 0; }
+  /* The theme button and the avatar sit right of the bell, so a panel anchored to the bell ran
+     past the window's left edge. Here it is placed from the top row instead, 16 px from each
+     side (its width is min(440px, 100vw - 32px)). */
+  .k-bellwrap { position: static; }
+  .k-npanel { right: 16px; }
 }
 
 /* Sidebar controls (issue #126): the collapse toggle and the pushpin share one row. */
@@ -1261,3 +1266,12 @@ html[data-reduce-motion="1"] .k-consent__hint.is-on { animation: none; opacity: 
 .kp-text .kp-li--num { list-style: none; }
 .kp-text .kp-num { font-variant-numeric: tabular-nums; margin-left: -1.1em; }
 .kp-text strong { font-weight: 700; }
+/* A notice a Dismiss removes (issue #253): it fades and lifts while htmx waits (swap:200ms), then
+   goes. The reduced-motion rule above turns the motion off (a k- class). */
+.k-leave { transition: opacity .2s var(--ease), transform .2s var(--ease); }
+.k-leave.htmx-swapping { opacity: 0; transform: translateY(-4px); }
+/* A list row a menu action removes (the bell panel's Dismiss and Restore, issue #255): the row
+   whose menu is open slides out while htmx waits (swap:180ms) on the list it is in; a zero-delay
+   swap (Mark as read) never paints this state. */
+.k-leave-row { transition: opacity .18s var(--ease), transform .18s var(--ease); }
+.htmx-swapping .k-leave-row:has(> details[open]) { opacity: 0; transform: translateX(24px); }

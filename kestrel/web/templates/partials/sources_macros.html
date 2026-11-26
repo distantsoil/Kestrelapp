@@ -25,7 +25,7 @@
    Details are the two controls. Everything else on it is text. #}
 {% macro row(v, paused=False) -%}
 {%- set issue = v.reason and v.health != 'g' -%}
-<div class="src-row is-{{ v.health }}{{ ' is-off' if not v.enabled }}" id="src-row-{{ v.id }}" data-id="{{ v.id }}" data-group="{{ v.group }}" data-health="{{ v.health if v.enabled else '' }}" data-origin="{{ v.origin }}" data-search="{{ v.search_text }}" data-testid="source-row">
+<div class="src-row is-{{ v.health }}{{ ' is-off' if not v.enabled }}" id="src-row-{{ v.id }}" data-id="{{ v.id }}" data-group="{{ v.group }}" data-health="{{ v.health if (v.enabled or v.health == 'b') else '' }}" data-origin="{{ v.origin }}" data-search="{{ v.search_text }}" data-testid="source-row">
   {{ badge(v) }}
   <div class="src-rn">
     <div class="src-nm">{{ v.name }}<span class="src-tag src-tag--{{ v.origin }}" data-testid="origin-tag">{{ v.origin_label }}</span></div>

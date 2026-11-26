@@ -262,3 +262,8 @@
 .rn-why__act { margin-left: auto; }
 .rn-why__tip { margin: 6px 0; overflow-wrap: anywhere; }
 .rn-why__roles li { padding: 2px 0; overflow-wrap: anywhere; font-size: var(--fs-sm); }
+/* A search's share of new roles with no description, under its counts (issue #182 B). */
+/* A floor on its width: on a narrow window the table scrolls in its wrapper instead of squeezing
+   these sentences to a few letters a line. */
+.rn-bodies { margin-top: 4px; min-width: 16em; overflow-wrap: break-word; }
+.rn-bodies .rn-note { margin: 6px 0 0; padding: 6px 10px; font-size: var(--fs-sm); }

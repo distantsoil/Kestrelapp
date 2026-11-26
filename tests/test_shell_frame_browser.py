@@ -1655,3 +1655,52 @@ def test_window_events_reach_the_page_through_the_real_routes(live):
     finally:
         bridge.set_window_api(None, None)
         ctx.close()
+
+
+def test_the_page_stops_polling_when_the_answer_says_shutdown(live):
+    """r5: after end_waits the events answer returns at once, so the answer must tell the
+    page to stop asking -- without it the page re-polls in a tight loop for the whole
+    closing screen. The closing screen itself still shows."""
+    base, browser, bridge = live
+    bridge.set_quit_handler(lambda: None)  # k_desktop: the controls (and the poll) exist
+    bridge.set_window_frame(True)
+    init = """
+    window.__polls = 0;
+    window.pywebview = window.pywebview || {};
+    (function () {
+      const realFetch = window.fetch.bind(window);
+      window.fetch = function (url, opts) {
+        const u = String(url);
+        const m = u.match(/\\/api\\/window\\/call\\/([a-z_]+)/);
+        if (m) {
+          const answers = {window_info: () => ({os: 'win', maximized: false}),
+            bridge_check: () => true};
+          const ans = answers[m[1]];
+          return Promise.resolve(new Response(JSON.stringify({value: ans ? ans() : null}),
+            {status: 200, headers: {'Content-Type': 'application/json'}}));
+        }
+        if (u.indexOf('/api/window/events') >= 0) {
+          window.__polls += 1;
+          return Promise.resolve(new Response(JSON.stringify(
+            {seq: 1, events: [['closing', []]], ending: true}),
+            {status: 200, headers: {'Content-Type': 'application/json'}}));
+        }
+        return realFetch(url, opts);
+      };
+    })();
+    """
+    # Not _page: its idle-network wait never comes while the page re-polls.
+    ctx = browser.new_context(viewport={"width": 1440, "height": 900})
+    page = ctx.new_page()
+    page.add_init_script(init)
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.goto(base + "/help")
+        page.wait_for_function("window.__polls >= 1", timeout=2000)
+        assert page.locator("#k-closing").count() == 1  # the closing screen still shows
+        page.wait_for_timeout(600)
+        assert page.evaluate("window.__polls") == 1  # the page stopped asking
+        assert not errors, errors
+    finally:
+        ctx.close()

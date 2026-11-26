@@ -219,7 +219,8 @@ def test_migration_0032_creates_the_table_and_indexes_and_downgrades(tmp_path):
     con.close()
     assert not any("requirement_correction" in n for n in names)
     _go(db, "up", "head")
-    assert migrate.head_revision() == "0041"  # D-SCORE-28 added 0037 and 0040; #204 0041 on top
+    # D-SCORE-28 added 0037 and 0040; #204 0041 on top; #255 0042 (D-UI-906)
+    assert migrate.head_revision() == "0042"
 
 
 def test_migration_0033_adds_the_correction_ids_and_downgrades(tmp_path):

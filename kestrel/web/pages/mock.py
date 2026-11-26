@@ -131,16 +131,30 @@ async def page(request: Request, opportunity_id: int):
     return await page_response(request, opportunity_id, "practice")
 
 
+def _not_found() -> HTMLResponse:
+    return HTMLResponse("not found", status_code=404)
+
+
+async def _missing(opportunity_id: int) -> bool:
+    """True when no role has this id: every route that names a role answers it with 404 (#215)."""
+    async with sessionmaker()() as s:
+        return await s.get(Opportunity, opportunity_id) is None
+
+
 @router.post("/mock/{opportunity_id}/start", response_class=HTMLResponse)
 async def start(request: Request, opportunity_id: int):
     form = await request.form()
     mode = str(form.get("mode") or "").strip()
+    # The role first (issue #215): the mode prompt renders the role's practice panel, which
+    # failed with a 500 for a role that does not exist.
+    if await _missing(opportunity_id):
+        return _not_found()
     if mode not in MODES:
         return await _chat(request, opportunity_id, error="Choose a mode first.")
     async with sessionmaker()() as s:
         opp = await s.get(Opportunity, opportunity_id)
         if opp is None:
-            return HTMLResponse("not found", status_code=404)
+            return _not_found()
         first = await pv.question_for(s, opportunity_id, str(form.get("qh") or ""))
         ms = await start_session(s, opportunity_id, mode, first_question=first)
     return await _chat(request, opportunity_id, ms=ms)
@@ -252,6 +266,8 @@ async def online_dialog(request: Request, opportunity_id: int):
     left. Nothing is sent until the operator presses Use online model."""
     from kestrel.services import hosted_balance
 
+    if await _missing(opportunity_id):
+        return _not_found()
     async with sessionmaker()() as s:
         settings = await load_settings_with_db(s)
         info = await route_info(s, settings, with_models=True)
@@ -268,6 +284,8 @@ async def online_dialog(request: Request, opportunity_id: int):
 async def set_route(request: Request, opportunity_id: int):
     """Use an online model for this practice session (or confirm the one already configured).
     Nothing is stored: the confirmation rides on the page and the answer route checks it again."""
+    if await _missing(opportunity_id):
+        return _not_found()
     form = await request.form()
     pick = str(form.get("model") or "").strip()
     async with sessionmaker()() as s:
@@ -319,6 +337,8 @@ async def set_route(request: Request, opportunity_id: int):
 @router.get("/mock/{opportunity_id}/route", response_class=HTMLResponse)
 async def local_route(request: Request, opportunity_id: int):
     """Back to this computer: the route line with no confirmation. Nothing more is sent."""
+    if await _missing(opportunity_id):
+        return _not_found()
     async with sessionmaker()() as s:
         info = await route_info(s, await load_settings_with_db(s))
     ctx = {"opp_id": opportunity_id, "route": info, "oob": False, "picked": "",

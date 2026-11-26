@@ -61,8 +61,17 @@ def _overlaps(a, b) -> bool:
 def live(monkeypatch):
     from playwright.sync_api import sync_playwright
 
+    from kestrel.web import queries
     from kestrel.web.serve import running_server
 
+    # The page's "today" is the day the world was seeded on (D-TEST-876): a test that crosses
+    # local midnight would otherwise find the roles seeded as found today turned into
+    # yesterday's. Taken before seeding, so a midnight during the seed still counts its roles
+    # (they are kept at or after the new day's start, which is later than this one).
+    day = queries.local_day_start_iso()
+    real_day_start = queries.local_day_start_iso
+    monkeypatch.setattr(queries, "local_day_start_iso",
+                        lambda now=None: day if now is None else real_day_start(now))
     ids = asyncio.run(today_seed.seed())
     with running_server(worker=False) as base, sync_playwright() as p:
         browser = launch_sync(p)
@@ -404,9 +413,12 @@ def test_selecting_text_on_a_card_does_not_open_its_summary(live):
         ctx.close()
 
 
-def _touch(cdp, kind: str, x: float, y: float) -> None:
+def _touch(cdp, kind: str, x: float, y: float, at: float | None = None) -> None:
     pts = [] if kind == "touchEnd" else [{"x": x, "y": y}]
-    cdp.send("Input.dispatchTouchEvent", {"type": kind, "touchPoints": pts})
+    params: dict = {"type": kind, "touchPoints": pts}
+    if at is not None:
+        params["timestamp"] = at
+    cdp.send("Input.dispatchTouchEvent", params)
 
 
 def test_on_touch_a_tap_opens_the_summary_and_a_swipe_only_moves(live):
@@ -418,13 +430,17 @@ def test_on_touch_a_tap_opens_the_summary_and_a_swipe_only_moves(live):
         page.wait_for_selector('[data-testid="td-card"]')
         wait_for_layout(page)
         cdp = ctx.new_cdp_session(page)
-        # A horizontal swipe moves the carousel and opens nothing.
+        # A horizontal swipe moves the carousel and opens nothing. Its events carry the times a
+        # finger would give them (16 ms apart): sent back to back with no times, the browser read
+        # the swipe as an impossibly fast flick and, for about a second after it, turned a tap
+        # into pointer events but no click, so the tap below opened nothing (D-TEST-875, #279).
         before = page.evaluate(_BOXES, ".td-card")[0]["l"]
         x, y = _body_point(page)
-        _touch(cdp, "touchStart", x, y)
+        t0 = page.evaluate("Date.now() / 1000")  # the browser's own clock, not the test's
+        _touch(cdp, "touchStart", x, y, t0)
         for i in range(1, 11):
-            _touch(cdp, "touchMove", x - 18 * i, y)
-        _touch(cdp, "touchEnd", x - 180, y)
+            _touch(cdp, "touchMove", x - 18 * i, y, t0 + 0.016 * i)
+        _touch(cdp, "touchEnd", x - 180, y, t0 + 0.016 * 11)
         wait_for_layout(page)
         page.wait_for_timeout(400)
         assert page.evaluate(_BOXES, ".td-card")[0]["l"] < before - 100
@@ -766,6 +782,33 @@ def test_tour_footer_buttons_stay_inside_the_popover(live, theme, size):
                 assert tc["l"] - 1 <= b["l"] and b["r"] <= tc["r"] + 1, (step, b, tc)
                 assert tc["tp"] - 1 <= b["tp"] and b["bt"] <= tc["bt"] + 1, (step, b, tc)
             assert tc["l"] >= 0 and tc["r"] <= size[0] and tc["tp"] >= 0 and tc["bt"] <= size[1]
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_seeded_matches_stay_today_when_local_midnight_passes_during_a_test(live,
+                                                                                monkeypatch):
+    """A test that started at 23:59:57 and read Today at 00:00:10 found no matches: the roles
+    seeded as found today had become yesterday's, and the page showed "No matches yet" with no
+    dots (the remount test, under load, D-TEST-876). The page's "today" is the seed's day."""
+    from datetime import datetime as real_datetime
+    from datetime import timedelta
+
+    from kestrel.web import queries
+
+    class AfterMidnight(real_datetime):  # the queries module's own clock alias (D-TEST-2)
+        @classmethod
+        def now(cls, tz=None):
+            local = real_datetime.now().astimezone()
+            nxt = (local + timedelta(days=1)).replace(hour=0, minute=0, second=10, microsecond=0)
+            return nxt.astimezone(tz) if tz else nxt.replace(tzinfo=None)
+
+    monkeypatch.setattr(queries, "datetime", AfterMidnight)
+    ctx, page, errors = _page(live, "light", 1280)
+    try:
+        assert page.query_selector_all('[data-testid="td-card"]'), "no matches after midnight"
+        assert len(page.query_selector_all("#td-dots i")) >= 3
         assert not errors, errors
     finally:
         ctx.close()

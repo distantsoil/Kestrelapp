@@ -194,9 +194,12 @@ async def mode_save(request: Request):
     async with sessionmaker()() as s:
         settings = await load_settings_with_db(s)
         rows = await _rows(s)
-        prev, _ = ss.run_choice(settings, rows)
-        if prev == choice:
+        prev, explicit = ss.run_choice(settings, rows)
+        if prev == choice and explicit:
             return _mode_card(request, await mode_ctx())
+        # A press on the choice the card only shows by default (no stored row) is the person's
+        # decision and is stored like any other (#227, D-PRIV-884): a default follows later
+        # changes (a connected key reads as Both), a stored choice does not.
         why = choice_refusal(settings, {**rows, ss.CHOICE_KEY: choice})
         if why is not None:
             # Nothing is stored and nothing says it was: the card answers with the reason.

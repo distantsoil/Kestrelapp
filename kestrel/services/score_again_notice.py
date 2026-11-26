@@ -71,7 +71,7 @@ async def take_notice(session: AsyncSession) -> Notice | None:
     # Filtered in SQL: only this kind's notes the strip has not shown yet.
     found = (await session.execute(
         select(Notification).where(
-            Notification.kind == KIND,
+            Notification.kind == KIND, Notification.dismissed_at.is_(None),  # #255
             ~cast(Notification.delivered_channels, String).like(f'%"{STRIP}"%'),
         ).order_by(Notification.id)
     )).scalars().all()

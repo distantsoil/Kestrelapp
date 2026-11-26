@@ -846,6 +846,7 @@
           }
         });
         if (typeof j.seq === 'number') windowSeq = j.seq;
+        if (j.ending) { windowPolling = false; return; }  // the shell is shutting down: stop
         pollWindow(0);
       })
       .catch(function () {
